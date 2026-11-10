@@ -1,0 +1,52 @@
+html,
+body {
+  margin: 0;
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-family: var(--font-body);
+}
+
+/* Layout, tables, dialogs and meters come from xdev-ui; this file only places them. */
+
+.muted {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.console-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--x-space-2);
+  color: var(--text-1);
+  text-decoration: none;
+  font: var(--type-control);
+}
+
+.dialog-subheading {
+  margin: var(--x-space-2) 0 0;
+  font: var(--type-heading);
+}
+
+.signin {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--x-space-4);
+  box-sizing: border-box;
+}
+
+.signin-box {
+  width: min(28rem, 100%);
+}
+
+.signin-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x-space-3);
+}
+
+.signin-form > button {
+  align-self: flex-end;
+}

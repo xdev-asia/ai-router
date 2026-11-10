@@ -1,0 +1,28 @@
+{
+  "name": "xdev-llm",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "xdev-llm",
+      // Owner setup: `wrangler d1 create xdev-llm`, then put the returned id here.
+      "database_id": "REPLACE_ME",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // The owner console (web/, built into dist/). The API paths reach the Worker first.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/admin/*", "/anthropic/*", "/health"]
+  },
+  // No route yet: the owner picks the hostname (other Workers can also reach it through a service binding).
+  "vars": {
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+  },
+  // Secrets (wrangler secret put): ANTHROPIC_KEYS, ADMIN_TOKEN_SHA256. See README.
+  "observability": { "enabled": true }
+}
