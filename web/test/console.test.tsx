@@ -64,6 +64,7 @@ describe("sign in", () => {
     expect(await screen.findByRole("heading", { name: t("systems.title") })).toBeTruthy();
     expect(await screen.findByText("Chat")).toBeTruthy();
     expect(screen.getByText(t("systems.used", { used: "500", cap: "1,000" }))).toBeTruthy();
+    expect(screen.getByText("chat")).toBeTruthy();
     expect(calls.every((c) => c.auth === "Bearer good-admin-token" || c.auth === "Bearer bad")).toBe(true);
   });
 

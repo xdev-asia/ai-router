@@ -78,14 +78,28 @@ export function Systems() {
     );
 
   const columns: DataTableColumn<System>[] = [
-    { key: "id", header: t("systems.col.id"), cell: (s) => s.id, mono: true },
-    { key: "name", header: t("systems.col.name"), cell: (s) => s.name, hideNarrow: true },
+    {
+      key: "system",
+      header: t("systems.col.system"),
+      // Id and name in one cell, so the table keeps room for its actions on a phone.
+      cell: (s) => (
+        <span className="system-cell">
+          <span className="system-id">{s.id}</span>
+          <span className="system-name">{s.name}</span>
+          {/* The Status column drops on a narrow table; the state then shows here. */}
+          <span className="system-status-narrow">
+            <StatusDot tone={s.disabled ? "neutral" : "ok"} label={t(s.disabled ? "systems.disabled" : "systems.active")} />
+          </span>
+        </span>
+      ),
+    },
     {
       key: "month",
       header: t("systems.col.month"),
       cell: (s) => {
         const n = used.get(s.id) ?? 0;
-        if (s.monthly_token_cap === null) return formatNumber(n);
+        // Same face as Meter's label, so rows with and without a cap line up.
+        if (s.monthly_token_cap === null) return <span className="ws-meter">{formatNumber(n)}</span>;
         const pct = s.monthly_token_cap === 0 ? 100 : Math.min(100, Math.round((n / s.monthly_token_cap) * 100));
         // Meter shows its label and the percentage itself.
         return <Meter value={pct} warnAt={80} label={t("systems.used", { used: formatNumber(n), cap: formatNumber(s.monthly_token_cap) })} />;
@@ -101,6 +115,7 @@ export function Systems() {
     {
       key: "status",
       header: t("systems.col.status"),
+      hideNarrow: true,
       cell: (s) => <StatusDot tone={s.disabled ? "neutral" : "ok"} label={t(s.disabled ? "systems.disabled" : "systems.active")} />,
     },
     {

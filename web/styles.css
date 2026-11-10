@@ -24,6 +24,34 @@ body {
   font: var(--type-control);
 }
 
+.system-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x-space-1);
+  min-width: 0;
+}
+
+.system-id {
+  font: var(--type-mono);
+  overflow-wrap: break-word;
+}
+
+.system-name {
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+/* Shown only when DataTable hides its narrow columns: same container and width as data.css in xdev-ui. */
+.system-status-narrow {
+  display: none;
+}
+
+@container (max-width: 480px) {
+  .system-status-narrow {
+    display: inline-flex;
+  }
+}
+
 .dialog-subheading {
   margin: var(--x-space-2) 0 0;
   font: var(--type-heading);
