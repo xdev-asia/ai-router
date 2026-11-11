@@ -4,8 +4,16 @@ export interface Env {
   ANTHROPIC_BASE_URL: string;
   /** Secret: JSON object, system id -> that system's Anthropic API key. A system missing here gets `not_configured`. */
   ANTHROPIC_KEYS?: string;
-  /** Secret: SHA-256 hex of the admin bearer token. Unset disables /admin. */
+  /** Secret: SHA-256 hex of the admin bearer token. Unset disables the token (the console can still use xDev ID). */
   ADMIN_TOKEN_SHA256?: string;
+  /** Public: OpenID issuer of xDev ID (`https://id.xdev.asia/api/auth`). Console sign-in is off while any OIDC value is unset. */
+  OIDC_ISSUER?: string;
+  /** Public: this gateway's client id at xDev ID. */
+  OIDC_CLIENT_ID?: string;
+  /** Secret: this gateway's client secret at xDev ID. */
+  OIDC_CLIENT_SECRET?: string;
+  /** Public: comma-separated emails (verified at xDev ID) allowed into the console. */
+  CONSOLE_EMAILS?: string;
 }
 
 export type AppEnv = { Bindings: Env };

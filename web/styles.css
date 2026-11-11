@@ -24,6 +24,12 @@ body {
   font: var(--type-control);
 }
 
+.console-user {
+  font: var(--type-status);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 .system-cell {
   display: flex;
   flex-direction: column;

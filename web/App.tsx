@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AppShell, BrandMark, Button, NavList } from "@xdev-asia/ui";
-import { setToken, useToken } from "./api";
+import { checkSession, setAuth, signOut, useAuth } from "./api";
 import { t, useLang } from "./i18n";
 import { LangSelect } from "./LangSelect";
 import { NotifyContext, useToasts } from "./notify";
@@ -30,7 +30,8 @@ function usePage(): Page {
 
 export function App() {
   const [lang] = useLang();
-  const token = useToken();
+  const auth = useAuth();
+  const [sso, setSso] = useState(false);
   const page = usePage();
   const labels = ui(lang);
   const { notify, toasts } = useToasts();
@@ -41,7 +42,22 @@ export function App() {
     document.title = t("app.name");
   }, [lang]);
 
-  if (!token) return <SignIn />;
+  // An xDev ID session (cookie) signs the console in on load; otherwise the sign-in page offers xDev ID
+  // when the gateway has it set up, and the admin token.
+  useEffect(() => {
+    if (auth) return;
+    let live = true;
+    void checkSession().then((r) => {
+      if (!live) return;
+      setSso(r.sso);
+      if (r.user) setAuth({ kind: "sso", ...r.user });
+    });
+    return () => {
+      live = false;
+    };
+  }, [auth]);
+
+  if (!auth) return <SignIn sso={sso} />;
 
   return (
     <NotifyContext.Provider value={notify}>
@@ -71,7 +87,8 @@ export function App() {
         actions={
           <>
             <LangSelect />
-            <Button icon="sign-out" onClick={() => setToken(null)}>
+            {auth.kind === "sso" && <span className="console-user">{auth.email}</span>}
+            <Button icon="sign-out" onClick={() => void signOut()}>
               {t("shell.signOut")}
             </Button>
           </>

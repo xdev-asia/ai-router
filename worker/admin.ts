@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
+import { consoleUser, sameOrigin } from "./console-auth";
 import type { AppEnv } from "./env";
 import { currentMonth, monthRange } from "./usage";
 
@@ -26,7 +27,8 @@ async function getSystem(db: D1Database, id: string): Promise<System | null> {
 }
 
 /**
- * Owner-only management, `Authorization: Bearer <admin token>` checked against ADMIN_TOKEN_SHA256.
+ * Owner-only management: `Authorization: Bearer <admin token>` checked against ADMIN_TOKEN_SHA256,
+ * or the console's xDev ID session cookie (see console-auth.ts).
  * A system's plain token is returned once, on create and rotate, and stored only as its SHA-256.
  */
 export function adminRoutes(): Hono<AppEnv> {
@@ -34,7 +36,15 @@ export function adminRoutes(): Hono<AppEnv> {
 
   a.use("*", async (c, next) => {
     c.header("cache-control", "no-store");
-    if (!(await isAdmin(c.env, c.req.raw))) return c.json({ error: "unauthorized" }, 401);
+    const req = c.req.raw;
+    if (req.headers.has("authorization")) {
+      // A wrong token is refused even when a console cookie is also present.
+      if (!(await isAdmin(c.env, req))) return c.json({ error: "unauthorized" }, 401);
+      return next();
+    }
+    // Console signed in with xDev ID. Writes must come from the console's own pages (no cross-site requests).
+    if (!(await consoleUser(c.env, req))) return c.json({ error: "unauthorized" }, 401);
+    if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req)) return c.json({ error: "forbidden" }, 403);
     await next();
   });
 

@@ -29,8 +29,12 @@ A provider is a path prefix: another one can be added beside `/anthropic` withou
 | Name | Kind | Value |
 |---|---|---|
 | `ANTHROPIC_KEYS` | secret | JSON object, system id -> that system's Anthropic API key. One key per system, ideally one Anthropic workspace per system |
-| `ADMIN_TOKEN_SHA256` | secret | SHA-256 hex of the owner's admin token. Unset: `/admin` and the console refuse everyone |
+| `ADMIN_TOKEN_SHA256` | secret | SHA-256 hex of the owner's admin token. Unset: the token is refused (xDev ID sign-in still works) |
+| `OIDC_CLIENT_SECRET` | secret | This gateway's client secret at xDev ID |
 | `ANTHROPIC_BASE_URL` | var | `https://api.anthropic.com` |
+| `OIDC_ISSUER` | var | `https://id.xdev.asia/api/auth` |
+| `OIDC_CLIENT_ID` | var | This gateway's client id at xDev ID. Empty: xDev ID sign-in is off |
+| `CONSOLE_EMAILS` | var | Comma-separated xDev account emails (verified) allowed into the console |
 
 ```sh
 cd services/llm
@@ -41,18 +45,34 @@ openssl rand -base64 32 | tee /dev/tty | tr -d '\n' | shasum -a 256 | cut -d' ' 
 corepack pnpm exec wrangler secret put ANTHROPIC_KEYS            # {"chat":"sk-ant-...","xdevd":"sk-ant-..."}
 ```
 
-Then pick a hostname (a route in `wrangler.jsonc`), deploy, open the console, sign in with the admin token
-and add the systems. Each system's token is shown once.
+Then pick a hostname (a route in `wrangler.jsonc`), deploy, open the console, sign in and add the systems.
+Each system's token is shown once.
+
+xDev ID sign-in: register the gateway at xDev ID (a super admin, from `services/id`), put the client id in
+`OIDC_CLIENT_ID` and the secret in `OIDC_CLIENT_SECRET`:
+
+```sh
+XDEV_ADMIN_TOKEN=... node ../id/scripts/admin.mjs oauth-client "AI router" https://<host>/auth/callback
+corepack pnpm exec wrangler secret put OIDC_CLIENT_SECRET
+```
 
 ## Console
 
-`/` serves the console (`web/`, built into `dist/`). Hash routes: `#/systems`, `#/usage`. The admin token is kept
-in page memory only, never in storage or a cookie, so a reload signs out. [Inference] For more than one
-operator, put Cloudflare Access in front of the console and `/admin/*`.
+`/` serves the console (`web/`, built into `dist/`). Hash routes: `#/systems`, `#/usage`.
+
+Two ways in:
+
+- **xDev ID** (OpenID Connect, code flow with PKCE, confidential client). `/auth/login` starts it,
+  `/auth/callback` finishes it, `/auth/me` and `POST /auth/logout`. Only a verified email in
+  `CONSOLE_EMAILS` gets a session: a random token in a `__Host-xllm_session` cookie (Secure, HttpOnly,
+  SameSite=Lax, 12 hours), stored as its SHA-256 in `console_session`. The state is bound to the browser by
+  a `__Host-xllm_login` cookie and is single use. Writes with the cookie must be same-origin.
+- **The admin token**, kept in page memory only, never in storage or a cookie, so a reload signs out.
 
 ## Admin API
 
-All under `/admin`, `Authorization: Bearer <admin token>`.
+All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev ID session cookie
+(writes from the console's own origin only). A wrong token is refused even with a valid cookie.
 
 | Call | Body | Answer |
 |---|---|---|

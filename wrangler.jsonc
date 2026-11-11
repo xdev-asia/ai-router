@@ -16,13 +16,17 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/admin/*", "/anthropic/*", "/health"]
+    "run_worker_first": ["/admin/*", "/anthropic/*", "/auth/*", "/health"]
   },
   // Other Workers can also reach the gateway through a service binding.
   "routes": [{ "pattern": "ai-router.xdev.asia", "custom_domain": true }],
   "vars": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+    // Console sign-in with xDev ID. OIDC_CLIENT_ID comes from `node scripts/admin.mjs oauth-client` in services/id.
+    "OIDC_ISSUER": "https://id.xdev.asia/api/auth",
+    "OIDC_CLIENT_ID": "",
+    "CONSOLE_EMAILS": "tdduy.dev@gmail.com"
   },
-  // Secrets (wrangler secret put): ANTHROPIC_KEYS, ADMIN_TOKEN_SHA256. See README.
+  // Secrets (wrangler secret put): ANTHROPIC_KEYS, ADMIN_TOKEN_SHA256, OIDC_CLIENT_SECRET. See README.
   "observability": { "enabled": true }
 }

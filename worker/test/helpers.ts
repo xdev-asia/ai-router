@@ -38,7 +38,7 @@ export async function call(upstream: FakeUpstream, path: string, init?: RequestI
 
 /** Empties both tables; call in beforeEach so tests do not depend on storage isolation. */
 export async function reset(): Promise<void> {
-  await env.DB.batch([env.DB.prepare("DELETE FROM usage"), env.DB.prepare("DELETE FROM system")]);
+  await env.DB.batch(["usage", "system", "console_login", "console_session"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 }
 
 /** Inserts a system and returns its plain gateway token. */

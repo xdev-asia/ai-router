@@ -23,6 +23,11 @@ export default defineConfig({
             ANTHROPIC_BASE_URL: "https://upstream.test",
             ANTHROPIC_KEYS: JSON.stringify({ chat: "sk-ant-test-chat", xdevd: "sk-ant-test-xdevd", off: "sk-ant-test-off", capped: "sk-ant-test-capped" }),
             ADMIN_TOKEN_SHA256: await sha256hex(TEST_ADMIN_TOKEN),
+            // Fake xDev ID (see worker/test/console-auth.test.ts).
+            OIDC_ISSUER: "https://id.test/api/auth",
+            OIDC_CLIENT_ID: "llm-client",
+            OIDC_CLIENT_SECRET: "test-oidc-secret",
+            CONSOLE_EMAILS: "owner@example.com, second@example.com",
           },
         },
       };

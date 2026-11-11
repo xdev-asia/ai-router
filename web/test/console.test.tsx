@@ -18,12 +18,18 @@ const USAGE = {
 
 let calls: { method: string; url: string; auth: string | null; body: unknown }[];
 let routes: Record<string, () => Response>;
+/** The xDev ID session the fake gateway sees (the cookie itself is invisible to the page). */
+let ssoUser: { email: string; name: string } | null;
+let ssoConfigured: boolean;
 
 beforeEach(() => {
   localStorage.setItem("xdev-llm.lang", "en");
   resetLang();
   window.location.hash = "";
   calls = [];
+  ssoUser = null;
+  ssoConfigured = false;
+  window.history.replaceState({}, "", "/");
   routes = {
     "GET /admin/systems": () => json([SYSTEM]),
     "GET /admin/usage": () => json(USAGE),
@@ -34,7 +40,13 @@ beforeEach(() => {
     const url = String(input);
     const auth = new Headers(init.headers).get("authorization");
     calls.push({ method, url, auth, body: init.body ? JSON.parse(String(init.body)) : undefined });
-    if (auth !== "Bearer good-admin-token") return json({ error: "unauthorized" }, 401);
+    if (url === "/auth/me") return ssoUser ? json(ssoUser) : json({ error: "unauthorized", sso: ssoConfigured }, 401);
+    if (url === "/auth/logout") {
+      ssoUser = null;
+      return new Response(null, { status: 204 });
+    }
+    const signedIn = auth === "Bearer good-admin-token" || (auth === null && ssoUser !== null);
+    if (!signedIn) return json({ error: "unauthorized" }, 401);
     const route = routes[`${method} ${url.split("?")[0]}`];
     return route ? route() : json({ error: "not_found" }, 404);
   });
@@ -65,7 +77,9 @@ describe("sign in", () => {
     expect(await screen.findByText("Chat")).toBeTruthy();
     expect(screen.getByText(t("systems.used", { used: "500", cap: "1,000" }))).toBeTruthy();
     expect(screen.getByText("chat")).toBeTruthy();
-    expect(calls.every((c) => c.auth === "Bearer good-admin-token" || c.auth === "Bearer bad")).toBe(true);
+    const adminCalls = calls.filter((c) => c.url.startsWith("/admin/"));
+    expect(adminCalls.length).toBeGreaterThan(0);
+    expect(adminCalls.every((c) => c.auth === "Bearer good-admin-token")).toBe(true);
   });
 
   it("does not keep the token in web storage", async () => {
@@ -82,6 +96,49 @@ describe("sign in", () => {
     window.location.hash = "#/usage";
     fireEvent(window, new HashChangeEvent("hashchange"));
     expect(await screen.findByLabelText(t("signin.token"))).toBeTruthy();
+  });
+});
+
+describe("sign in with xDev ID", () => {
+  it("offers xDev ID only when the gateway has it set up", async () => {
+    render(<App />);
+    await waitFor(() => expect(calls.some((c) => c.url === "/auth/me")).toBe(true));
+    expect(screen.queryByRole("button", { name: t("signin.sso") })).toBeNull();
+    cleanup();
+    ssoConfigured = true;
+    render(<App />);
+    expect(await screen.findByRole("button", { name: t("signin.sso") })).toBeTruthy();
+    expect(screen.getByText(t("signin.tokenTitle"))).toBeTruthy();
+  });
+
+  it("an xDev ID session opens the console without a token and shows the account", async () => {
+    ssoUser = { email: "owner@example.com", name: "Owner" };
+    render(<App />);
+    expect(await screen.findByText("Chat")).toBeTruthy();
+    expect(screen.getByText("owner@example.com")).toBeTruthy();
+    expect(calls.filter((c) => c.url.startsWith("/admin/")).every((c) => c.auth === null)).toBe(true);
+  });
+
+  it("sign-out ends the xDev ID session on the gateway", async () => {
+    ssoUser = { email: "owner@example.com", name: "Owner" };
+    ssoConfigured = true;
+    render(<App />);
+    await screen.findByText("Chat");
+    fireEvent.click(screen.getByRole("button", { name: t("shell.signOut") }));
+    expect(await screen.findByRole("button", { name: t("signin.sso") })).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST" && c.url === "/auth/logout")).toBe(true);
+  });
+
+  it("shows why a sign-in came back", async () => {
+    window.history.replaceState({}, "", "/?signin_error=not_allowed");
+    ssoConfigured = true;
+    render(<App />);
+    expect(await screen.findByText(t("signin.error.not_allowed"))).toBeTruthy();
+    cleanup();
+    window.history.replaceState({}, "", "/?signin_error=<script>");
+    render(<App />);
+    await screen.findByRole("button", { name: t("signin.sso") });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
