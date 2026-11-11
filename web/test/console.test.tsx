@@ -8,7 +8,17 @@ import { lastMonths } from "../pages/Usage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const SYSTEM = { id: "chat", name: "Chat", monthly_token_cap: 1000, disabled: false, created_at: 1_790_000_000 };
+const SYSTEM = {
+  id: "chat",
+  name: "Chat",
+  monthly_token_cap: 1000,
+  disabled: false,
+  created_at: 1_790_000_000,
+  allowed_models: null,
+  rtk: false,
+  caveman: null,
+  ponytail: null,
+};
 const USAGE = {
   month: "2026-11",
   rows: [
@@ -34,6 +44,10 @@ beforeEach(() => {
     "GET /admin/systems": () => json([SYSTEM]),
     "GET /admin/usage": () => json(USAGE),
     "POST /admin/systems": () => json({ id: "xdevd", token: "xllm_new_token" }, 201),
+    "PATCH /admin/systems/chat": () => json(SYSTEM),
+    "GET /admin/combos": () => json([{ name: "fast", targets: ["groq/llama", "claude-haiku-5-5"], updated_at: 1 }]),
+    "PUT /admin/combos/cheap": () => json({ name: "cheap", targets: ["groq/llama"], updated_at: 2 }),
+    "DELETE /admin/combos/fast": () => new Response(null, { status: 204 }),
   };
   vi.stubGlobal("fetch", async (input: string, init: RequestInit = {}) => {
     const method = init.method ?? "GET";
@@ -169,6 +183,65 @@ describe("systems", () => {
   });
 });
 
+describe("models and savers", () => {
+  it("saves allowed models and savers in one PATCH, and refuses bad patterns first", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: chat` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("systems.settings") }));
+    const models = screen.getByLabelText(t("settings.models")) as HTMLTextAreaElement;
+    expect(models.value).toBe("anthropic/*");
+
+    fireEvent.change(models, { target: { value: "anthropic/*\nOpenAI/gpt" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    expect(await screen.findByText(t("settings.modelsBad", { bad: "OpenAI/gpt" }))).toBeTruthy();
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+
+    fireEvent.change(models, { target: { value: "anthropic/*\ncombo/fast, groq/*" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: new RegExp(t("settings.rtk")) }));
+    fireEvent.change(screen.getByLabelText(t("settings.caveman")), { target: { value: "lite" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toEqual({
+      allowed_models: ["anthropic/*", "combo/fast", "groq/*"],
+      rtk: true,
+      caveman: "lite",
+      ponytail: null,
+    }));
+  });
+});
+
+describe("combos", () => {
+  it("lists combos, adds one and deletes one", async () => {
+    window.location.hash = "#/combos";
+    await signIn();
+    expect(await screen.findByText("combo/fast")).toBeTruthy();
+    expect(screen.getByText("claude-haiku-5-5")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: t("combos.add") }));
+    fireEvent.change(screen.getByLabelText(t("combos.name")), { target: { value: "cheap" } });
+    fireEvent.change(screen.getByLabelText(t("combos.targets")), { target: { value: "groq/llama" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/combos/cheap", body: { targets: ["groq/llama"] } }));
+
+    fireEvent.click(await screen.findByRole("button", { name: `${t("systems.col.actions")}: fast` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("combos.delete") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("combos.delete") }));
+    expect(await screen.findByText(t("combos.deletedNotice", { name: "fast" }))).toBeTruthy();
+  });
+
+  it("checks the name and the targets before saving", async () => {
+    window.location.hash = "#/combos";
+    await signIn();
+    await screen.findByText("combo/fast");
+    fireEvent.click(screen.getByRole("button", { name: t("combos.add") }));
+    fireEvent.change(screen.getByLabelText(t("combos.name")), { target: { value: "Bad Name" } });
+    fireEvent.change(screen.getByLabelText(t("combos.targets")), { target: { value: "gpt-5" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    expect(await screen.findByText(t("settings.modelsBad", { bad: "gpt-5" }))).toBeTruthy();
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+});
+
 describe("usage", () => {
   it("shows totals and one row per system and model", async () => {
     window.location.hash = "#/usage";
@@ -186,6 +259,12 @@ describe("helpers", () => {
     expect(parseCap("-1")).toBeUndefined();
     expect(parseCap("1.5")).toBeUndefined();
     expect(parseCap("99999999999999999999")).toBeUndefined();
+  });
+
+  it("pageFromHash knows the three pages", () => {
+    expect(pageFromHash("#/combos")).toBe("combos");
+    expect(pageFromHash("#/usage")).toBe("usage");
+    expect(pageFromHash("#/whatever")).toBe("systems");
   });
 
   it("lastMonths: 12 UTC months, newest first, across a year edge", () => {

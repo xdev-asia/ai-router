@@ -20,6 +20,7 @@ import { ApiError, api, capTokens, useLoad, type System, type UsageReport } from
 import { formatNumber, t, useLang } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
+import { SystemSettings } from "./SystemSettings";
 import { TokenDialog } from "./TokenDialog";
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
@@ -36,6 +37,7 @@ export function parseCap(raw: string): number | null | undefined {
 type Pending =
   | { kind: "create" }
   | { kind: "cap"; system: System }
+  | { kind: "settings"; system: System }
   | { kind: "rotate"; system: System }
   | { kind: "disable"; system: System }
   | { kind: "token"; id: string; token: string }
@@ -129,6 +131,7 @@ export function Systems() {
           label={`${t("systems.col.actions")}: ${s.id}`}
           disabled={busy}
           items={[
+            { label: t("systems.settings"), onSelect: () => setPending({ kind: "settings", system: s }) },
             { label: t("systems.editCap"), onSelect: () => setPending({ kind: "cap", system: s }) },
             { label: t("systems.rotate"), onSelect: () => setPending({ kind: "rotate", system: s }) },
             { type: "separator" },
@@ -185,6 +188,17 @@ export function Systems() {
           onCancel={() => setPending(null)}
           onSaved={() => {
             notify(t("systems.capNotice", { id: pending.system.id }));
+            setPending(null);
+            reload();
+          }}
+        />
+      )}
+      {pending?.kind === "settings" && (
+        <SystemSettings
+          system={pending.system}
+          onCancel={() => setPending(null)}
+          onSaved={() => {
+            notify(t("settings.savedNotice", { id: pending.system.id }));
             setPending(null);
             reload();
           }}

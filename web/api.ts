@@ -74,6 +74,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ApiError(res.status, body.error ?? String(res.status));
   }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -103,6 +104,38 @@ export interface System {
   monthly_token_cap: number | null;
   disabled: boolean;
   created_at: number;
+  /** JSON array of model patterns; null means Claude only. */
+  allowed_models: string | null;
+  rtk: boolean;
+  caveman: SaverLevel | null;
+  ponytail: SaverLevel | null;
+}
+
+export type SaverLevel = "lite" | "full" | "ultra";
+
+export interface Combo {
+  name: string;
+  targets: string[];
+  updated_at: number;
+}
+
+/** One pattern per line or comma; the same rule as the gateway's (providers.ts PATTERN). */
+export const MODEL_PATTERN = /^(\*|[a-z]+\/\*|[a-z]+\/[A-Za-z0-9._:\/@+-]{1,200})$/;
+/** A combo target: provider/model or a bare claude-* model. */
+export const TARGET = /^(claude-[A-Za-z0-9._:@+-]{1,190}|[a-z]+\/[A-Za-z0-9._:\/@+-]{1,200})$/;
+export const COMBO_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+export const splitList = (raw: string): string[] => [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];
+
+/** The patterns a system's allowed_models holds (Claude only when null). */
+export function patternsOf(s: Pick<System, "allowed_models">): string[] {
+  if (s.allowed_models === null) return ["anthropic/*"];
+  try {
+    const v: unknown = JSON.parse(s.allowed_models);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : ["anthropic/*"];
+  } catch {
+    return ["anthropic/*"];
+  }
 }
 
 export interface UsageRow {

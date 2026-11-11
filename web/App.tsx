@@ -5,15 +5,16 @@ import { t, useLang } from "./i18n";
 import { LangSelect } from "./LangSelect";
 import { NotifyContext, useToasts } from "./notify";
 import { SignIn } from "./pages/SignIn";
+import { Combos } from "./pages/Combos";
 import { Systems } from "./pages/Systems";
 import { Usage } from "./pages/Usage";
 import { ui } from "./ui-labels";
 
-export type Page = "systems" | "usage";
+export type Page = "systems" | "combos" | "usage";
 
-/** Hash routes (`#/systems`, `#/usage`), so no page path ever collides with the /admin API. */
+/** Hash routes (`#/systems`, `#/combos`, `#/usage`), so no page path ever collides with the /admin API. */
 export function pageFromHash(hash: string): Page {
-  return hash === "#/usage" ? "usage" : "systems";
+  return hash === "#/usage" ? "usage" : hash === "#/combos" ? "combos" : "systems";
 }
 
 function usePage(): Page {
@@ -80,6 +81,7 @@ export function App() {
             onSelect={() => setNavOpen(false)}
             items={[
               { id: "systems", label: t("nav.systems"), icon: "server", href: "#/systems" },
+              { id: "combos", label: t("nav.combos"), icon: "list", href: "#/combos" },
               { id: "usage", label: t("nav.usage"), icon: "activity", href: "#/usage" },
             ]}
           />
@@ -94,7 +96,7 @@ export function App() {
           </>
         }
       >
-        {page === "usage" ? <Usage /> : <Systems />}
+        {page === "usage" ? <Usage /> : page === "combos" ? <Combos /> : <Systems />}
       </AppShell>
     </NotifyContext.Provider>
   );

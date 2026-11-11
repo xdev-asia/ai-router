@@ -84,3 +84,15 @@ body {
 .signin-form > button {
   align-self: flex-end;
 }
+
+.combo-targets {
+  margin: 0;
+  padding-left: var(--x-space-4);
+  font: var(--type-mono);
+  overflow-wrap: anywhere;
+}
+
+.settings-label {
+  font: var(--type-control);
+  color: var(--text-1);
+}
