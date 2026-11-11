@@ -8,6 +8,10 @@ export interface System {
   created_at: number;
   /** JSON array of model patterns; null means Claude only. See providers.ts. */
   allowed_models: string | null;
+  /** Token savers (savers/index.ts): RTK on/off, Caveman and Ponytail level or null. */
+  rtk: boolean;
+  caveman: string | null;
+  ponytail: string | null;
 }
 
 export async function sha256hex(s: string): Promise<string> {
@@ -37,13 +41,15 @@ export function presentedToken(req: Request): string | null {
   return m?.[1] ?? null;
 }
 
-type SystemRow = Omit<System, "disabled"> & { disabled: number };
+type SystemRow = Omit<System, "disabled" | "rtk"> & { disabled: number; rtk: number };
 
-export const toSystem = (r: SystemRow): System => ({ ...r, disabled: r.disabled === 1 });
+export const toSystem = (r: SystemRow): System => ({ ...r, disabled: r.disabled === 1, rtk: r.rtk === 1 });
+
+export const SYSTEM_COLUMNS = "id, name, monthly_token_cap, disabled, created_at, allowed_models, rtk, caveman, ponytail";
 
 export async function systemForToken(db: D1Database, token: string): Promise<System | null> {
   const row = await db
-    .prepare("SELECT id, name, monthly_token_cap, disabled, created_at, allowed_models FROM system WHERE token_sha256 = ?")
+    .prepare(`SELECT ${SYSTEM_COLUMNS} FROM system WHERE token_sha256 = ?`)
     .bind(await sha256hex(token))
     .first<SystemRow>();
   return row ? toSystem(row) : null;

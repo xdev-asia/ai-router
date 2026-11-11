@@ -108,6 +108,22 @@ usage (to meter) and drops that chunk when the client did not ask for it.
 Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of the gateway's own refusals:
 `invalid_api_key`, `system_disabled`, `monthly_token_cap`, `model_not_found`, `model_not_allowed`, `not_configured`.
 
+## Token savers (per system, off by default)
+
+Ported from 9router (MIT), which ports RTK (Apache-2.0) and adapts Caveman (Apache-2.0) and Ponytail (MIT); see
+`worker/savers/THIRD_PARTY_NOTICES.md`. Set with `PATCH /admin/systems/:id`:
+
+| Field | Effect |
+|---|---|
+| `rtk: true` | Rewrites successful tool results (Claude `tool_result`, OpenAI `role: "tool"`) over 500 bytes with a filter picked from their first 1 KB: git diff/log/status, grep, find, ls, tree, build output, repeated log lines, or the first 120 + last 60 lines. **Lossy**: long outputs are cut. Errors, user and assistant text are never touched |
+| `caveman: "lite" \| "full" \| "ultra"` | Appends a terse-answer instruction to the system prompt (code, paths, commands, errors stay exact) |
+| `ponytail: "lite" \| "full" \| "ultra"` | Appends a "minimal code, YAGNI first" instruction to the system prompt |
+
+With all off the request bytes go upstream unchanged. One request can opt out with `x-gateway-token-saver: off`.
+Each usage row records `rtk_saved_bytes`, so the effect can be measured against the token counts. The savings that
+9router's README claims are not measured by its tests; measure them here before relying on them. [Inference] Caveman
+and Ponytail change how the model answers: fit for coding agents, not for systems that need full prose.
+
 ## Admin API
 
 All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev ID session cookie
@@ -118,7 +134,7 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `GET /systems` | | systems (no token hashes) |
 | `POST /systems` | `{id, name, monthly_token_cap?}` | `201 {id, token}`; `400`, `409 exists` |
 | `POST /systems/:id/rotate` | | `{id, token}`; the old token stops working |
-| `PATCH /systems/:id` | `{name?, monthly_token_cap?, disabled?, allowed_models?}` | the system |
+| `PATCH /systems/:id` | `{name?, monthly_token_cap?, disabled?, allowed_models?, rtk?, caveman?, ponytail?}` | the system |
 | `GET /combos` | | `[{name, targets, updated_at}]` |
 | `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
 | `DELETE /combos/:name` | | `204`; `404` |

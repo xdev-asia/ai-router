@@ -5,6 +5,7 @@ import { PROVIDERS, allowedPatterns, allows, parseModel, providerKey, targetName
 import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
+import { applySavers, saversFor, type Savers } from "./savers";
 
 /** The Messages API version this gateway speaks when it builds the upstream request itself. */
 export const ANTHROPIC_VERSION = "2023-06-01";
@@ -47,8 +48,9 @@ async function failure(up: Response): Promise<Attempt> {
   };
 }
 
-async function callAnthropic(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json): Promise<Attempt> {
+async function callAnthropic(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json, savers: Savers): Promise<Attempt> {
   const messages = chatToMessages({ ...req, model: target.model });
+  const saved = applySavers(messages, "anthropic", savers);
   const stream = messages.stream === true;
   const includeUsage = stream && (req.stream_options as Json | undefined)?.include_usage === true;
   const up = await upstream(
@@ -59,12 +61,12 @@ async function callAnthropic(c: Context<AppEnv>, upstream: Upstream, system: Sys
     }),
   );
   if (!up.ok || !up.body) {
-    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), "anthropic");
+    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), "anthropic", saved);
     return failure(up);
   }
   const [toClient, toMeter] = up.body.tee();
   if (stream) {
-    record(c, system, up, true, usageOfStream(toMeter), "anthropic");
+    record(c, system, up, true, usageOfStream(toMeter), "anthropic", saved);
     return {
       ok: true,
       res: new Response(toClient.pipeThrough(streamToChat(target.model, includeUsage)), {
@@ -73,7 +75,7 @@ async function callAnthropic(c: Context<AppEnv>, upstream: Upstream, system: Sys
     };
   }
   const msg: unknown = await new Response(toClient).json();
-  record(c, system, up, false, new Response(toMeter).json().then(usageOfMessage), "anthropic");
+  record(c, system, up, false, new Response(toMeter).json().then(usageOfMessage), "anthropic", saved);
   return { ok: true, res: Response.json(messageToChat(msg, target.model), { headers: { "cache-control": "no-store" } }) };
 }
 
@@ -127,11 +129,13 @@ function meterOpenAIStream(body: ReadableStream<Uint8Array>, model: string, keep
   return { client, usage };
 }
 
-async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json): Promise<Attempt> {
+async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json, savers: Savers): Promise<Attempt> {
   const p = PROVIDERS[target.provider] as { baseUrl: string };
   const stream = req.stream === true;
   const keepUsage = (req.stream_options as Json | undefined)?.include_usage === true;
-  const body: Json = { ...req, model: target.model };
+  // A deep copy: savers rewrite messages in place, and a combo may send the same request to another target.
+  const body: Json = { ...(structuredClone(req) as Json), model: target.model };
+  const saved = applySavers(body, "openai", savers);
   if (stream) body.stream_options = { ...((req.stream_options as Json | undefined) ?? {}), include_usage: true };
   const up = await upstream(
     new Request(`${p.baseUrl}/chat/completions`, {
@@ -141,16 +145,16 @@ async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, syst
     }),
   );
   if (!up.ok || !up.body) {
-    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider);
+    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
     return failure(up);
   }
   if (stream) {
     const { client, usage } = meterOpenAIStream(up.body, target.model, keepUsage);
-    record(c, system, up, true, usage, target.provider);
+    record(c, system, up, true, usage, target.provider, saved);
     return { ok: true, res: new Response(client, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store" } }) };
   }
   const out = (await up.json()) as Json;
-  record(c, system, up, false, Promise.resolve(usageOfOpenAI(typeof out.model === "string" ? out.model : target.model, out.usage)), target.provider);
+  record(c, system, up, false, Promise.resolve(usageOfOpenAI(typeof out.model === "string" ? out.model : target.model, out.usage)), target.provider, saved);
   return { ok: true, res: Response.json(out, { headers: { "cache-control": "no-store" } }) };
 }
 
@@ -186,6 +190,7 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
   const cooling = ref.kind === "combo" ? await coolingTargets(c.env.DB, targets.map(targetName), now) : new Set<string>();
   const order = [...targets.filter((t) => !cooling.has(targetName(t))), ...targets.filter((t) => cooling.has(targetName(t)))];
 
+  const savers = saversFor(system, c.req.raw);
   let last: Response | null = null;
   for (const [i, target] of order.entries()) {
     const key = providerKey(c.env, target.provider, system.id);
@@ -196,8 +201,8 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
     let attempt: Attempt;
     try {
       attempt = PROVIDERS[target.provider].format === "anthropic"
-        ? await callAnthropic(c, upstream, system, key, target, req)
-        : await callOpenAICompatible(c, upstream, system, key, target, req);
+        ? await callAnthropic(c, upstream, system, key, target, req, savers)
+        : await callOpenAICompatible(c, upstream, system, key, target, req, savers);
     } catch (e) {
       if (e instanceof TranslateError) return errorResponse(400, e.message, "invalid_request_error");
       attempt = { ok: false, res: errorResponse(502, `could not reach ${target.provider}`, "api_error"), retryable: true, retryAfter: null };

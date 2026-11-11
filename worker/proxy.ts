@@ -3,6 +3,7 @@ import { anthropicKeyFor, presentedToken, systemForToken, type System } from "./
 import type { AppEnv, Env } from "./env";
 import { anthropicError } from "./errors";
 import { allowedPatterns, allows, parseModel, targetName } from "./providers";
+import { anyOn, applySavers, saversFor } from "./savers";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
 export type Upstream = (req: Request) => Promise<Response>;
@@ -78,13 +79,13 @@ function responseHeaders(up: Response): Headers {
   return h;
 }
 
-export function record(c: Context<AppEnv>, system: System, up: Response, streamed: boolean, usage: Promise<Usage>, provider: string = PROVIDER): void {
+export function record(c: Context<AppEnv>, system: System, up: Response, streamed: boolean, usage: Promise<Usage>, provider: string = PROVIDER, rtkSaved = 0): void {
   const requestId = up.headers.get("request-id");
   c.executionCtx.waitUntil(
     usage
       .catch(() => EMPTY)
       .then((u) =>
-        recordUsage(c.env.DB, { ...u, system_id: system.id, provider, request_id: requestId, status: up.status, streamed }),
+        recordUsage(c.env.DB, { ...u, system_id: system.id, provider, request_id: requestId, status: up.status, streamed, rtk_saved_bytes: rtkSaved }),
       )
       // Logs the system and status only: never keys, tokens or content.
       .catch((e: unknown) => console.error("usage record failed", system.id, up.status, e instanceof Error ? e.name : "error")),
@@ -116,14 +117,26 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages", async (c) => {
     const g = await gate(c, true);
     if (!g.ok) return g.res;
-    const body = await c.req.arrayBuffer();
+    let body = await c.req.arrayBuffer();
     const refused = modelRefused(c, g.system, body);
     if (refused) return refused;
+    // Token savers rewrite the body; with none on, the client's bytes go upstream untouched.
+    const savers = saversFor(g.system, c.req.raw);
+    let rtkSaved = 0;
+    if (anyOn(savers)) {
+      try {
+        const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+        rtkSaved = applySavers(parsed, "anthropic", savers);
+        body = new TextEncoder().encode(JSON.stringify(parsed)).buffer as ArrayBuffer;
+      } catch {
+        // not JSON: forwarded as is, Anthropic answers 400
+      }
+    }
     const up = await upstream(upstreamRequest(c, "/v1/messages", g.key, body));
     const headers = responseHeaders(up);
 
     if (!up.body) {
-      record(c, g.system, up, false, Promise.resolve(EMPTY));
+      record(c, g.system, up, false, Promise.resolve(EMPTY), PROVIDER, rtkSaved);
       return new Response(null, { status: up.status, headers });
     }
     const streamed = (up.headers.get("content-type") ?? "").includes("text/event-stream");
@@ -134,6 +147,8 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
       up,
       streamed,
       streamed ? usageOfStream(toMeter) : new Response(toMeter).json().then(usageOfMessage),
+      PROVIDER,
+      rtkSaved,
     );
     return new Response(toClient, { status: up.status, headers });
   });

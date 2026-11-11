@@ -72,14 +72,16 @@ export interface UsageRow extends Usage {
   request_id: string | null;
   status: number;
   streamed: boolean;
+  /** Bytes RTK removed from this request (0 when off). */
+  rtk_saved_bytes?: number;
 }
 
 export async function recordUsage(db: D1Database, r: UsageRow, nowSec = Math.floor(Date.now() / 1000)): Promise<void> {
   await db
     .prepare(
       `INSERT INTO usage (system_id, provider, request_id, model, status, streamed,
-         input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, at, rtk_saved_bytes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       r.system_id,
@@ -93,6 +95,7 @@ export async function recordUsage(db: D1Database, r: UsageRow, nowSec = Math.flo
       r.cache_creation_input_tokens,
       r.cache_read_input_tokens,
       nowSec,
+      r.rtk_saved_bytes ?? 0,
     )
     .run();
 }

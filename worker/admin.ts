@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
+import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
+import { isLevel } from "./savers";
 import { consoleUser, sameOrigin } from "./console-auth";
 import { COMBO_NAME, PATTERN, parseModel } from "./providers";
 import type { AppEnv } from "./env";
@@ -23,7 +24,7 @@ async function readJson(req: Request): Promise<Record<string, unknown> | null> {
 }
 
 async function getSystem(db: D1Database, id: string): Promise<System | null> {
-  const row = await db.prepare("SELECT id, name, monthly_token_cap, disabled, created_at, allowed_models FROM system WHERE id = ?").bind(id).first<SystemRow>();
+  const row = await db.prepare(`SELECT ${SYSTEM_COLUMNS} FROM system WHERE id = ?`).bind(id).first<SystemRow>();
   return row ? toSystem(row) : null;
 }
 
@@ -50,7 +51,7 @@ export function adminRoutes(): Hono<AppEnv> {
   });
 
   a.get("/systems", async (c) => {
-    const r = await c.env.DB.prepare("SELECT id, name, monthly_token_cap, disabled, created_at, allowed_models FROM system ORDER BY id").all<SystemRow>();
+    const r = await c.env.DB.prepare(`SELECT ${SYSTEM_COLUMNS} FROM system ORDER BY id`).all<SystemRow>();
     return c.json(r.results.map(toSystem));
   });
 
@@ -102,8 +103,17 @@ export function adminRoutes(): Hono<AppEnv> {
       }
       next.allowed_models = v === null ? null : JSON.stringify([...new Set(v as string[])]);
     }
-    await c.env.DB.prepare("UPDATE system SET name = ?, monthly_token_cap = ?, disabled = ?, allowed_models = ? WHERE id = ?")
-      .bind(next.name, next.monthly_token_cap, next.disabled ? 1 : 0, next.allowed_models, id)
+    if ("rtk" in b) {
+      if (typeof b.rtk !== "boolean") return c.json({ error: "invalid_input", field: "rtk" }, 400);
+      next.rtk = b.rtk;
+    }
+    for (const f of ["caveman", "ponytail"] as const) {
+      if (!(f in b)) continue;
+      if (b[f] !== null && !isLevel(b[f])) return c.json({ error: "invalid_input", field: f, hint: "lite, full, ultra or null" }, 400);
+      next[f] = b[f] as string | null;
+    }
+    await c.env.DB.prepare("UPDATE system SET name = ?, monthly_token_cap = ?, disabled = ?, allowed_models = ?, rtk = ?, caveman = ?, ponytail = ? WHERE id = ?")
+      .bind(next.name, next.monthly_token_cap, next.disabled ? 1 : 0, next.allowed_models, next.rtk ? 1 : 0, next.caveman, next.ponytail, id)
       .run();
     return c.json(next);
   });
