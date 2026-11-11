@@ -69,6 +69,20 @@ Two ways in:
   a `__Host-xllm_login` cookie and is single use. Writes with the cookie must be same-origin.
 - **The admin token**, kept in page memory only, never in storage or a cookie, so a reload signs out.
 
+## OpenAI-compatible endpoint
+
+For systems that only have an OpenAI SDK: `new OpenAI({ apiKey: <gateway token>, baseURL: "https://<host>/openai/v1" })`.
+Requests are translated to Claude's Messages API (idea from 9router's translator, MIT; written anew here) and metered,
+capped and refused exactly like `/anthropic`.
+
+| Call | Notes |
+|---|---|
+| `POST /openai/v1/chat/completions` | text, images (https or base64 data URL), function tools and tool results, `tool_choice`, `parallel_tool_calls`, `stop`, `temperature` (clamped to 0-1), `max_tokens` / `max_completion_tokens` (default 8192), streaming with `stream_options.include_usage` |
+| `GET /openai/v1/models` | the provider's model list in the OpenAI shape |
+
+Refused with `400`: `n` other than 1, non-function tools, plain-http image URLs, unknown roles. Thinking blocks are not
+returned. Errors use the OpenAI envelope `{error: {message, type, param, code}}` with the upstream status.
+
 ## Admin API
 
 All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev ID session cookie

@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { anthropicKeyFor, presentedToken, systemForToken, type System } from "./auth";
-import type { AppEnv } from "./env";
+import type { AppEnv, Env } from "./env";
 import { anthropicError } from "./errors";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
@@ -14,25 +14,42 @@ const FORWARD_REQUEST = ["anthropic-version", "anthropic-beta", "content-type", 
 /** Response headers dropped: the body is re-streamed, so its length and encoding no longer hold. */
 const DROP_RESPONSE = ["content-length", "content-encoding", "transfer-encoding", "set-cookie"];
 
-type Gate = { ok: true; system: System; key: string } | { ok: false; res: Response };
+export type GateFailure = {
+  ok: false;
+  status: 401 | 403 | 429 | 500;
+  kind: "authentication" | "permission" | "not_configured" | "cap";
+  message: string;
+  /** Tells the official SDKs not to retry (`x-should-retry: false`). */
+  noRetry: boolean;
+};
+export type Gate = { ok: true; system: System; key: string } | GateFailure;
 
-async function gate(c: Context<AppEnv>, metered: boolean): Promise<Gate> {
-  const token = presentedToken(c.req.raw);
-  const system = token ? await systemForToken(c.env.DB, token) : null;
-  if (!system) return { ok: false, res: anthropicError(c, 401, "authentication_error", "invalid gateway token") };
-  if (system.disabled) return { ok: false, res: anthropicError(c, 403, "permission_error", "this system is disabled") };
+/** Who is calling (gateway token), whether that system may call now, and its provider key. Shared by every format. */
+export async function checkGate(env: Env, req: Request, metered: boolean): Promise<Gate> {
+  const token = presentedToken(req);
+  const system = token ? await systemForToken(env.DB, token) : null;
+  if (!system) return { ok: false, status: 401, kind: "authentication", message: "invalid gateway token", noRetry: false };
+  if (system.disabled) return { ok: false, status: 403, kind: "permission", message: "this system is disabled", noRetry: false };
 
-  const key = anthropicKeyFor(c.env, system.id);
-  if (!key) return { ok: false, res: anthropicError(c, 500, "api_error", "not_configured: no Anthropic key for this system", true) };
+  const key = anthropicKeyFor(env, system.id);
+  if (!key) return { ok: false, status: 500, kind: "not_configured", message: "not_configured: no Anthropic key for this system", noRetry: true };
 
   // Checked before the request, so one request may go over the cap; the next one is refused.
   if (metered && system.monthly_token_cap !== null) {
-    const used = await tokensThisMonth(c.env.DB, system.id);
+    const used = await tokensThisMonth(env.DB, system.id);
     if (used >= system.monthly_token_cap) {
-      return { ok: false, res: anthropicError(c, 429, "rate_limit_error", "monthly token cap reached for this system", true) };
+      return { ok: false, status: 429, kind: "cap", message: "monthly token cap reached for this system", noRetry: true };
     }
   }
   return { ok: true, system, key };
+}
+
+const ANTHROPIC_TYPE = { authentication: "authentication_error", permission: "permission_error", not_configured: "api_error", cap: "rate_limit_error" } as const;
+
+async function gate(c: Context<AppEnv>, metered: boolean): Promise<{ ok: true; system: System; key: string } | { ok: false; res: Response }> {
+  const g = await checkGate(c.env, c.req.raw, metered);
+  if (g.ok) return g;
+  return { ok: false, res: anthropicError(c, g.status, ANTHROPIC_TYPE[g.kind], g.message, g.noRetry) };
 }
 
 function upstreamRequest(c: Context<AppEnv>, path: string, key: string, body: ArrayBuffer): Request {
@@ -54,7 +71,7 @@ function responseHeaders(up: Response): Headers {
   return h;
 }
 
-function record(c: Context<AppEnv>, system: System, up: Response, streamed: boolean, usage: Promise<Usage>): void {
+export function record(c: Context<AppEnv>, system: System, up: Response, streamed: boolean, usage: Promise<Usage>): void {
   const requestId = up.headers.get("request-id");
   c.executionCtx.waitUntil(
     usage

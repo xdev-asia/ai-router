@@ -3,6 +3,7 @@ import { adminRoutes } from "./admin";
 import { consoleAuthRoutes, type Idp } from "./console-auth";
 import type { AppEnv } from "./env";
 import { anthropicError } from "./errors";
+import { openaiRoutes } from "./openai";
 import { anthropicRoutes, type Upstream } from "./proxy";
 
 export interface Deps {
@@ -23,6 +24,7 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
   app.route("/admin", adminRoutes());
   app.route("/anthropic", anthropicRoutes(deps.upstream));
+  app.route("/openai", openaiRoutes(deps.upstream));
   app.notFound((c) => anthropicError(c, 404, "not_found_error", "not found"));
   return app;
 }
