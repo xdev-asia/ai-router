@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { consoleUser, sameOrigin } from "./console-auth";
+import { COMBO_NAME, PATTERN, parseModel } from "./providers";
 import type { AppEnv } from "./env";
 import { currentMonth, monthRange } from "./usage";
 
@@ -22,7 +23,7 @@ async function readJson(req: Request): Promise<Record<string, unknown> | null> {
 }
 
 async function getSystem(db: D1Database, id: string): Promise<System | null> {
-  const row = await db.prepare("SELECT id, name, monthly_token_cap, disabled, created_at FROM system WHERE id = ?").bind(id).first<SystemRow>();
+  const row = await db.prepare("SELECT id, name, monthly_token_cap, disabled, created_at, allowed_models FROM system WHERE id = ?").bind(id).first<SystemRow>();
   return row ? toSystem(row) : null;
 }
 
@@ -49,7 +50,7 @@ export function adminRoutes(): Hono<AppEnv> {
   });
 
   a.get("/systems", async (c) => {
-    const r = await c.env.DB.prepare("SELECT id, name, monthly_token_cap, disabled, created_at FROM system ORDER BY id").all<SystemRow>();
+    const r = await c.env.DB.prepare("SELECT id, name, monthly_token_cap, disabled, created_at, allowed_models FROM system ORDER BY id").all<SystemRow>();
     return c.json(r.results.map(toSystem));
   });
 
@@ -93,10 +94,48 @@ export function adminRoutes(): Hono<AppEnv> {
       if (typeof b.disabled !== "boolean") return c.json({ error: "invalid_input", field: "disabled" }, 400);
       next.disabled = b.disabled;
     }
-    await c.env.DB.prepare("UPDATE system SET name = ?, monthly_token_cap = ?, disabled = ? WHERE id = ?")
-      .bind(next.name, next.monthly_token_cap, next.disabled ? 1 : 0, id)
+    if ("allowed_models" in b) {
+      const v = b.allowed_models;
+      // null: Claude only. Otherwise up to 50 patterns: "*", "provider/*", "provider/model" or "combo/name".
+      if (v !== null && !(Array.isArray(v) && v.length <= 50 && v.every((p) => typeof p === "string" && PATTERN.test(p)))) {
+        return c.json({ error: "invalid_input", field: "allowed_models" }, 400);
+      }
+      next.allowed_models = v === null ? null : JSON.stringify([...new Set(v as string[])]);
+    }
+    await c.env.DB.prepare("UPDATE system SET name = ?, monthly_token_cap = ?, disabled = ?, allowed_models = ? WHERE id = ?")
+      .bind(next.name, next.monthly_token_cap, next.disabled ? 1 : 0, next.allowed_models, id)
       .run();
     return c.json(next);
+  });
+
+  /** Combos: `combo/<name>` tries `targets` ("provider/model" or "claude-*") in order. */
+  a.get("/combos", async (c) => {
+    const r = await c.env.DB.prepare("SELECT name, targets, updated_at FROM combo ORDER BY name").all<{ name: string; targets: string; updated_at: number }>();
+    return c.json(r.results.map((x) => ({ name: x.name, targets: JSON.parse(x.targets) as string[], updated_at: x.updated_at })));
+  });
+
+  a.put("/combos/:name", async (c) => {
+    const name = c.req.param("name");
+    const b = await readJson(c.req.raw);
+    const targets = b?.targets;
+    const valid =
+      COMBO_NAME.test(name) &&
+      Array.isArray(targets) &&
+      targets.length >= 1 &&
+      targets.length <= 10 &&
+      targets.every((t) => parseModel(t)?.kind === "target");
+    if (!valid) return c.json({ error: "invalid_input", hint: "name: ^[a-z][a-z0-9-]{0,31}$, targets: 1-10 of provider/model or claude-*" }, 400);
+    const now = Math.floor(Date.now() / 1000);
+    await c.env.DB.prepare("INSERT INTO combo (name, targets, updated_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET targets = excluded.targets, updated_at = excluded.updated_at")
+      .bind(name, JSON.stringify(targets), now)
+      .run();
+    return c.json({ name, targets, updated_at: now });
+  });
+
+  a.delete("/combos/:name", async (c) => {
+    const r = await c.env.DB.prepare("DELETE FROM combo WHERE name = ?").bind(c.req.param("name")).run();
+    if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+    return c.body(null, 204);
   });
 
   /** `?month=YYYY-MM` (UTC), this month when omitted. One row per system, provider and model. */

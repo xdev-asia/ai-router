@@ -4,6 +4,8 @@ export interface Env {
   ANTHROPIC_BASE_URL: string;
   /** Secret: JSON object, system id -> that system's Anthropic API key. A system missing here gets `not_configured`. */
   ANTHROPIC_KEYS?: string;
+  /** Secret: JSON object, provider id -> its API key (`{"openai": "sk-...", "groq": "gsk_..."}`), shared by the systems allowed to use it. */
+  PROVIDER_KEYS?: string;
   /** Secret: SHA-256 hex of the admin bearer token. Unset disables the token (the console can still use xDev ID). */
   ADMIN_TOKEN_SHA256?: string;
   /** Public: OpenID issuer of xDev ID (`https://id.xdev.asia/api/auth`). Console sign-in is off while any OIDC value is unset. */

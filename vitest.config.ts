@@ -22,6 +22,8 @@ export default defineConfig({
             TEST_MIGRATIONS: migrations,
             ANTHROPIC_BASE_URL: "https://upstream.test",
             ANTHROPIC_KEYS: JSON.stringify({ chat: "sk-ant-test-chat", xdevd: "sk-ant-test-xdevd", off: "sk-ant-test-off", capped: "sk-ant-test-capped" }),
+            // deepseek left out on purpose (not_configured case).
+            PROVIDER_KEYS: JSON.stringify({ openai: "sk-test-openai", groq: "gsk-test-groq", openrouter: "sk-or-test", gemini: "g-test" }),
             ADMIN_TOKEN_SHA256: await sha256hex(TEST_ADMIN_TOKEN),
             // Fake xDev ID (see worker/test/console-auth.test.ts).
             OIDC_ISSUER: "https://id.test/api/auth",

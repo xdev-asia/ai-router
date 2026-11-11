@@ -30,6 +30,7 @@ A provider is a path prefix: another one can be added beside `/anthropic` withou
 |---|---|---|
 | `ANTHROPIC_KEYS` | secret | JSON object, system id -> that system's Anthropic API key. One key per system, ideally one Anthropic workspace per system |
 | `ADMIN_TOKEN_SHA256` | secret | SHA-256 hex of the owner's admin token. Unset: the token is refused (xDev ID sign-in still works) |
+| `PROVIDER_KEYS` | secret | JSON object, provider id -> its official API key: `{"openai": "sk-...", "gemini": "...", "openrouter": "sk-or-...", "deepseek": "sk-...", "groq": "gsk_..."}`. Shared by the systems allowed to use that provider |
 | `OIDC_CLIENT_SECRET` | secret | This gateway's client secret at xDev ID |
 | `ANTHROPIC_BASE_URL` | var | `https://api.anthropic.com` |
 | `OIDC_ISSUER` | var | `https://id.xdev.asia/api/auth` |
@@ -69,19 +70,43 @@ Two ways in:
   a `__Host-xllm_login` cookie and is single use. Writes with the cookie must be same-origin.
 - **The admin token**, kept in page memory only, never in storage or a cookie, so a reload signs out.
 
-## OpenAI-compatible endpoint
+## OpenAI-compatible endpoint, providers and combos
 
 For systems that only have an OpenAI SDK: `new OpenAI({ apiKey: <gateway token>, baseURL: "https://<host>/openai/v1" })`.
-Requests are translated to Claude's Messages API (idea from 9router's translator, MIT; written anew here) and metered,
-capped and refused exactly like `/anthropic`.
+Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 
-| Call | Notes |
+`model` names a target or a combo:
+
+| `model` | Goes to |
 |---|---|
-| `POST /openai/v1/chat/completions` | text, images (https or base64 data URL), function tools and tool results, `tool_choice`, `parallel_tool_calls`, `stop`, `temperature` (clamped to 0-1), `max_tokens` / `max_completion_tokens` (default 8192), streaming with `stream_options.include_usage` |
-| `GET /openai/v1/models` | the provider's model list in the OpenAI shape |
+| `claude-*` or `anthropic/<model>` | Anthropic, translated to the Messages API (idea from 9router's translator, MIT; written anew) |
+| `openai/<model>`, `gemini/<model>`, `openrouter/<vendor>/<model>`, `deepseek/<model>`, `groq/<model>` | that provider's OpenAI-compatible API with its official key from `PROVIDER_KEYS`; the body is passed on with the bare model name |
+| `combo/<name>` | the combo's targets in order (below) |
 
-Refused with `400`: `n` other than 1, non-function tools, plain-http image URLs, unknown roles. Thinking blocks are not
-returned. Errors use the OpenAI envelope `{error: {message, type, param, code}}` with the upstream status.
+Subscription logins (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot...) are deliberately not supported.
+
+**Allow-list.** A system calls only the models its `allowed_models` allows: a JSON array of `*`, `provider/*`,
+`provider/model` or `combo/name`. `null` (the default) means `anthropic/*`, so new providers cost nothing until a
+system is allowed to use them. A combo's name in the list is enough for its targets.
+
+**Combos** (`PUT /admin/combos/<name>` with `{targets: [...]}`). A combo moves to the next target only after a 429,
+a 5xx or a network failure, or when a target's provider has no key, never after a request error (4xx). A target that
+failed is put aside for its `retry-after` (default 30 s, at most 10 min) and tried last until then. The answer carries
+`x-gateway-target`. Every attempt gets its own usage row.
+
+Translation to Claude: text, images (https or base64 data URL), function tools and tool results, `tool_choice`,
+`parallel_tool_calls`, `stop`, `temperature` (clamped to 0-1), `max_tokens` / `max_completion_tokens` (default 8192),
+streaming with `stream_options.include_usage`. Refused with `400`: `n` other than 1, non-function tools, plain-http
+image URLs, unknown roles. Thinking blocks are not returned. For other providers the gateway always asks for stream
+usage (to meter) and drops that chunk when the client did not ask for it.
+
+| Call | |
+|---|---|
+| `POST /openai/v1/chat/completions` | as above |
+| `GET /openai/v1/models` | allowed Claude models, allowed combos, and exact `provider/model` entries of the allow-list |
+
+Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of the gateway's own refusals:
+`invalid_api_key`, `system_disabled`, `monthly_token_cap`, `model_not_found`, `model_not_allowed`, `not_configured`.
 
 ## Admin API
 
@@ -93,7 +118,10 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `GET /systems` | | systems (no token hashes) |
 | `POST /systems` | `{id, name, monthly_token_cap?}` | `201 {id, token}`; `400`, `409 exists` |
 | `POST /systems/:id/rotate` | | `{id, token}`; the old token stops working |
-| `PATCH /systems/:id` | `{name?, monthly_token_cap?, disabled?}` | the system |
+| `PATCH /systems/:id` | `{name?, monthly_token_cap?, disabled?, allowed_models?}` | the system |
+| `GET /combos` | | `[{name, targets, updated_at}]` |
+| `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
+| `DELETE /combos/:name` | | `204`; `404` |
 | `GET /usage?month=YYYY-MM` | | `{month, rows}` per system, provider and model |
 
 ## Local development and tests

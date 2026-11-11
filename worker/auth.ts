@@ -6,6 +6,8 @@ export interface System {
   monthly_token_cap: number | null;
   disabled: boolean;
   created_at: number;
+  /** JSON array of model patterns; null means Claude only. See providers.ts. */
+  allowed_models: string | null;
 }
 
 export async function sha256hex(s: string): Promise<string> {
@@ -41,7 +43,7 @@ export const toSystem = (r: SystemRow): System => ({ ...r, disabled: r.disabled 
 
 export async function systemForToken(db: D1Database, token: string): Promise<System | null> {
   const row = await db
-    .prepare("SELECT id, name, monthly_token_cap, disabled, created_at FROM system WHERE token_sha256 = ?")
+    .prepare("SELECT id, name, monthly_token_cap, disabled, created_at, allowed_models FROM system WHERE token_sha256 = ?")
     .bind(await sha256hex(token))
     .first<SystemRow>();
   return row ? toSystem(row) : null;

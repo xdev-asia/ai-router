@@ -140,14 +140,14 @@ describe("POST /openai/v1/chat/completions", () => {
           headers: { "content-type": "text/event-stream" },
         }),
     );
-    const { text } = await call(up, "/openai/v1/chat/completions", chat(token, { model: "x", stream: true, messages: [{ role: "user", content: "hi" }] }));
+    const { text } = await call(up, "/openai/v1/chat/completions", chat(token, { model: "claude-haiku-5-5", stream: true, messages: [{ role: "user", content: "hi" }] }));
     expect(text).not.toContain('"usage"');
     expect(text.trim().endsWith("data: [DONE]")).toBe(true);
   });
 
   it("refuses with OpenAI-shaped errors before calling upstream", async () => {
     const up = fakeUpstream(() => json(MESSAGE));
-    const body = { model: "m", messages: [{ role: "user", content: "hi" }] };
+    const body = { model: "claude-haiku-5-5", messages: [{ role: "user", content: "hi" }] };
 
     const noToken = await call(up, "/openai/v1/chat/completions", { method: "POST", body: JSON.stringify(body) });
     expect(noToken.res.status).toBe(401);
@@ -166,7 +166,7 @@ describe("POST /openai/v1/chat/completions", () => {
     expect((await call(up, "/openai/v1/chat/completions", chat(nokey, body))).res.status).toBe(500);
 
     const ok = await addSystem("chat");
-    for (const bad of ["not json", { ...body, n: 2 }, { model: "m", messages: [] }, { ...body, messages: [{ role: "wizard", content: "x" }] }]) {
+    for (const bad of ["not json", { ...body, n: 2 }, { ...body, messages: [] }, { ...body, messages: [{ role: "wizard", content: "x" }] }]) {
       const r = await call(up, "/openai/v1/chat/completions", chat(ok, bad));
       expect(r.res.status, JSON.stringify(bad)).toBe(400);
       expect(JSON.parse(r.text).error.type).toBe("invalid_request_error");
@@ -179,7 +179,7 @@ describe("POST /openai/v1/chat/completions", () => {
     const up = fakeUpstream(() =>
       json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, 529, { "retry-after": "7", "x-api-key": "leak?" }),
     );
-    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, { model: "m", messages: [{ role: "user", content: "hi" }] }));
+    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, { model: "claude-haiku-5-5", messages: [{ role: "user", content: "hi" }] }));
     expect(res.status).toBe(529);
     expect(res.headers.get("retry-after")).toBe("7");
     expect(res.headers.get("x-api-key")).toBeNull();
