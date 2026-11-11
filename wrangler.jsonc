@@ -7,8 +7,7 @@
     {
       "binding": "DB",
       "database_name": "xdev-llm",
-      // Owner setup: `wrangler d1 create xdev-llm`, then put the returned id here.
-      "database_id": "REPLACE_ME",
+      "database_id": "4ea47bf1-1a83-4beb-a993-a99cef4e9241",
       "migrations_dir": "migrations"
     }
   ],
@@ -19,7 +18,8 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/admin/*", "/anthropic/*", "/health"]
   },
-  // No route yet: the owner picks the hostname (other Workers can also reach it through a service binding).
+  // Other Workers can also reach the gateway through a service binding.
+  "routes": [{ "pattern": "ai-router.xdev.asia", "custom_domain": true }],
   "vars": {
     "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
   },
