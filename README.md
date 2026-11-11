@@ -108,3 +108,14 @@ corepack pnpm --filter llm run build
 ```
 
 Local secrets go in `services/llm/.dev.vars` (git-ignored).
+
+### In Docker
+
+`wrangler dev` (workerd, local D1) in a container, on http://localhost:8787 only:
+
+```sh
+corepack pnpm run build      # the console, on the host (needs the GitHub Packages token)
+docker compose up --build    # .dev.vars is mounted read-only; the local D1 lives in a volume
+```
+
+Not the production runtime (that is Cloudflare Workers).

@@ -1,0 +1,12 @@
+# Local run of the gateway: `docker compose up --build`, then http://localhost:8787
+services:
+  ai-router:
+    build: .
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./.dev.vars:/app/.dev.vars:ro
+      # Local D1 (systems, usage, console sessions) survives restarts.
+      - state:/app/.wrangler/state
+volumes:
+  state:
