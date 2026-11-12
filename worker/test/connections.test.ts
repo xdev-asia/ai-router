@@ -118,13 +118,22 @@ describe("admin: connections", () => {
 });
 
 describe("admin: providers and account order", () => {
-  it("lists the providers with their name, format and whether the environment holds a key", async () => {
-    const list = JSON.parse((await admin("GET", "/providers")).text) as { id: string; name: string; format: string; env_key: boolean }[];
-    expect(list.map((p) => p.id)).toEqual(["anthropic", "openai", "gemini", "openrouter", "deepseek", "groq"]);
-    expect(list.find((p) => p.id === "anthropic")).toEqual({ id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true });
+  it("lists the first six providers first, then the others by id, each with its name and where to get a key", async () => {
+    const list = JSON.parse((await admin("GET", "/providers")).text) as { id: string; name: string; format: string; env_key: boolean; key_url: string | null }[];
+    expect(list.slice(0, 6).map((p) => p.id)).toEqual(["anthropic", "openai", "gemini", "openrouter", "deepseek", "groq"]);
+    const rest = list.slice(6).map((p) => p.id);
+    expect(rest).toEqual([...rest].sort());
+    expect(list).toHaveLength(47);
+    expect(new Set(list.map((p) => p.id)).size).toBe(47);
+    expect(list.find((p) => p.id === "anthropic")).toEqual({
+      id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first",
+    });
     // vitest.config.ts leaves deepseek out of PROVIDER_KEYS.
     expect(list.find((p) => p.id === "deepseek")).toMatchObject({ name: "DeepSeek", format: "openai", env_key: false });
     expect(list.find((p) => p.id === "openai")).toMatchObject({ env_key: true });
+    expect(list.find((p) => p.id === "mistral")).toMatchObject({ name: "Mistral", format: "openai", env_key: false });
+    expect(list.find((p) => p.id === "vercel-ai-gateway")).toMatchObject({ name: "Vercel AI Gateway" });
+    expect(list.every((p) => p.key_url === null || p.key_url.startsWith("https://"))).toBe(true);
   });
 
   it("PUT /providers/:id/order renumbers the provider's connections in the given order", async () => {
@@ -150,6 +159,127 @@ describe("admin: providers and account order", () => {
     expect((await admin("PUT", "/providers/nope/order", { ids: [] })).res.status).toBe(404);
     const all = JSON.parse((await admin("GET", "/connections")).text) as { name: string; priority: number }[];
     expect(all.filter((x) => x.name !== "g").map((x) => [x.name, x.priority])).toEqual([["a", 1], ["b", 2]]);
+  });
+});
+
+describe("providers from the registry", () => {
+  it("sends a request to the provider's own base URL with the connection's key", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["mistral/*"]);
+    await connect("mistral", "main", "mk-000000000001");
+    const up = fakeUpstream(() => json(COMPLETION));
+    const { res } = await call(up, "/openai/v1/chat/completions", chat(token, "mistral/mistral-large-latest"));
+    expect(res.status).toBe(200);
+    expect(up.calls[0]!.url).toBe("https://api.mistral.ai/v1/chat/completions");
+    expect(bearer(up.calls[0]!)).toBe("Bearer mk-000000000001");
+    expect(JSON.parse(up.bodies[0]!).model).toBe("mistral-large-latest");
+  });
+
+  it("takes provider ids with hyphens and digits in model names and in allow-lists", async () => {
+    const token = await addSystem("chat");
+    const patched = await admin("PATCH", "/systems/chat", { allowed_models: ["vercel-ai-gateway/*", "llm7/gpt-x", "kilo-gateway/*"] });
+    expect(patched.res.status).toBe(200);
+    await connect("vercel-ai-gateway", "main", "vk-000000000001");
+    const up = fakeUpstream(() => json(COMPLETION));
+    const { res } = await call(up, "/openai/v1/chat/completions", chat(token, "vercel-ai-gateway/openai/gpt-5"));
+    expect(res.status).toBe(200);
+    expect(up.calls[0]!.url).toBe("https://ai-gateway.vercel.sh/v1/chat/completions");
+    expect(JSON.parse(up.bodies[0]!).model).toBe("openai/gpt-5");
+    expect((await admin("PATCH", "/systems/chat", { allowed_models: ["Bad-Id/*"] })).res.status).toBe(400);
+  });
+});
+
+describe("testing a connection", () => {
+  const test = (up: ReturnType<typeof fakeUpstream>, id: string) =>
+    call(up, `/admin/connections/${id}/test`, { method: "POST", headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
+
+  it("asks the provider for its models with the connection's key, and a good answer clears the connection's failure", async () => {
+    const a = await connect("openai", "a", "sk-a-00000001");
+    await env.DB.prepare("UPDATE connection SET cooldown_until = ?, backoff_level = 2, last_error = '401 old', last_error_at = 5 WHERE id = ?").bind(now() + 500, a).run();
+    const up = fakeUpstream(() => json({ object: "list", data: [] }));
+    const { res, text } = await test(up, a);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({ ok: true });
+    expect(up.calls).toHaveLength(1);
+    expect(up.calls[0]!.method).toBe("GET");
+    expect(up.calls[0]!.url).toBe("https://api.openai.com/v1/models");
+    expect(bearer(up.calls[0]!)).toBe("Bearer sk-a-00000001");
+    expect(await row(a)).toMatchObject({ cooldown_until: 0, backoff_level: 0, last_error: null, last_error_at: null });
+  });
+
+  it("says why a key is refused and writes it on the connection, without setting it aside", async () => {
+    const a = await connect("groq", "a", "gsk-a-0000001");
+    const up = fakeUpstream(() => json({ error: { message: "Invalid API Key", type: "invalid_request_error" } }, 401));
+    const { res, text } = await test(up, a);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({ ok: false, status: 401, message: "Invalid API Key" });
+    expect(up.calls[0]!.url).toBe("https://api.groq.com/openai/v1/models");
+    const r = await row(a);
+    expect(r).toMatchObject({ last_error: "401 Invalid API Key", cooldown_until: 0 });
+    expect(now() - Number(r!.last_error_at)).toBeLessThanOrEqual(2);
+  });
+
+  it("tests an Anthropic key the Anthropic way", async () => {
+    const a = await connect("anthropic", "a", "sk-ant-conn-0001");
+    const up = fakeUpstream(() => json({ data: [] }));
+    expect(JSON.parse((await test(up, a)).text)).toEqual({ ok: true });
+    expect(up.calls[0]!.url).toBe("https://upstream.test/v1/models?limit=1");
+    expect(up.calls[0]!.headers.get("x-api-key")).toBe("sk-ant-conn-0001");
+    expect(up.calls[0]!.headers.get("anthropic-version")).toBe("2023-06-01");
+    expect(up.calls[0]!.headers.get("authorization")).toBeNull();
+  });
+
+  it("reports a provider that cannot be reached, and 404 for an unknown connection", async () => {
+    const a = await connect("openai", "a", "sk-a-00000001");
+    const down = fakeUpstream(() => {
+      throw new Error("network");
+    });
+    expect(JSON.parse((await test(down, a)).text)).toEqual({ ok: false, status: 502, message: "could not reach openai" });
+    expect((await test(fakeUpstream(() => json({})), "missing")).res.status).toBe(404);
+  });
+});
+
+describe("round robin", () => {
+  const keysUsed = async (token: string, n: number) => {
+    const up = fakeUpstream(() => json(COMPLETION));
+    for (let i = 0; i < n; i++) await call(up, "/openai/v1/chat/completions", chat(token, "openai/gpt-5"));
+    return up.calls.map(bearer);
+  };
+
+  it("fill-first by default: the first connection every time", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["openai/*"]);
+    await connect("openai", "a", "sk-a-00000001");
+    await connect("openai", "b", "sk-b-00000002");
+    expect(await keysUsed(token, 3)).toEqual(["Bearer sk-a-00000001", "Bearer sk-a-00000001", "Bearer sk-a-00000001"]);
+  });
+
+  it("round-robin: the connection that answered longest ago goes first", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["openai/*"]);
+    await connect("openai", "a", "sk-a-00000001");
+    await connect("openai", "b", "sk-b-00000002");
+    await connect("openai", "c", "sk-c-00000003");
+    const set = await admin("PUT", "/providers/openai/strategy", { strategy: "round-robin" });
+    expect(set.res.status).toBe(200);
+    expect(JSON.parse(set.text)).toEqual({ provider: "openai", strategy: "round-robin" });
+    expect(await keysUsed(token, 5)).toEqual(["Bearer sk-a-00000001", "Bearer sk-b-00000002", "Bearer sk-c-00000003", "Bearer sk-a-00000001", "Bearer sk-b-00000002"]);
+    const list = JSON.parse((await admin("GET", "/providers")).text) as { id: string; strategy: string }[];
+    expect(list.find((p) => p.id === "openai")!.strategy).toBe("round-robin");
+    expect(list.find((p) => p.id === "groq")!.strategy).toBe("fill-first");
+  });
+
+  it("goes back to priority order when set to fill-first, and refuses other values", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["openai/*"]);
+    await connect("openai", "a", "sk-a-00000001");
+    await connect("openai", "b", "sk-b-00000002");
+    await admin("PUT", "/providers/openai/strategy", { strategy: "round-robin" });
+    await keysUsed(token, 1);
+    await admin("PUT", "/providers/openai/strategy", { strategy: "fill-first" });
+    expect(await keysUsed(token, 2)).toEqual(["Bearer sk-a-00000001", "Bearer sk-a-00000001"]);
+    for (const bad of [{ strategy: "random" }, { strategy: 1 }, {}]) expect((await admin("PUT", "/providers/openai/strategy", bad)).res.status, JSON.stringify(bad)).toBe(400);
+    expect((await admin("PUT", "/providers/nope/strategy", { strategy: "round-robin" })).res.status).toBe(404);
   });
 });
 

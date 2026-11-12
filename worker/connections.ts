@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { providerKey, type ProviderId } from "./providers";
+import { ANTHROPIC_VERSION, isProvider, providerDef, providerKey, type ProviderId } from "./providers";
 import { open, seal } from "./secret-box";
 
 /**
@@ -70,6 +70,21 @@ export async function createApiKeyConnection(env: Env, provider: ProviderId, nam
   return getConnection(env.DB, id);
 }
 
+/** The API key inside a sealed secret; null when it cannot be opened (CONNECTIONS_KEY changed) or holds none. */
+async function apiKeyOf(env: Env, secret: string): Promise<string | null> {
+  const plain = await open(env, secret);
+  if (plain === null) return null;
+  try {
+    const k = (JSON.parse(plain) as { api_key?: unknown }).api_key;
+    return typeof k === "string" && k !== "" ? k : null;
+  } catch {
+    return null;
+  }
+}
+
+export type Strategy = "fill-first" | "round-robin";
+export const isStrategy = (v: unknown): v is Strategy => v === "fill-first" || v === "round-robin";
+
 /** One way to reach a provider: an account from the console, or the key in the environment (`connection` null). */
 export interface Candidate {
   connection: string | null;
@@ -79,37 +94,30 @@ export interface Candidate {
 }
 
 /**
- * The accounts to try for `provider`, in order: available ones by priority, then the key in the environment,
- * then the ones cooling down (soonest first), so a request is still attempted when nothing else is left.
+ * The accounts to try for `provider`, in order: available ones, then the key in the environment, then the ones
+ * cooling down (soonest first), so a request is still attempted when nothing else is left. Available ones go by
+ * priority ("fill-first", the default) or, with "round-robin", the one that answered longest ago first.
  */
 export async function candidatesFor(env: Env, provider: ProviderId, systemId: string, now: number): Promise<Candidate[]> {
   const r = await env.DB.prepare(
-    "SELECT id, secret, cooldown_until, backoff_level FROM connection WHERE provider = ? AND disabled = 0 ORDER BY priority, created_at",
+    `SELECT id, secret, cooldown_until, backoff_level, rr_at,
+            (SELECT strategy FROM provider_setting WHERE provider = ?1) AS strategy
+     FROM connection WHERE provider = ?1 AND disabled = 0 ORDER BY priority, created_at`,
   )
     .bind(provider)
-    .all<{ id: string; secret: string; cooldown_until: number; backoff_level: number }>();
+    .all<{ id: string; secret: string; cooldown_until: number; backoff_level: number; rr_at: number; strategy: string | null }>();
   const account = (row: (typeof r.results)[number]): Candidate => ({
     connection: row.id,
     backoffLevel: row.backoff_level,
-    key: async () => {
-      const plain = await open(env, row.secret);
-      if (plain === null) return null;
-      try {
-        const k = (JSON.parse(plain) as { api_key?: unknown }).api_key;
-        return typeof k === "string" && k !== "" ? k : null;
-      } catch {
-        return null;
-      }
-    },
+    key: () => apiKeyOf(env, row.secret),
   });
-  const available = r.results.filter((x) => x.cooldown_until <= now).map(account);
-  const cooling = r.results
-    .filter((x) => x.cooldown_until > now)
-    .sort((a, b) => a.cooldown_until - b.cooldown_until)
-    .map(account);
+  const free = r.results.filter((x) => x.cooldown_until <= now);
+  // Array.sort is stable: connections that answered at the same time keep their priority order.
+  if (r.results[0]?.strategy === "round-robin") free.sort((a, b) => a.rr_at - b.rr_at);
+  const cooling = r.results.filter((x) => x.cooldown_until > now).sort((a, b) => a.cooldown_until - b.cooldown_until);
   const envKey = providerKey(env, provider, systemId);
   const fromEnv: Candidate[] = envKey ? [{ connection: null, backoffLevel: 0, key: () => Promise.resolve(envKey) }] : [];
-  return [...available, ...fromEnv, ...cooling];
+  return [...free.map(account), ...fromEnv, ...cooling.map(account)];
 }
 
 /** A failure another account may not share: rate limit, provider trouble, or this account's key being refused. */
@@ -135,7 +143,49 @@ export async function noteFailure(db: D1Database, cand: Candidate, status: numbe
 export async function noteSuccess(db: D1Database, cand: Candidate, now: number): Promise<void> {
   if (cand.connection === null) return;
   await db
-    .prepare("UPDATE connection SET cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, last_used_at = ? WHERE id = ?")
-    .bind(now, cand.connection)
+    .prepare("UPDATE connection SET cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, last_used_at = ?, rr_at = ? WHERE id = ?")
+    .bind(now, Date.now(), cand.connection)
     .run();
+}
+
+export type TestResult = { ok: true } | { ok: false; status: number; message: string };
+
+/**
+ * Checks a connection's key by asking the provider for its model list (no tokens spent). A good answer clears
+ * the connection's failure state; a bad one is written as its last error, without setting the connection aside.
+ * Null: no such connection.
+ */
+export async function testConnection(env: Env, upstream: (req: Request) => Promise<Response>, id: string): Promise<TestResult | null> {
+  const row = await env.DB.prepare("SELECT provider, secret FROM connection WHERE id = ?").bind(id).first<{ provider: string; secret: string }>();
+  if (!row || !isProvider(row.provider)) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const fail = async (status: number, message: string): Promise<TestResult> => {
+    await env.DB.prepare("UPDATE connection SET last_error = ?, last_error_at = ?, updated_at = ? WHERE id = ?")
+      .bind(`${status} ${message}`.slice(0, 300), now, now, id)
+      .run();
+    return { ok: false, status, message };
+  };
+  const key = await apiKeyOf(env, row.secret);
+  if (!key) return fail(0, "the stored key cannot be opened (CONNECTIONS_KEY changed)");
+  const def = providerDef(row.provider);
+  const req =
+    def.format === "anthropic"
+      ? new Request(env.ANTHROPIC_BASE_URL.replace(/\/+$/, "") + "/v1/models?limit=1", { headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION } })
+      : new Request(def.modelsUrl ?? `${def.baseUrl}/models`, { headers: { authorization: `Bearer ${key}` } });
+  let up: Response;
+  try {
+    up = await upstream(req);
+  } catch {
+    return fail(502, `could not reach ${row.provider}`);
+  }
+  if (up.ok) {
+    await env.DB.prepare("UPDATE connection SET cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, updated_at = ? WHERE id = ?")
+      .bind(now, id)
+      .run();
+    return { ok: true };
+  }
+  const body = (await up.json().catch(() => null)) as { error?: { message?: unknown } | string; message?: unknown } | null;
+  const e = body?.error;
+  const message = typeof e === "string" ? e : typeof e?.message === "string" ? e.message : typeof body?.message === "string" ? body.message : `upstream error ${up.status}`;
+  return fail(up.status, message);
 }

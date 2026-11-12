@@ -180,4 +180,9 @@ export const vi: Record<keyof typeof en, string> = {
   "providers.status.cooling": "Tạm gác đến {time}",
   "providers.keyEnds": "Key kết thúc bằng {hint}",
   "providers.lastError": "Lỗi gần nhất: {error}",
+  "providers.getKey": "Lấy API key",
+  "providers.roundRobin": "Xoay vòng",
+  "providers.test": "Kiểm tra",
+  "providers.testOk": "{name}: key hoạt động.",
+  "providers.testFailed": "{name}: {error}",
 };

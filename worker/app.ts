@@ -22,7 +22,7 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.get("/health", (c) => c.json({ ok: true }));
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
-  app.route("/admin", adminRoutes());
+  app.route("/admin", adminRoutes(deps.upstream));
   app.route("/anthropic", anthropicRoutes(deps.upstream));
   app.route("/openai", openaiRoutes(deps.upstream));
   app.notFound((c) => anthropicError(c, 404, "not_found_error", "not found"));

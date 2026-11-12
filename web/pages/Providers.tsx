@@ -215,6 +215,20 @@ export function ProviderDetail({ id }: { id: string }) {
     });
   };
 
+  const setRoundRobin = (on: boolean) =>
+    run(async () => {
+      await api(`/providers/${encodeURIComponent(id)}/strategy`, { method: "PUT", body: { strategy: on ? "round-robin" : "fill-first" } });
+      reloadProviders();
+    });
+
+  /** Asks the gateway to check the key at the provider, and says what came back. */
+  const test = (a: Connection) =>
+    run(async () => {
+      const r = await api<{ ok: true } | { ok: false; status: number; message: string }>(`/connections/${encodeURIComponent(a.id)}/test`, { method: "POST" });
+      notify(r.ok ? t("providers.testOk", { name: a.name }) : t("providers.testFailed", { name: a.name, error: `${r.status} ${r.message}` }));
+      reload();
+    });
+
   const remove = (a: Connection) =>
     run(async () => {
       await api(`/connections/${encodeURIComponent(a.id)}`, { method: "DELETE" });
@@ -256,7 +270,18 @@ export function ProviderDetail({ id }: { id: string }) {
       </a>
       <div className="provider-head">
         <Avatar name={provider?.name ?? id} size="lg" />
-        <PageHeader title={provider?.name ?? id} description={loaded ? t("providers.connections", { n: String(mine.length) }) : undefined} />
+        <PageHeader
+          title={provider?.name ?? id}
+          description={loaded ? t("providers.connections", { n: String(mine.length) }) : undefined}
+          actions={
+            provider?.key_url ? (
+              <a className="back-link" href={provider.key_url} target="_blank" rel="noreferrer noopener">
+                <Icon name="external" size={16} />
+                {t("providers.getKey")}
+              </a>
+            ) : undefined
+          }
+        />
       </div>
       {error && <Banner tone="danger" title={error} />}
       {(providers.status === "loading" || connections.status === "loading") && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}
@@ -284,9 +309,12 @@ export function ProviderDetail({ id }: { id: string }) {
             title={t("providers.accountsTitle")}
             subtitle={accounts.length > 1 ? t("providers.accountsHint") : undefined}
             actions={
-              <Button variant="primary" icon="plus" onClick={() => setPending({ kind: "edit", account: null })}>
-                {t("providers.add")}
-              </Button>
+              <>
+                <Switch label={t("providers.roundRobin")} checked={provider.strategy === "round-robin"} disabled={busy} onChange={(e) => void setRoundRobin(e.target.checked)} />
+                <Button variant="primary" icon="plus" onClick={() => setPending({ kind: "edit", account: null })}>
+                  {t("providers.add")}
+                </Button>
+              </>
             }
             flush
           >
@@ -317,6 +345,7 @@ export function ProviderDetail({ id }: { id: string }) {
                           label={`${t("systems.col.actions")}: ${a.name}`}
                           disabled={busy}
                           items={[
+                            { label: t("providers.test"), onSelect: () => void test(a) },
                             { label: t("providers.edit"), onSelect: () => setPending({ kind: "edit", account: a }) },
                             { type: "separator" },
                             { label: t("providers.delete"), danger: true, onSelect: () => setPending({ kind: "delete", account: a }) },

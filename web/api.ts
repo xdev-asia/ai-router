@@ -126,6 +126,9 @@ export interface Provider {
   format: string;
   auth: string[];
   env_key: boolean;
+  /** The provider's page for creating a key. */
+  key_url: string | null;
+  strategy: "fill-first" | "round-robin";
 }
 
 /** One account at a provider. The key itself never reaches the console: only its last 4 characters. */
@@ -148,9 +151,9 @@ export interface Connection {
 }
 
 /** One pattern per line or comma; the same rule as the gateway's (providers.ts PATTERN). */
-export const MODEL_PATTERN = /^(\*|[a-z]+\/\*|[a-z]+\/[A-Za-z0-9._:\/@+-]{1,200})$/;
+export const MODEL_PATTERN = /^(\*|[a-z][a-z0-9-]*\/\*|[a-z][a-z0-9-]*\/[A-Za-z0-9._:\/@+-]{1,200})$/;
 /** A combo target: provider/model or a bare claude-* model. */
-export const TARGET = /^(claude-[A-Za-z0-9._:@+-]{1,190}|[a-z]+\/[A-Za-z0-9._:\/@+-]{1,200})$/;
+export const TARGET = /^(claude-[A-Za-z0-9._:@+-]{1,190}|[a-z][a-z0-9-]*\/[A-Za-z0-9._:\/@+-]{1,200})$/;
 export const COMBO_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 export const splitList = (raw: string): string[] => [...new Set(raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))];

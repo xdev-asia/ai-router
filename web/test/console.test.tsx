@@ -244,9 +244,9 @@ describe("combos", () => {
 
 describe("providers", () => {
   const PROVIDER_LIST = [
-    { id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true },
-    { id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false },
-    { id: "groq", name: "Groq", format: "openai", auth: ["api_key"], env_key: false },
+    { id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first" },
+    { id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false, key_url: "https://platform.openai.com/api-keys", strategy: "fill-first" },
+    { id: "groq", name: "Groq", format: "openai", auth: ["api_key"], env_key: false, key_url: null, strategy: "round-robin" },
   ];
   const account = (over: Record<string, unknown>) => ({
     id: "c1",
@@ -415,6 +415,36 @@ describe("providers", () => {
     await signIn();
     expect(await screen.findByText(t("providers.envKeyNote"))).toBeTruthy();
     expect(screen.getByText(t("providers.empty"))).toBeTruthy();
+  });
+
+  it("links to the provider's page for creating a key, in a new tab", async () => {
+    await openProvider();
+    const link = screen.getByRole("link", { name: t("providers.getKey") });
+    expect(link.getAttribute("href")).toBe("https://platform.openai.com/api-keys");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noreferrer");
+  });
+
+  it("the round robin switch shows the provider's strategy and saves a change", async () => {
+    routes["PUT /admin/providers/openai/strategy"] = () => json({ provider: "openai", strategy: "round-robin" });
+    await openProvider();
+    const sw = screen.getByRole("switch", { name: t("providers.roundRobin") }) as HTMLInputElement;
+    expect(sw.checked).toBe(false);
+    fireEvent.click(sw);
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/providers/openai/strategy", body: { strategy: "round-robin" } }));
+  });
+
+  it("tests a connection's key and says what the provider answered", async () => {
+    routes["POST /admin/connections/c1/test"] = () => json({ ok: true });
+    routes["POST /admin/connections/c2/test"] = () => json({ ok: false, status: 401, message: "Invalid API Key" });
+    await openProvider();
+    fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: Work` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.test") }));
+    expect(await screen.findByText(t("providers.testOk", { name: "Work" }))).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: Backup` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.test") }));
+    expect(await screen.findByText(t("providers.testFailed", { name: "Backup", error: "401 Invalid API Key" }))).toBeTruthy();
   });
 
   it("providerFromHash: the provider of a detail page, else null", () => {

@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { isLevel } from "./savers";
 import { consoleUser, sameOrigin } from "./console-auth";
-import { createApiKeyConnection, getConnection, listConnections, sealApiKey } from "./connections";
-import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, type ProviderId } from "./providers";
+import { createApiKeyConnection, getConnection, isStrategy, listConnections, sealApiKey, testConnection } from "./connections";
+import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, providerDef, type ProviderId } from "./providers";
 import type { AppEnv } from "./env";
+import type { Upstream } from "./proxy";
 import { currentMonth, monthRange } from "./usage";
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
@@ -36,7 +37,7 @@ async function getSystem(db: D1Database, id: string): Promise<System | null> {
  * or the console's xDev ID session cookie (see console-auth.ts).
  * A system's plain token is returned once, on create and rotate, and stored only as its SHA-256.
  */
-export function adminRoutes(): Hono<AppEnv> {
+export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
   const a = new Hono<AppEnv>();
 
   a.use("*", async (c, next) => {
@@ -157,12 +158,39 @@ export function adminRoutes(): Hono<AppEnv> {
    */
   a.get("/connections", async (c) => c.json(await listConnections(c.env.DB)));
 
-  /** The providers the gateway can reach, for the console. `env_key`: the environment holds a key for it. */
-  a.get("/providers", (c) =>
-    c.json(
-      (Object.keys(PROVIDERS) as ProviderId[]).map((id) => ({ id, name: PROVIDERS[id].name, format: PROVIDERS[id].format, auth: ["api_key"], env_key: hasEnvKey(c.env, id) })),
-    ),
-  );
+  /**
+   * The providers the gateway can reach, for the console. `env_key`: the environment holds a key for it.
+   * `key_url`: the provider's page for creating a key. `strategy`: how its connections are picked.
+   */
+  a.get("/providers", async (c) => {
+    const set = await c.env.DB.prepare("SELECT provider, strategy FROM provider_setting").all<{ provider: string; strategy: string }>();
+    const strategy = new Map(set.results.map((x) => [x.provider, x.strategy]));
+    return c.json(
+      (Object.keys(PROVIDERS) as ProviderId[]).map((id) => {
+        const def = providerDef(id);
+        return { id, name: def.name, format: def.format, auth: ["api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first" };
+      }),
+    );
+  });
+
+  /** "fill-first": connections in priority order. "round-robin": the one that answered longest ago first. */
+  a.put("/providers/:id/strategy", async (c) => {
+    const provider = c.req.param("id");
+    if (!isProvider(provider)) return c.json({ error: "not_found" }, 404);
+    const b = await readJson(c.req.raw);
+    if (!b || !isStrategy(b.strategy)) return c.json({ error: "invalid_input", hint: "strategy: fill-first or round-robin" }, 400);
+    await (b.strategy === "fill-first"
+      ? c.env.DB.prepare("DELETE FROM provider_setting WHERE provider = ?").bind(provider)
+      : c.env.DB.prepare("INSERT INTO provider_setting (provider, strategy) VALUES (?, ?) ON CONFLICT (provider) DO UPDATE SET strategy = excluded.strategy").bind(provider, b.strategy)
+    ).run();
+    return c.json({ provider, strategy: b.strategy });
+  });
+
+  /** Checks the connection's key at the provider (its model list; no tokens spent). Always 200 with `{ok}`. */
+  a.post("/connections/:id/test", async (c) => {
+    const result = await testConnection(c.env, upstream, c.req.param("id"));
+    return result ? c.json(result) : c.json({ error: "not_found" }, 404);
+  });
 
   /** Sets the order accounts are tried in: `ids` is every connection of the provider, first to last. */
   a.put("/providers/:id/order", async (c) => {

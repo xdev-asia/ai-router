@@ -2,14 +2,13 @@ import type { Context } from "hono";
 import type { System } from "./auth";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess } from "./connections";
 import type { AppEnv } from "./env";
-import { PROVIDERS, allowedPatterns, allows, parseModel, targetName, usageOfOpenAI, type Target } from "./providers";
+import { ANTHROPIC_VERSION, PROVIDERS, allowedPatterns, allows, parseModel, providerDef, targetName, usageOfOpenAI, type Target } from "./providers";
 import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
 import { applySavers, saversFor, type Savers } from "./savers";
 
-/** The Messages API version this gateway speaks when it builds the upstream request itself. */
-export const ANTHROPIC_VERSION = "2023-06-01";
+export { ANTHROPIC_VERSION };
 
 /** A combo target that failed this way is put aside for this long (or the provider's retry-after, at most 10 min). */
 const COOLDOWN_S = 30;
@@ -133,7 +132,7 @@ function meterOpenAIStream(body: ReadableStream<Uint8Array>, model: string, keep
 }
 
 async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json, savers: Savers): Promise<Attempt> {
-  const p = PROVIDERS[target.provider] as { baseUrl: string };
+  const p = providerDef(target.provider) as { baseUrl: string };
   const stream = req.stream === true;
   const keepUsage = (req.stream_options as Json | undefined)?.include_usage === true;
   // A deep copy: savers rewrite messages in place, and a combo may send the same request to another target.
@@ -179,7 +178,7 @@ async function coolingTargets(db: D1Database, names: string[], now: number): Pro
  */
 export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: System, req: Json): Promise<Response> {
   const ref = parseModel(req.model);
-  if (!ref) return errorResponse(404, `unknown model: use provider/model (${Object.keys(PROVIDERS).join(", ")}), claude-*, or combo/<name>`, "invalid_request_error", "model_not_found");
+  if (!ref) return errorResponse(404, "unknown model: use provider/model (the providers are listed in the console), claude-*, or combo/<name>", "invalid_request_error", "model_not_found");
   const name = ref.kind === "combo" ? `combo/${ref.name}` : targetName(ref.target);
   if (!allows(allowedPatterns(system.allowed_models), name)) return errorResponse(403, `this system may not use ${name}`, "permission_error", "model_not_allowed");
 

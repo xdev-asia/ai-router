@@ -178,4 +178,9 @@ export const en = {
   "providers.status.cooling": "Set aside until {time}",
   "providers.keyEnds": "Key ends in {hint}",
   "providers.lastError": "Last error: {error}",
+  "providers.getKey": "Get API key",
+  "providers.roundRobin": "Round robin",
+  "providers.test": "Test",
+  "providers.testOk": "{name}: the key works.",
+  "providers.testFailed": "{name}: {error}",
 };

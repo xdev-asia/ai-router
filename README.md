@@ -11,6 +11,15 @@ import Anthropic from "@anthropic-ai/sdk";
 const client = new Anthropic({ apiKey: process.env.LLM_GATEWAY_TOKEN, baseURL: "https://<gateway host>/anthropic" });
 ```
 
+## Where the ideas come from
+
+The feature set and the console's layout follow [9router](https://github.com/decolua/9router) (MIT): provider
+connections with fallback between accounts, round robin, combos, token savers, usage, and the Providers pages.
+The code here is written anew for a Cloudflare Worker, D1 and `@xdev-asia/ui`, with two exceptions that are
+9router's own files: the token-saver filters under `worker/savers/vendor/` (see
+`worker/savers/THIRD_PARTY_NOTICES.md`), and the names, base URLs and key pages of the providers added in
+`worker/providers.ts`. `docs/9router/` holds screenshots of its dashboard and a page-by-page comparison.
+
 ## What it does
 
 | Step | Rule |
@@ -80,7 +89,7 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 | `model` | Goes to |
 |---|---|
 | `claude-*` or `anthropic/<model>` | Anthropic, translated to the Messages API (idea from 9router's translator, MIT; written anew) |
-| `openai/<model>`, `gemini/<model>`, `openrouter/<vendor>/<model>`, `deepseek/<model>`, `groq/<model>` | that provider's OpenAI-compatible API with its official key from `PROVIDER_KEYS`; the body is passed on with the bare model name |
+| `<provider>/<model>`: `openai`, `gemini`, `openrouter`, `deepseek`, `groq`, and 41 more OpenAI-compatible providers (`mistral`, `cerebras`, `together`, `fireworks`, ...; `GET /admin/providers` lists them) | that provider's API with a key from its connections or from `PROVIDER_KEYS`; the body is passed on with the bare model name. The 41 added ones take their base URLs from 9router's registry and have not been called against the live services here |
 | `combo/<name>` | the combo's targets in order (below) |
 
 Subscription logins (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot...) are not built yet. The `connection` table
@@ -95,7 +104,8 @@ or more).
 
 For each request the gateway tries, for the target's provider:
 
-1. the enabled connections that are not set aside, lowest `priority` first;
+1. the enabled connections that are not set aside, lowest `priority` first ("fill-first"), or, when the provider
+   is set to "round-robin", the one that answered longest ago first;
 2. the key in the environment (`ANTHROPIC_KEYS` for that system, `PROVIDER_KEYS`), when there is one;
 3. the connections that are set aside, the one that comes back soonest first.
 
@@ -163,7 +173,9 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `POST /connections` | `{provider, name, api_key}` | `201` the connection; `400`; `500 not_configured` without `CONNECTIONS_KEY` |
 | `PATCH /connections/:id` | `{name?, disabled?, priority?, api_key?}` | the connection. A new `api_key` clears its cooldown and last error |
 | `DELETE /connections/:id` | | `204`; `404` |
-| `GET /providers` | | `[{id, name, format, auth, env_key}]`: the providers the gateway can reach; `env_key` says the environment holds a key |
+| `GET /providers` | | `[{id, name, format, auth, env_key, key_url, strategy}]`: the providers the gateway can reach; `env_key` says the environment holds a key |
+| `PUT /providers/:id/strategy` | `{strategy: "fill-first" \| "round-robin"}` | `{provider, strategy}`; `400`; `404` |
+| `POST /connections/:id/test` | | `{ok: true}` or `{ok: false, status, message}`: the provider's answer to a model-list request with the connection's key; `404` |
 | `PUT /providers/:id/order` | `{ids: [...]}` (every connection of the provider, once each) | the provider's connections in the new order; `400`; `404` |
 | `GET /combos` | | `[{name, targets, updated_at}]` |
 | `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
