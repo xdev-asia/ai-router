@@ -26,11 +26,11 @@ export function fakeUpstream(reply: FakeUpstream["reply"]): FakeUpstream {
   return u;
 }
 
-/** Runs one request through the app and waits for its background work (usage rows) to finish. */
-export async function call(upstream: FakeUpstream, path: string, init?: RequestInit): Promise<{ res: Response; text: string }> {
+/** Runs one request through the app and waits for its background work (usage rows) to finish. `envOverride` replaces bindings for this call. */
+export async function call(upstream: FakeUpstream, path: string, init?: RequestInit, envOverride?: Record<string, unknown>): Promise<{ res: Response; text: string }> {
   const app = makeApp({ upstream: upstream.fn });
   const ctx = createExecutionContext();
-  const res = await app.fetch(new Request(BASE + path, init), env, ctx);
+  const res = await app.fetch(new Request(BASE + path, init), envOverride ? { ...env, ...envOverride } : env, ctx);
   const text = await res.text();
   await waitOnExecutionContext(ctx);
   return { res, text };
@@ -38,7 +38,7 @@ export async function call(upstream: FakeUpstream, path: string, init?: RequestI
 
 /** Empties both tables; call in beforeEach so tests do not depend on storage isolation. */
 export async function reset(): Promise<void> {
-  await env.DB.batch(["usage", "system", "console_login", "console_session", "combo", "cooldown"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch(["usage", "system", "console_login", "console_session", "combo", "cooldown", "connection"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 }
 
 /** Inserts a system and returns its plain gateway token. */

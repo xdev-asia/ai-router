@@ -55,18 +55,6 @@ export async function systemForToken(db: D1Database, token: string): Promise<Sys
   return row ? toSystem(row) : null;
 }
 
-/** The Anthropic key of a system, from the ANTHROPIC_KEYS secret. Never logged. */
-export function anthropicKeyFor(env: Env, systemId: string): string | null {
-  if (!env.ANTHROPIC_KEYS) return null;
-  try {
-    const keys = JSON.parse(env.ANTHROPIC_KEYS) as Record<string, unknown>;
-    const k = keys[systemId];
-    return typeof k === "string" && k !== "" ? k : null;
-  } catch {
-    return null;
-  }
-}
-
 /** True when the request carries the admin bearer token. Always false while ADMIN_TOKEN_SHA256 is unset. */
 export async function isAdmin(env: Env, req: Request): Promise<boolean> {
   const m = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "");

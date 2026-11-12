@@ -4,15 +4,15 @@ import type { Usage } from "./usage";
 /**
  * Providers reached with their own official API keys. Anthropic speaks Messages; the others speak
  * OpenAI Chat Completions at `baseUrl` + `/chat/completions`. Subscription logins (Claude Pro/Max,
- * ChatGPT, Gemini CLI, Copilot...) are deliberately absent.
+ * ChatGPT, Gemini CLI, Copilot...) are not here yet.
  */
 export const PROVIDERS = {
-  anthropic: { format: "anthropic" },
-  openai: { format: "openai", baseUrl: "https://api.openai.com/v1" },
-  gemini: { format: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
-  openrouter: { format: "openai", baseUrl: "https://openrouter.ai/api/v1" },
-  deepseek: { format: "openai", baseUrl: "https://api.deepseek.com/v1" },
-  groq: { format: "openai", baseUrl: "https://api.groq.com/openai/v1" },
+  anthropic: { name: "Anthropic", format: "anthropic" },
+  openai: { name: "OpenAI", format: "openai", baseUrl: "https://api.openai.com/v1" },
+  gemini: { name: "Google Gemini", format: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
+  openrouter: { name: "OpenRouter", format: "openai", baseUrl: "https://openrouter.ai/api/v1" },
+  deepseek: { name: "DeepSeek", format: "openai", baseUrl: "https://api.deepseek.com/v1" },
+  groq: { name: "Groq", format: "openai", baseUrl: "https://api.groq.com/openai/v1" },
 } as const;
 
 export type ProviderId = keyof typeof PROVIDERS;
@@ -55,6 +55,19 @@ export function providerKey(env: Env, provider: ProviderId, systemId: string): s
     return typeof k === "string" && k !== "" ? k : null;
   } catch {
     return null;
+  }
+}
+
+/** Whether the environment holds a key for the provider (for Anthropic: for at least one system). Never the key. */
+export function hasEnvKey(env: Env, provider: ProviderId): boolean {
+  const raw = provider === "anthropic" ? env.ANTHROPIC_KEYS : env.PROVIDER_KEYS;
+  if (!raw) return false;
+  try {
+    const keys = JSON.parse(raw) as Record<string, unknown>;
+    const usable = (k: unknown) => typeof k === "string" && k !== "";
+    return provider === "anthropic" ? Object.values(keys).some(usable) : usable(keys[provider]);
+  } catch {
+    return false;
   }
 }
 

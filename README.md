@@ -31,6 +31,7 @@ A provider is a path prefix: another one can be added beside `/anthropic` withou
 | `ANTHROPIC_KEYS` | secret | JSON object, system id -> that system's Anthropic API key. One key per system, ideally one Anthropic workspace per system |
 | `ADMIN_TOKEN_SHA256` | secret | SHA-256 hex of the owner's admin token. Unset: the token is refused (xDev ID sign-in still works) |
 | `PROVIDER_KEYS` | secret | JSON object, provider id -> its official API key: `{"openai": "sk-...", "gemini": "...", "openrouter": "sk-or-...", "deepseek": "sk-...", "groq": "gsk_..."}`. Shared by the systems allowed to use that provider |
+| `CONNECTIONS_KEY` | secret | 32 random bytes, base64 (`openssl rand -base64 32`). Seals the credentials of the connections stored in D1. Unset: connections cannot be added or used. Changing it makes the stored connections unreadable |
 | `OIDC_CLIENT_SECRET` | secret | This gateway's client secret at xDev ID |
 | `ANTHROPIC_BASE_URL` | var | `https://api.anthropic.com` |
 | `OIDC_ISSUER` | var | `https://id.xdev.asia/api/auth` |
@@ -58,7 +59,7 @@ corepack pnpm exec wrangler secret put OIDC_CLIENT_SECRET
 
 ## Console
 
-`/` serves the console (`web/`, built into `dist/`). Hash routes: `#/systems`, `#/usage`.
+`/` serves the console (`web/`, built into `dist/`). Hash routes: `#/systems`, `#/providers`, `#/providers/<id>`, `#/combos`, `#/usage`.
 
 Two ways in:
 
@@ -82,7 +83,31 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 | `openai/<model>`, `gemini/<model>`, `openrouter/<vendor>/<model>`, `deepseek/<model>`, `groq/<model>` | that provider's OpenAI-compatible API with its official key from `PROVIDER_KEYS`; the body is passed on with the bare model name |
 | `combo/<name>` | the combo's targets in order (below) |
 
-Subscription logins (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot...) are deliberately not supported.
+Subscription logins (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot...) are not built yet. The `connection` table
+already holds `auth_type = 'oauth'` for them; no provider uses it so far.
+
+## Connections: several accounts per provider
+
+The idea of 9router's provider connections (MIT), written anew. A connection is one account at a provider, added
+from the console or with `POST /admin/connections`. Its key is sealed with AES-256-GCM under `CONNECTIONS_KEY`
+before it reaches D1, and no API answer returns it: only its last 4 characters (`hint`, for keys of 12 characters
+or more).
+
+For each request the gateway tries, for the target's provider:
+
+1. the enabled connections that are not set aside, lowest `priority` first;
+2. the key in the environment (`ANTHROPIC_KEYS` for that system, `PROVIDER_KEYS`), when there is one;
+3. the connections that are set aside, the one that comes back soonest first.
+
+It moves to the next one only after a 429, a 5xx, a network failure or a refused key (401, 403), never after
+another request error. A connection that failed this way is set aside for the provider's `retry-after`, else
+30 s doubling with each failure in a row, at most 10 min; `last_error` keeps the status and the provider's message.
+A success clears that. A connection whose secret cannot be opened (the key changed) is skipped.
+Every attempt gets its own usage row. Both `/anthropic` and `/openai/v1` work this way; on `/anthropic` the last
+account's answer is passed on as it came.
+
+A combo still moves to its next target only after a 429, a 5xx or a network failure, once the accounts of the
+current target are used up.
 
 **Allow-list.** A system calls only the models its `allowed_models` allows: a JSON array of `*`, `provider/*`,
 `provider/model` or `combo/name`. `null` (the default) means `anthropic/*`, so new providers cost nothing until a
@@ -134,6 +159,12 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `POST /systems` | `{id, name, monthly_token_cap?}` | `201 {id, token}`; `400`, `409 exists` |
 | `POST /systems/:id/rotate` | | `{id, token}`; the old token stops working |
 | `PATCH /systems/:id` | `{name?, monthly_token_cap?, disabled?, allowed_models?, rtk?, caveman?, ponytail?}` | the system |
+| `GET /connections` | | connections, by provider and priority (no secrets) |
+| `POST /connections` | `{provider, name, api_key}` | `201` the connection; `400`; `500 not_configured` without `CONNECTIONS_KEY` |
+| `PATCH /connections/:id` | `{name?, disabled?, priority?, api_key?}` | the connection. A new `api_key` clears its cooldown and last error |
+| `DELETE /connections/:id` | | `204`; `404` |
+| `GET /providers` | | `[{id, name, format, auth, env_key}]`: the providers the gateway can reach; `env_key` says the environment holds a key |
+| `PUT /providers/:id/order` | `{ids: [...]}` (every connection of the provider, once each) | the provider's connections in the new order; `400`; `404` |
 | `GET /combos` | | `[{name, targets, updated_at}]` |
 | `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
 | `DELETE /combos/:name` | | `204`; `404` |

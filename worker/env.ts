@@ -6,6 +6,8 @@ export interface Env {
   ANTHROPIC_KEYS?: string;
   /** Secret: JSON object, provider id -> its API key (`{"openai": "sk-...", "groq": "gsk_..."}`), shared by the systems allowed to use it. */
   PROVIDER_KEYS?: string;
+  /** Secret: 32 random bytes, base64. Seals the credentials of the connections stored in D1 (secret-box.ts). Unset: connections cannot be added or used. */
+  CONNECTIONS_KEY?: string;
   /** Secret: SHA-256 hex of the admin bearer token. Unset disables the token (the console can still use xDev ID). */
   ADMIN_TOKEN_SHA256?: string;
   /** Public: OpenID issuer of xDev ID (`https://id.xdev.asia/api/auth`). Console sign-in is off while any OIDC value is unset. */

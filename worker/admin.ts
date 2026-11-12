@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { isLevel } from "./savers";
 import { consoleUser, sameOrigin } from "./console-auth";
-import { COMBO_NAME, PATTERN, parseModel } from "./providers";
+import { createApiKeyConnection, getConnection, listConnections, sealApiKey } from "./connections";
+import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, type ProviderId } from "./providers";
 import type { AppEnv } from "./env";
 import { currentMonth, monthRange } from "./usage";
 
@@ -13,6 +14,8 @@ type SystemRow = Parameters<typeof toSystem>[0];
 
 const isCap = (v: unknown): v is number | null => v === null || (typeof v === "number" && Number.isSafeInteger(v) && v >= 0);
 const isName = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.length <= 100;
+const isApiKey = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.length <= 4096;
+const NO_BOX = { error: "not_configured", hint: "set the CONNECTIONS_KEY secret: 32 random bytes, base64" } as const;
 
 async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   try {
@@ -144,6 +147,96 @@ export function adminRoutes(): Hono<AppEnv> {
 
   a.delete("/combos/:name", async (c) => {
     const r = await c.env.DB.prepare("DELETE FROM combo WHERE name = ?").bind(c.req.param("name")).run();
+    if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+    return c.body(null, 204);
+  });
+
+  /**
+   * Connections: provider accounts, several per provider, tried in priority order (connections.ts).
+   * A key goes in once and never comes back out: answers carry only its last 4 characters (`hint`).
+   */
+  a.get("/connections", async (c) => c.json(await listConnections(c.env.DB)));
+
+  /** The providers the gateway can reach, for the console. `env_key`: the environment holds a key for it. */
+  a.get("/providers", (c) =>
+    c.json(
+      (Object.keys(PROVIDERS) as ProviderId[]).map((id) => ({ id, name: PROVIDERS[id].name, format: PROVIDERS[id].format, auth: ["api_key"], env_key: hasEnvKey(c.env, id) })),
+    ),
+  );
+
+  /** Sets the order accounts are tried in: `ids` is every connection of the provider, first to last. */
+  a.put("/providers/:id/order", async (c) => {
+    const provider = c.req.param("id");
+    if (!isProvider(provider)) return c.json({ error: "not_found" }, 404);
+    const b = await readJson(c.req.raw);
+    const ids = b?.ids;
+    const current = (await listConnections(c.env.DB)).filter((x) => x.provider === provider);
+    const valid =
+      Array.isArray(ids) &&
+      ids.length === current.length &&
+      new Set(ids).size === ids.length &&
+      ids.every((id) => typeof id === "string" && current.some((x) => x.id === id));
+    if (!valid) return c.json({ error: "invalid_input", hint: "ids: every connection id of this provider, once each" }, 400);
+    const now = Math.floor(Date.now() / 1000);
+    if (ids.length > 0) {
+      await c.env.DB.batch(
+        (ids as string[]).map((id, i) => c.env.DB.prepare("UPDATE connection SET priority = ?, updated_at = ? WHERE id = ?").bind(i + 1, now, id)),
+      );
+    }
+    return c.json((await listConnections(c.env.DB)).filter((x) => x.provider === provider));
+  });
+
+  a.post("/connections", async (c) => {
+    const b = await readJson(c.req.raw);
+    if (!b || typeof b.provider !== "string" || !isProvider(b.provider) || !isName(b.name) || !isApiKey(b.api_key)) {
+      return c.json({ error: "invalid_input", hint: "provider: a known provider id, name: 1-100 chars, api_key: the provider's key" }, 400);
+    }
+    const created = await createApiKeyConnection(c.env, b.provider, b.name.trim(), b.api_key.trim());
+    if (!created) return c.json(NO_BOX, 500);
+    return c.json(created, 201);
+  });
+
+  a.patch("/connections/:id", async (c) => {
+    const id = c.req.param("id");
+    const cur = await getConnection(c.env.DB, id);
+    if (!cur) return c.json({ error: "not_found" }, 404);
+    const b = await readJson(c.req.raw);
+    if (!b) return c.json({ error: "invalid_input" }, 400);
+    const sets: string[] = [];
+    const args: unknown[] = [];
+    if ("name" in b) {
+      if (!isName(b.name)) return c.json({ error: "invalid_input", field: "name" }, 400);
+      sets.push("name = ?");
+      args.push(b.name.trim());
+    }
+    if ("disabled" in b) {
+      if (typeof b.disabled !== "boolean") return c.json({ error: "invalid_input", field: "disabled" }, 400);
+      sets.push("disabled = ?");
+      args.push(b.disabled ? 1 : 0);
+    }
+    if ("priority" in b) {
+      if (typeof b.priority !== "number" || !Number.isSafeInteger(b.priority) || b.priority < 1) return c.json({ error: "invalid_input", field: "priority" }, 400);
+      sets.push("priority = ?");
+      args.push(b.priority);
+    }
+    if ("api_key" in b) {
+      if (cur.auth_type !== "api_key" || !isApiKey(b.api_key)) return c.json({ error: "invalid_input", field: "api_key" }, 400);
+      const sealed = await sealApiKey(c.env, b.api_key.trim());
+      if (!sealed) return c.json(NO_BOX, 500);
+      // A new key starts clean: what the old key was refused or limited for no longer holds.
+      sets.push("secret = ?", "hint = ?", "cooldown_until = 0", "backoff_level = 0", "last_error = NULL", "last_error_at = NULL");
+      args.push(sealed.secret, sealed.hint);
+    }
+    if (sets.length > 0) {
+      await c.env.DB.prepare(`UPDATE connection SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`)
+        .bind(...args, Math.floor(Date.now() / 1000), id)
+        .run();
+    }
+    return c.json(await getConnection(c.env.DB, id));
+  });
+
+  a.delete("/connections/:id", async (c) => {
+    const r = await c.env.DB.prepare("DELETE FROM connection WHERE id = ?").bind(c.req.param("id")).run();
     if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);
     return c.body(null, 204);
   });

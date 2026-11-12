@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "./env";
-import { allowedPatterns, allows, providerKey } from "./providers";
+import { candidatesFor } from "./connections";
+import { allowedPatterns, allows } from "./providers";
 import { checkSystem, type GateFailure, type Upstream } from "./proxy";
 import { ANTHROPIC_VERSION, errorResponse, runChat } from "./route";
 
@@ -41,8 +42,13 @@ export function openaiRoutes(upstream: Upstream): Hono<AppEnv> {
     const patterns = allowedPatterns(g.system.allowed_models);
     const data: { id: string; object: "model"; created: number; owned_by: string }[] = [];
 
-    const key = providerKey(c.env, "anthropic", g.system.id);
-    if (key && allows(patterns, "anthropic/")) {
+    let key: string | null = null;
+    if (allows(patterns, "anthropic/")) {
+      for (const cand of await candidatesFor(c.env, "anthropic", g.system.id, Math.floor(Date.now() / 1000))) {
+        if ((key = await cand.key())) break;
+      }
+    }
+    if (key) {
       const up = await upstream(
         new Request(c.env.ANTHROPIC_BASE_URL.replace(/\/+$/, "") + "/v1/models?limit=1000", {
           headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION },

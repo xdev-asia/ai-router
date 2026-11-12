@@ -1,7 +1,8 @@
 import type { Context } from "hono";
 import type { System } from "./auth";
+import { accountFailure, candidatesFor, noteFailure, noteSuccess } from "./connections";
 import type { AppEnv } from "./env";
-import { PROVIDERS, allowedPatterns, allows, parseModel, providerKey, targetName, usageOfOpenAI, type Target } from "./providers";
+import { PROVIDERS, allowedPatterns, allows, parseModel, targetName, usageOfOpenAI, type Target } from "./providers";
 import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
@@ -26,7 +27,7 @@ export function errorResponse(status: number, message: string, type: string, cod
 /** 429 and 5xx (and network failures) may succeed on another target; anything else is the request's fault. */
 const retryable = (status: number) => status === 429 || status >= 500;
 
-type Attempt = { ok: true; res: Response } | { ok: false; res: Response; retryable: boolean; retryAfter: number | null };
+type Attempt = { ok: true; res: Response } | { ok: false; res: Response; status: number; message: string; retryable: boolean; retryAfter: number | null };
 
 /** Rebuilds an upstream error (Anthropic or OpenAI shape) as an OpenAI error with the same status. */
 async function failure(up: Response): Promise<Attempt> {
@@ -43,6 +44,8 @@ async function failure(up: Response): Promise<Attempt> {
   return {
     ok: false,
     res: errorResponse(up.status, message, type, typeof e.code === "string" ? e.code : null, extra),
+    status: up.status,
+    message,
     retryable: retryable(up.status),
     retryAfter: Number.isFinite(ra) && ra > 0 ? ra : null,
   };
@@ -171,6 +174,8 @@ async function coolingTargets(db: D1Database, names: string[], now: number): Pro
  * Runs an OpenAI chat request for `system`: resolves `model` (provider/model, claude-*, or combo/name), checks the
  * system may use it, then calls the target. A combo tries its targets in order, moving on only after a 429/5xx
  * or a missing key, and skips targets cooling down from an earlier failure (unless all are).
+ * Within one target the provider's accounts are tried in order (connections.ts): the next one after a 429, a 5xx
+ * or a refused key (401/403), never after another request error.
  */
 export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: System, req: Json): Promise<Response> {
   const ref = parseModel(req.model);
@@ -193,19 +198,28 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
   const savers = saversFor(system, c.req.raw);
   let last: Response | null = null;
   for (const [i, target] of order.entries()) {
-    const key = providerKey(c.env, target.provider, system.id);
-    if (!key) {
+    let attempt: Attempt | null = null;
+    for (const cand of await candidatesFor(c.env, target.provider, system.id, now)) {
+      const key = await cand.key();
+      if (!key) continue;
+      try {
+        attempt = PROVIDERS[target.provider].format === "anthropic"
+          ? await callAnthropic(c, upstream, system, key, target, req, savers)
+          : await callOpenAICompatible(c, upstream, system, key, target, req, savers);
+      } catch (e) {
+        if (e instanceof TranslateError) return errorResponse(400, e.message, "invalid_request_error");
+        attempt = { ok: false, res: errorResponse(502, `could not reach ${target.provider}`, "api_error"), status: 502, message: `could not reach ${target.provider}`, retryable: true, retryAfter: null };
+      }
+      if (attempt.ok) {
+        c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now).catch(() => undefined));
+        break;
+      }
+      if (!accountFailure(attempt.status)) break;
+      await noteFailure(c.env.DB, cand, attempt.status, attempt.message, attempt.retryAfter, now);
+    }
+    if (!attempt) {
       last = errorResponse(500, `not_configured: no ${target.provider} key`, "server_error", "not_configured", { "x-should-retry": "false" });
       continue;
-    }
-    let attempt: Attempt;
-    try {
-      attempt = PROVIDERS[target.provider].format === "anthropic"
-        ? await callAnthropic(c, upstream, system, key, target, req, savers)
-        : await callOpenAICompatible(c, upstream, system, key, target, req, savers);
-    } catch (e) {
-      if (e instanceof TranslateError) return errorResponse(400, e.message, "invalid_request_error");
-      attempt = { ok: false, res: errorResponse(502, `could not reach ${target.provider}`, "api_error"), retryable: true, retryAfter: null };
     }
     if (attempt.ok) {
       if (ref.kind === "combo") attempt.res.headers.set("x-gateway-target", targetName(target));

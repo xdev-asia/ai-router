@@ -25,6 +25,8 @@ export default defineConfig({
             // deepseek left out on purpose (not_configured case).
             PROVIDER_KEYS: JSON.stringify({ openai: "sk-test-openai", groq: "gsk-test-groq", openrouter: "sk-or-test", gemini: "g-test" }),
             ADMIN_TOKEN_SHA256: await sha256hex(TEST_ADMIN_TOKEN),
+            // 32 bytes, base64. Seals the connections' credentials in the test database.
+            CONNECTIONS_KEY: "dGVzdC1jb25uZWN0aW9ucy1rZXktMzItYnl0ZXMtISE=",
             // Fake xDev ID (see worker/test/console-auth.test.ts).
             OIDC_ISSUER: "https://id.test/api/auth",
             OIDC_CLIENT_ID: "llm-client",

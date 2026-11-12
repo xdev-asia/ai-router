@@ -27,6 +27,6 @@
     "OIDC_CLIENT_ID": "oGUOHBDqyjeFZQNvCIkfqbWTFXwqSLWY",
     "CONSOLE_EMAILS": "tdduy.dev@gmail.com"
   },
-  // Secrets (wrangler secret put): ANTHROPIC_KEYS, ADMIN_TOKEN_SHA256, OIDC_CLIENT_SECRET. See README.
+  // Secrets (wrangler secret put): ANTHROPIC_KEYS, ADMIN_TOKEN_SHA256, OIDC_CLIENT_SECRET, CONNECTIONS_KEY. See README.
   "observability": { "enabled": true }
 }

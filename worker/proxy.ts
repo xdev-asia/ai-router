@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
-import { anthropicKeyFor, presentedToken, systemForToken, type System } from "./auth";
+import { presentedToken, systemForToken, type System } from "./auth";
+import { accountFailure, candidatesFor, noteFailure, noteSuccess, type Candidate } from "./connections";
 import type { AppEnv, Env } from "./env";
 import { anthropicError } from "./errors";
 import { allowedPatterns, allows, parseModel, targetName } from "./providers";
@@ -24,7 +25,6 @@ export type GateFailure = {
   /** Tells the official SDKs not to retry (`x-should-retry: false`). */
   noRetry: boolean;
 };
-export type Gate = { ok: true; system: System; key: string } | GateFailure;
 
 /** Who is calling (gateway token) and whether that system may call now (enabled, under its cap). */
 export async function checkSystem(env: Env, req: Request, metered: boolean): Promise<{ ok: true; system: System } | GateFailure> {
@@ -43,21 +43,62 @@ export async function checkSystem(env: Env, req: Request, metered: boolean): Pro
   return { ok: true, system };
 }
 
-/** checkSystem, then the system's Anthropic key (the /anthropic surface). */
-export async function checkGate(env: Env, req: Request, metered: boolean): Promise<Gate> {
-  const s = await checkSystem(env, req, metered);
-  if (!s.ok) return s;
-  const key = anthropicKeyFor(env, s.system.id);
-  if (!key) return { ok: false, status: 500, kind: "not_configured", message: "not_configured: no Anthropic key for this system", noRetry: true };
-  return { ok: true, system: s.system, key };
-}
-
 const ANTHROPIC_TYPE = { authentication: "authentication_error", permission: "permission_error", not_configured: "api_error", cap: "rate_limit_error" } as const;
 
-async function gate(c: Context<AppEnv>, metered: boolean): Promise<{ ok: true; system: System; key: string } | { ok: false; res: Response }> {
-  const g = await checkGate(c.env, c.req.raw, metered);
+async function gate(c: Context<AppEnv>, metered: boolean): Promise<{ ok: true; system: System } | { ok: false; res: Response }> {
+  const g = await checkSystem(c.env, c.req.raw, metered);
   if (g.ok) return g;
   return { ok: false, res: anthropicError(c, g.status, ANTHROPIC_TYPE[g.kind], g.message, g.noRetry) };
+}
+
+const noKey = (c: Context<AppEnv>) => anthropicError(c, 500, "api_error", "not_configured: no Anthropic key for this system", true);
+
+/** "<message>" of an Anthropic error body, for the account's last error. Never request content. */
+async function errorMessage(up: Response): Promise<string> {
+  const body = (await up.json().catch(() => null)) as { error?: { message?: unknown } } | null;
+  return typeof body?.error?.message === "string" ? body.error.message : `upstream error ${up.status}`;
+}
+
+function retryAfterOf(up: Response): number | null {
+  const ra = Number(up.headers.get("retry-after"));
+  return Number.isFinite(ra) && ra > 0 ? ra : null;
+}
+
+/**
+ * Sends the request with each Anthropic account in turn (connections.ts) and returns the first answer that is
+ * not an account failure (429, 5xx, refused key), or the last account's answer as it came. An account that
+ * failed is set aside, and its attempt gets a usage row when `metered`. Null: no account and no key.
+ */
+async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: System, path: string, body: ArrayBuffer, metered: boolean, rtkSaved: number): Promise<Response | null> {
+  const now = Math.floor(Date.now() / 1000);
+  let failed: { up: Response; cand: Candidate } | null = null;
+  for (const cand of await candidatesFor(c.env, "anthropic", system.id, now)) {
+    const key = await cand.key();
+    if (!key) continue;
+    if (failed) {
+      // There is another account to try: this failure is not the client's answer.
+      if (metered) record(c, system, failed.up, false, Promise.resolve(EMPTY), PROVIDER, rtkSaved);
+      await noteFailure(c.env.DB, failed.cand, failed.up.status, await errorMessage(failed.up), retryAfterOf(failed.up), now);
+    }
+    const up = await upstream(upstreamRequest(c, path, key, body));
+    if (!accountFailure(up.status)) {
+      c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now).catch(() => undefined));
+      return up;
+    }
+    failed = { up, cand };
+  }
+  if (!failed) return null;
+  // The last account's failure goes to the client untouched; a copy tells the console why the account is set aside.
+  const { up, cand } = failed;
+  if (cand.connection !== null) {
+    const copy = up.clone();
+    c.executionCtx.waitUntil(
+      errorMessage(copy)
+        .then((m) => noteFailure(c.env.DB, cand, up.status, m, retryAfterOf(up), now))
+        .catch(() => undefined),
+    );
+  }
+  return up;
 }
 
 function upstreamRequest(c: Context<AppEnv>, path: string, key: string, body: ArrayBuffer): Request {
@@ -132,7 +173,8 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
         // not JSON: forwarded as is, Anthropic answers 400
       }
     }
-    const up = await upstream(upstreamRequest(c, "/v1/messages", g.key, body));
+    const up = await sendWithAccounts(c, upstream, g.system, "/v1/messages", body, true, rtkSaved);
+    if (!up) return noKey(c);
     const headers = responseHeaders(up);
 
     if (!up.body) {
@@ -160,7 +202,8 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
     const body = await c.req.arrayBuffer();
     const refused = modelRefused(c, g.system, body);
     if (refused) return refused;
-    const up = await upstream(upstreamRequest(c, "/v1/messages/count_tokens", g.key, body));
+    const up = await sendWithAccounts(c, upstream, g.system, "/v1/messages/count_tokens", body, false, 0);
+    if (!up) return noKey(c);
     return new Response(up.body, { status: up.status, headers: responseHeaders(up) });
   });
 
