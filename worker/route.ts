@@ -1,8 +1,9 @@
 import type { Context } from "hono";
 import type { System } from "./auth";
+import { CODEX_URL, chatToCodex, codexHeaders, codexToChatStream, readCodex } from "./codex";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess } from "./connections";
 import type { AppEnv } from "./env";
-import { ANTHROPIC_VERSION, PROVIDERS, allowedPatterns, allows, parseModel, providerDef, targetName, usageOfOpenAI, type Target } from "./providers";
+import { ANTHROPIC_VERSION, allowedPatterns, allows, parseModel, providerDef, targetName, usageOfOpenAI, type Target } from "./providers";
 import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
@@ -32,9 +33,10 @@ type Attempt = { ok: true; res: Response } | { ok: false; res: Response; status:
 
 /** Rebuilds an upstream error (Anthropic or OpenAI shape) as an OpenAI error with the same status. */
 async function failure(up: Response): Promise<Attempt> {
-  const body = (await up.json().catch(() => ({}))) as { error?: { type?: unknown; message?: unknown; code?: unknown } | string };
+  const body = (await up.json().catch(() => ({}))) as { error?: { type?: unknown; message?: unknown; code?: unknown } | string; detail?: unknown };
   const e = typeof body.error === "object" && body.error ? body.error : {};
-  const message = typeof e.message === "string" ? e.message : typeof body.error === "string" ? body.error : `upstream error ${up.status}`;
+  // `detail`: how the ChatGPT backend (Codex) words its refusals.
+  const message = typeof e.message === "string" ? e.message : typeof body.error === "string" ? body.error : typeof body.detail === "string" ? body.detail : `upstream error ${up.status}`;
   const type = typeof e.type === "string" ? e.type : "api_error";
   const extra: Record<string, string> = {};
   for (const h of ["retry-after", "x-should-retry"]) {
@@ -162,6 +164,34 @@ async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, syst
   return { ok: true, res: Response.json(out, { headers: { "cache-control": "no-store" } }) };
 }
 
+const SSE_HEADERS = { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store" };
+
+/** One chat request through a Codex account (worker/codex.ts): a Responses request out, a chat completion back. */
+async function callCodex(c: Context<AppEnv>, upstream: Upstream, system: System, token: string, account: string | null, target: Target, req: Json, savers: Savers): Promise<Attempt> {
+  const shaped = structuredClone(req) as Json;
+  const saved = applySavers(shaped, "openai", savers);
+  const stream = req.stream === true;
+  const includeUsage = stream && (req.stream_options as Json | undefined)?.include_usage === true;
+  const up = await upstream(new Request(CODEX_URL, { method: "POST", headers: codexHeaders(token, account), body: JSON.stringify(chatToCodex(shaped, target.model)) }));
+  if (!up.ok || !up.body) {
+    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
+    return failure(up);
+  }
+  if (stream) {
+    const { client, usage } = codexToChatStream(up.body, target.model, includeUsage);
+    record(c, system, up, true, usage, target.provider, saved);
+    return { ok: true, res: new Response(client, { headers: SSE_HEADERS }) };
+  }
+  const answer = await readCodex(up.body, target.model);
+  if (!answer.ok) {
+    // The backend answered 200 and then reported a failure inside the stream.
+    record(c, system, new Response(null, { status: 502 }), false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
+    return { ok: false, res: errorResponse(502, answer.message, "api_error"), status: 502, message: answer.message, retryable: true, retryAfter: null };
+  }
+  record(c, system, up, false, Promise.resolve(answer.usage), target.provider, saved);
+  return { ok: true, res: Response.json(answer.completion, { headers: { "cache-control": "no-store" } }) };
+}
+
 async function coolingTargets(db: D1Database, names: string[], now: number): Promise<Set<string>> {
   if (names.length === 0) return new Set();
   const r = await db
@@ -202,13 +232,22 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
   let last: Response | null = null;
   for (const [i, target] of order.entries()) {
     let attempt: Attempt | null = null;
-    for (const cand of await candidatesFor(c.env, target.provider, system.id, now)) {
+    const format = providerDef(target.provider).format;
+    for (const cand of await candidatesFor(c.env, target.provider, system.id, now, upstream)) {
       const key = await cand.key();
       if (!key) continue;
+      if (typeof key !== "string") {
+        // A subscription login the provider will not renew: say so, set the account aside, try the next one.
+        attempt = { ok: false, res: errorResponse(401, key.error, "authentication_error", "provider_auth"), status: 401, message: key.error, retryable: false, retryAfter: null };
+        await noteFailure(c.env.DB, cand, 401, key.error, null, now);
+        continue;
+      }
       try {
-        attempt = PROVIDERS[target.provider].format === "anthropic"
+        attempt = format === "anthropic"
           ? await callAnthropic(c, upstream, system, key, target, req, savers)
-          : await callOpenAICompatible(c, upstream, system, key, target, req, savers);
+          : format === "codex"
+            ? await callCodex(c, upstream, system, key, cand.account, target, req, savers)
+            : await callOpenAICompatible(c, upstream, system, key, target, req, savers);
       } catch (e) {
         if (e instanceof TranslateError) return errorResponse(400, e.message, "invalid_request_error");
         attempt = { ok: false, res: errorResponse(502, `could not reach ${target.provider}`, "api_error"), status: 502, message: `could not reach ${target.provider}`, retryable: true, retryAfter: null };
@@ -221,7 +260,8 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
       await noteFailure(c.env.DB, cand, attempt.status, attempt.message, attempt.retryAfter, now);
     }
     if (!attempt) {
-      last = errorResponse(500, `not_configured: no ${target.provider} key`, "server_error", "not_configured", { "x-should-retry": "false" });
+      const missing = providerDef(target.provider).auth === "oauth" ? `no ${target.provider} connection; sign in from the console` : `no ${target.provider} key`;
+      last = errorResponse(500, `not_configured: ${missing}`, "server_error", "not_configured", { "x-should-retry": "false" });
       continue;
     }
     if (attempt.ok) {

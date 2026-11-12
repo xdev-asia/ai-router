@@ -93,8 +93,28 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 | `<provider>/<model>`: `openai`, `gemini`, `openrouter`, `deepseek`, `groq`, and 41 more OpenAI-compatible providers (`mistral`, `cerebras`, `together`, `fireworks`, ...; `GET /admin/providers` lists them) | that provider's API with a key from its connections or from `PROVIDER_KEYS`; the body is passed on with the bare model name. The 41 added ones take their base URLs from 9router's registry and have not been called against the live services here |
 | `combo/<name>` | the combo's targets in order (below) |
 
-Subscription logins (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot...) are not built yet. The `connection` table
-already holds `auth_type = 'oauth'` for them; no provider uses it so far.
+## Subscription logins
+
+So far one: **Codex**, a ChatGPT account used the way the Codex CLI uses it (the idea of 9router's Codex provider,
+written anew; the CLI's instructions text is vendored in `worker/vendor/`). Call it as `codex/<model>` on
+`/openai/v1`.
+
+- **Sign in** from the console (Providers, OpenAI Codex, Add connection): the provider's sign-in page opens in a
+  new tab (authorization code with PKCE at auth.openai.com, the Codex CLI's public client id). The browser comes
+  back to `http://localhost:1455/auth/callback`. On a local run with that port mapped to the Worker, the gateway
+  finishes the sign-in by itself. Anywhere else that page does not load: copy its address into the console.
+- **Stored**: access, refresh and ID token, sealed like API keys; the connection is named after the account's
+  email. Signing in again as the same account replaces its tokens.
+- **Renewed** before a request when the access token has less than 10 minutes left. A refusal sets the connection
+  aside with "sign in again" as its last error.
+- **Sent** to `https://chatgpt.com/backend-api/codex/responses` as an OpenAI Responses request, always as a
+  stream; the answer comes back as a chat completion (text and function tool calls; reasoning is not returned).
+  `temperature`, `max_tokens` and the other sampling settings are dropped: the backend refuses them.
+- Using a ChatGPT subscription outside OpenAI's own apps may be against its terms. The account can be limited or
+  closed. The console says so on the provider's page.
+- Not tried against the real service from this repo's tests: they use a fake upstream.
+
+Other subscription logins (Claude Pro/Max, Gemini CLI, Copilot...) are not built yet.
 
 ## Connections: several accounts per provider
 
@@ -191,6 +211,8 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `PUT /providers/:id/order` | `{ids: [...]}` (every connection of the provider, once each) | the provider's connections in the new order; `400`; `404` |
 | `GET /token-saver` | | `{rtk, caveman, ponytail, custom_prompt, headroom: {enabled, url}}` |
 | `PUT /token-saver` | any of those fields | the settings; `400` |
+| `POST /oauth/:provider/start` | | `{authorize_url}`: the provider's sign-in page to open; `404` for a provider without a subscription login |
+| `POST /oauth/:provider/finish` | `{callback_url}` or `{code, state}` | `201` the connection; `400 invalid_state`; `502 provider_refused` with the provider's `message` |
 | `GET /combos` | | `[{name, targets, updated_at}]` |
 | `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
 | `DELETE /combos/:name` | | `204`; `404` |
@@ -222,5 +244,9 @@ Local secrets go in `.dev.vars` (git-ignored).
 corepack pnpm run build      # the console, on the host (needs the GitHub Packages token)
 docker compose up --build    # .dev.vars is mounted read-only; the local D1 lives in a volume
 ```
+
+Port `1455` of this machine is mapped to the same Worker. Signing in to a Codex (ChatGPT) account needs it:
+auth.openai.com sends the browser back to `http://localhost:1455/auth/callback`, the Codex CLI's fixed address.
+Stop the Codex CLI's own sign-in first if it is running, since it listens on the same port.
 
 Not the production runtime (that is Cloudflare Workers).

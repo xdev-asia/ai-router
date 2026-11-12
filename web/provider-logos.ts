@@ -19,6 +19,7 @@ const WITH_LOGO: ReadonlySet<string> = new Set([
   "byteplus",
   "cerebras",
   "chutes",
+  "codex",
   "cohere",
   "dahl",
   "deepseek",

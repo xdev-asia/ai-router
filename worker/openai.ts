@@ -45,7 +45,11 @@ export function openaiRoutes(upstream: Upstream): Hono<AppEnv> {
     let key: string | null = null;
     if (allows(patterns, "anthropic/")) {
       for (const cand of await candidatesFor(c.env, "anthropic", g.system.id, Math.floor(Date.now() / 1000))) {
-        if ((key = await cand.key())) break;
+        const k = await cand.key();
+        if (typeof k === "string") {
+          key = k;
+          break;
+        }
       }
     }
     if (key) {

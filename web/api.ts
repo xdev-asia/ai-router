@@ -50,6 +50,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /** What the gateway said in plain words, when it did (e.g. a provider's reason for refusing a sign-in). */
+    readonly detail: string | null = null,
   ) {
     super(code);
   }
@@ -71,8 +73,8 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     throw new ApiError(401, "unauthorized");
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(res.status, body.error ?? String(res.status));
+    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: unknown };
+    throw new ApiError(res.status, body.error ?? String(res.status), typeof body.message === "string" ? body.message : null);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -150,6 +152,8 @@ export interface Connection {
   auth_type: "api_key" | "oauth";
   name: string;
   hint: string | null;
+  /** The provider's id of the account an OAuth connection signed in as. */
+  account: string | null;
   expires_at: number | null;
   priority: number;
   disabled: boolean;

@@ -73,9 +73,9 @@ function retryAfterOf(up: Response): number | null {
 async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: System, path: string, body: ArrayBuffer, metered: boolean, rtkSaved: number): Promise<Response | null> {
   const now = Math.floor(Date.now() / 1000);
   let failed: { up: Response; cand: Candidate } | null = null;
-  for (const cand of await candidatesFor(c.env, "anthropic", system.id, now)) {
+  for (const cand of await candidatesFor(c.env, "anthropic", system.id, now, upstream)) {
     const key = await cand.key();
-    if (!key) continue;
+    if (typeof key !== "string") continue;
     if (failed) {
       // There is another account to try: this failure is not the client's answer.
       if (metered) record(c, system, failed.up, false, Promise.resolve(EMPTY), PROVIDER, rtkSaved);

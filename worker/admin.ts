@@ -5,6 +5,7 @@ import { consoleUser, sameOrigin } from "./console-auth";
 import { createApiKeyConnection, getConnection, isStrategy, listConnections, sealApiKey, testConnection } from "./connections";
 import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, providerDef, type ProviderId } from "./providers";
 import type { AppEnv } from "./env";
+import { OAUTH, finishLogin, startLogin } from "./oauth";
 import type { Upstream } from "./proxy";
 import { reportRoutes } from "./report";
 import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
@@ -170,7 +171,7 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     return c.json(
       (Object.keys(PROVIDERS) as ProviderId[]).map((id) => {
         const def = providerDef(id);
-        return { id, name: def.name, format: def.format, auth: ["api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first", color: def.color, mark: def.mark };
+        return { id, name: def.name, format: def.format, auth: [def.auth ?? "api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first", color: def.color, mark: def.mark };
       }),
     );
   });
@@ -186,6 +187,38 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
       : c.env.DB.prepare("INSERT INTO provider_setting (provider, strategy) VALUES (?, ?) ON CONFLICT (provider) DO UPDATE SET strategy = excluded.strategy").bind(provider, b.strategy)
     ).run();
     return c.json({ provider, strategy: b.strategy });
+  });
+
+  /**
+   * Subscription login (oauth.ts). `start` answers the provider's sign-in page to open. `finish` takes what the
+   * provider sent the browser back with: the whole address (`callback_url`) or its `code` and `state`.
+   */
+  a.post("/oauth/:provider/start", async (c) => {
+    const url = await startLogin(c.env, c.req.param("provider"));
+    return url ? c.json({ authorize_url: url }) : c.json({ error: "not_found" }, 404);
+  });
+
+  a.post("/oauth/:provider/finish", async (c) => {
+    const provider = c.req.param("provider");
+    if (!OAUTH[provider]) return c.json({ error: "not_found" }, 404);
+    const b = await readJson(c.req.raw);
+    let code: unknown = b?.code;
+    let state: unknown = b?.state;
+    if (typeof b?.callback_url === "string") {
+      try {
+        const u = new URL(b.callback_url);
+        code = u.searchParams.get("code");
+        state = u.searchParams.get("state");
+      } catch {
+        // falls through to invalid_input
+      }
+    }
+    if (typeof code !== "string" || code === "" || typeof state !== "string" || state === "") {
+      return c.json({ error: "invalid_input", hint: "callback_url: the address the browser ended on, or code and state" }, 400);
+    }
+    const r = await finishLogin(c.env, upstream, provider, code, state);
+    if (!r.ok) return c.json({ error: r.error, message: r.message }, r.status);
+    return c.json(await getConnection(c.env.DB, r.id), 201);
   });
 
   /** Checks the connection's key at the provider (its model list; no tokens spent). Always 200 with `{ok}`. */

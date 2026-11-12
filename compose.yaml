@@ -4,6 +4,8 @@ services:
     build: .
     ports:
       - "127.0.0.1:8787:8787"
+      # Codex sign-in: auth.openai.com sends the browser back to http://localhost:1455/auth/callback.
+      - "127.0.0.1:1455:8787"
     volumes:
       - ./.dev.vars:/app/.dev.vars:ro
       # Local D1 (systems, usage, console sessions) survives restarts.

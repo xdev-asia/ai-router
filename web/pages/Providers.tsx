@@ -167,7 +167,7 @@ export function Providers() {
   );
 }
 
-type Pending = { kind: "edit"; account: Connection | null } | { kind: "delete"; account: Connection } | null;
+type Pending = { kind: "edit"; account: Connection | null } | { kind: "delete"; account: Connection } | { kind: "oauth"; url: string } | null;
 
 /** One provider's accounts, in the order the gateway tries them: add, rename, replace a key, switch off, reorder, delete. */
 export function ProviderDetail({ id }: { id: string }) {
@@ -219,6 +219,16 @@ export function ProviderDetail({ id }: { id: string }) {
     });
   };
 
+  const isOAuth = provider?.auth[0] === "oauth";
+
+  /** A subscription provider has no key to type: its sign-in page opens in a new tab, and a dialog waits for the result. */
+  const startSignIn = () =>
+    run(async () => {
+      const { authorize_url } = await api<{ authorize_url: string }>(`/oauth/${encodeURIComponent(id)}/start`, { method: "POST" });
+      window.open(authorize_url, "_blank", "noopener");
+      setPending({ kind: "oauth", url: authorize_url });
+    });
+
   const setRoundRobin = (on: boolean) =>
     run(async () => {
       await api(`/providers/${encodeURIComponent(id)}/strategy`, { method: "PUT", body: { strategy: on ? "round-robin" : "fill-first" } });
@@ -251,7 +261,7 @@ export function ProviderDetail({ id }: { id: string }) {
   };
 
   const meta = (a: Connection) => {
-    const lines = [a.hint ? t("providers.keyEnds", { hint: a.hint }) : null, a.last_error ? t("providers.lastError", { error: a.last_error }) : null].filter(
+    const lines = [a.auth_type === "oauth" ? t("providers.status.signedIn") : a.hint ? t("providers.keyEnds", { hint: a.hint }) : null, a.last_error ? t("providers.lastError", { error: a.last_error }) : null].filter(
       (x): x is string => x !== null,
     );
     if (lines.length === 0) return undefined;
@@ -281,7 +291,7 @@ export function ProviderDetail({ id }: { id: string }) {
             provider?.key_url ? (
               <a className="back-link" href={provider.key_url} target="_blank" rel="noreferrer noopener">
                 <Icon name="external" size={16} />
-                {t("providers.getKey")}
+                {isOAuth ? t("providers.signUp") : t("providers.getKey")}
               </a>
             ) : undefined
           }
@@ -308,6 +318,7 @@ export function ProviderDetail({ id }: { id: string }) {
       {providers.status === "ready" && !provider && <Banner tone="danger" title={t("providers.unknown")} />}
       {provider && loaded && (
         <>
+          {isOAuth && <Banner tone="warn" title={t("providers.riskNotice")} />}
           {provider.env_key && <Banner tone="info" title={t("providers.envKeyNote")} />}
           <Card
             title={t("providers.accountsTitle")}
@@ -315,7 +326,7 @@ export function ProviderDetail({ id }: { id: string }) {
             actions={
               <>
                 <Switch label={t("providers.roundRobin")} checked={provider.strategy === "round-robin"} disabled={busy} onChange={(e) => void setRoundRobin(e.target.checked)} />
-                <Button variant="primary" icon="plus" onClick={() => setPending({ kind: "edit", account: null })}>
+                <Button variant="primary" icon="plus" disabled={busy} onClick={() => (isOAuth ? void startSignIn() : setPending({ kind: "edit", account: null }))}>
                   {t("providers.add")}
                 </Button>
               </>
@@ -363,6 +374,18 @@ export function ProviderDetail({ id }: { id: string }) {
             )}
           </Card>
         </>
+      )}
+      {pending?.kind === "oauth" && provider && (
+        <SignInDialog
+          provider={provider}
+          url={pending.url}
+          onCancel={() => setPending(null)}
+          onDone={(name) => {
+            if (name) notify(t("providers.signedIn", { name }));
+            setPending(null);
+            reload();
+          }}
+        />
       )}
       {pending?.kind === "edit" && (
         <AccountDialog
@@ -447,16 +470,75 @@ function AccountDialog({ provider, account, onCancel, onSaved }: { provider: str
         onChange={(e) => setName(e.target.value)}
         error={tried && !nameOk ? t("providers.nameRequired") : undefined}
       />
-      <Field
-        label={t("providers.apiKey")}
-        hint={account ? t("providers.apiKeyKeepHint") : t("providers.apiKeyHint")}
-        type="password"
-        value={apiKey}
-        autoComplete="off"
-        spellCheck={false}
-        onChange={(e) => setApiKey(e.target.value)}
-        error={tried && !keyOk ? t("providers.apiKeyRequired") : undefined}
-      />
+      {account?.auth_type !== "oauth" && (
+        <Field
+          label={t("providers.apiKey")}
+          hint={account ? t("providers.apiKeyKeepHint") : t("providers.apiKeyHint")}
+          type="password"
+          value={apiKey}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => setApiKey(e.target.value)}
+          error={tried && !keyOk ? t("providers.apiKeyRequired") : undefined}
+        />
+      )}
     </FormDialog>
   );
 }
+
+/**
+ * Waits for a subscription sign-in that runs in another tab. When the provider's redirect reaches the gateway
+ * (a local run with the callback port mapped) the user only confirms; otherwise the user pastes the address of
+ * the page the browser ended on.
+ */
+function SignInDialog({ provider, url, onCancel, onDone }: { provider: Provider; url: string; onCancel: () => void; onDone: (name: string | null) => void }) {
+  const [lang] = useLang();
+  const [callback, setCallback] = useState("");
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function finish() {
+    setTried(true);
+    if (callback.trim() === "") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const c = await api<Connection>(`/oauth/${encodeURIComponent(provider.id)}/finish`, { body: { callback_url: callback.trim() } });
+      onDone(c.name);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      setError(e instanceof ApiError && e.detail ? t("providers.oauth.failed", { message: e.detail }) : t("error.generic"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FormDialog
+      title={t("providers.oauth.title", { name: provider.name })}
+      description={t("providers.oauth.description")}
+      submitLabel={t("providers.oauth.finish")}
+      labels={ui(lang).formDialog}
+      busy={busy}
+      error={error ?? undefined}
+      onCancel={onCancel}
+      onSubmit={() => void finish()}
+    >
+      <Field
+        label={t("providers.oauth.callback")}
+        hint={t("providers.oauth.callbackHint")}
+        value={callback}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => setCallback(e.target.value)}
+        error={tried && callback.trim() === "" ? t("providers.oauth.callbackRequired") : undefined}
+      />
+      <Stack direction="row" gap={2}>
+        <Button onClick={() => onDone(null)}>{t("providers.oauth.done")}</Button>
+        <Button onClick={() => window.open(url, "_blank", "noopener")}>{t("providers.oauth.reopen")}</Button>
+      </Stack>
+    </FormDialog>
+  );
+}
+

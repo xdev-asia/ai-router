@@ -3,8 +3,17 @@ import { adminRoutes } from "./admin";
 import { consoleAuthRoutes, type Idp } from "./console-auth";
 import type { AppEnv } from "./env";
 import { anthropicError } from "./errors";
+import { finishLogin, isPendingState } from "./oauth";
 import { openaiRoutes } from "./openai";
 import { anthropicRoutes, type Upstream } from "./proxy";
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/** The page a provider's sign-in ends on: one sentence, no script, no token. */
+function loginPage(r: { ok: true; name: string } | { ok: false; message: string }): string {
+  const text = r.ok ? `Signed in as ${escapeHtml(r.name)}. You can close this tab and go back to the console.` : `The sign-in did not finish: ${escapeHtml(r.message)}. Go back to the console and try again.`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>ai-router</title><body style="font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 32rem; padding: 0 1rem; line-height: 1.5"><p>${text}</p></body></html>`;
+}
 
 export interface Deps {
   /** Sends a request to the provider. `fetch` in production; a fake in tests. */
@@ -25,6 +34,18 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
     await next();
   });
   app.get("/health", (c) => c.json({ ok: true }));
+  // A provider's sign-in page sends the browser back here (Codex: http://localhost:1455/auth/callback, so only
+  // when that port reaches this Worker). Anything that is not one of our pending logins is the console's own
+  // sign-in with xDev ID, handled below.
+  app.get("/auth/callback", async (c, next) => {
+    const state = c.req.query("state");
+    if (!state || !(await isPendingState(c.env.DB, state))) return next();
+    const code = c.req.query("code");
+    const result = code
+      ? await finishLogin(c.env, deps.upstream, null, code, state)
+      : ({ ok: false, status: 400, error: "provider_refused", message: c.req.query("error_description") ?? c.req.query("error") ?? "the sign-in was not completed" } as const);
+    return c.html(loginPage(result.ok ? { ok: true, name: result.name } : { ok: false, message: result.message }), result.ok ? 200 : result.status);
+  });
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
   app.route("/admin", adminRoutes(deps.upstream));
   app.route("/anthropic", anthropicRoutes(deps.upstream));

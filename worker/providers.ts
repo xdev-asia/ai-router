@@ -9,8 +9,13 @@ export interface ProviderDef {
   /** The provider's own colour and one to three letters, for its mark in the console (from 9router's registry). */
   color: string;
   mark: string;
-  /** "anthropic": the Messages API at ANTHROPIC_BASE_URL. "openai": Chat Completions at `baseUrl` + `/chat/completions`. */
-  format: "anthropic" | "openai";
+  /**
+   * "anthropic": the Messages API at ANTHROPIC_BASE_URL. "openai": Chat Completions at `baseUrl` + `/chat/completions`.
+   * "codex": the ChatGPT Codex backend (worker/codex.ts).
+   */
+  format: "anthropic" | "openai" | "codex";
+  /** "oauth": the provider is reached with a subscription login (worker/oauth.ts) instead of an API key. */
+  auth?: "oauth";
   baseUrl?: string;
   /** Where a key is checked (a GET that needs the key). Default: `baseUrl` + `/models`. */
   modelsUrl?: string;
@@ -23,7 +28,7 @@ export interface ProviderDef {
  * The first six are the gateway's original ones; the rest are the providers 9router (MIT) lists as plain
  * OpenAI-compatible, with the names, base URLs and key pages from its registry at commit 54a88d04. Only the first
  * six have been called by this gateway's tests against the real services' shapes; the others are untested against
- * the live providers. Subscription logins (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot...) are not here yet.
+ * the live providers. `codex` is the first subscription login (a ChatGPT account, as the Codex CLI uses it).
  */
 export const PROVIDERS = {
   anthropic: { name: "Anthropic", color: "#D97757", mark: "AN", format: "anthropic", keyUrl: "https://console.anthropic.com/settings/keys" },
@@ -46,6 +51,7 @@ export const PROVIDERS = {
   byteplus: { name: "BytePlus ModelArk", color: "#2563EB", mark: "BP", format: "openai", baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3", keyUrl: "https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey" },
   cerebras: { name: "Cerebras", color: "#FF4F00", mark: "CB", format: "openai", baseUrl: "https://api.cerebras.ai/v1", keyUrl: "https://cloud.cerebras.ai/platform" },
   chutes: { name: "Chutes AI", color: "#FFFFFF", mark: "CH", format: "openai", baseUrl: "https://llm.chutes.ai/v1", keyUrl: "https://chutes.ai/app/api" },
+  codex: { name: "OpenAI Codex", color: "#3B82F6", mark: "CX", format: "codex", auth: "oauth", keyUrl: "https://chatgpt.com/codex" },
   cohere: { name: "Cohere", color: "#39594D", mark: "CO", format: "openai", baseUrl: "https://api.cohere.ai/v1", keyUrl: "https://dashboard.cohere.com/api-keys" },
   dahl: { name: "Dahl Inference", color: "#1E40AF", mark: "DH", format: "openai", baseUrl: "https://inference.dahl.global/v1", keyUrl: "https://dahl.global/dashboard" },
   featherless: { name: "Featherless", color: "#111827", mark: "FL", format: "openai", baseUrl: "https://api.featherless.ai/v1", keyUrl: "https://featherless.ai/account/api-keys" },

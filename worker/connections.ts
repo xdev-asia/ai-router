@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { ANTHROPIC_VERSION, isProvider, providerDef, providerKey, type ProviderId } from "./providers";
+import { accessToken } from "./oauth";
 import { open, seal } from "./secret-box";
 
 /**
@@ -18,6 +19,8 @@ export interface Connection {
   name: string;
   /** Last 4 characters of an API key. */
   hint: string | null;
+  /** The provider's id of the account an OAuth connection signed in as. */
+  account: string | null;
   expires_at: number | null;
   priority: number;
   disabled: boolean;
@@ -33,7 +36,7 @@ type ConnectionRow = Omit<Connection, "disabled"> & { disabled: number };
 
 /** Everything but `secret` and `backoff_level`: what the console may see. */
 export const CONNECTION_COLUMNS =
-  "id, provider, auth_type, name, hint, expires_at, priority, disabled, cooldown_until, last_error, last_error_at, last_used_at, created_at, updated_at";
+  "id, provider, auth_type, name, hint, account, expires_at, priority, disabled, cooldown_until, last_error, last_error_at, last_used_at, created_at, updated_at";
 
 export const toConnection = (r: ConnectionRow): Connection => ({ ...r, disabled: r.disabled === 1 });
 
@@ -89,8 +92,13 @@ export const isStrategy = (v: unknown): v is Strategy => v === "fill-first" || v
 export interface Candidate {
   connection: string | null;
   backoffLevel: number;
-  /** The key to send. Null when the account's secret cannot be opened (CONNECTIONS_KEY changed): skip it. */
-  key: () => Promise<string | null>;
+  /** The provider's account id of an OAuth connection (Codex sends it as a header). */
+  account: string | null;
+  /**
+   * The key or access token to send. Null: the secret cannot be opened (CONNECTIONS_KEY changed), skip it.
+   * `{error}`: an OAuth connection whose token the provider refused to renew; the user has to sign in again.
+   */
+  key: () => Promise<string | { error: string } | null>;
 }
 
 /**
@@ -98,25 +106,31 @@ export interface Candidate {
  * cooling down (soonest first), so a request is still attempted when nothing else is left. Available ones go by
  * priority ("fill-first", the default) or, with "round-robin", the one that answered longest ago first.
  */
-export async function candidatesFor(env: Env, provider: ProviderId, systemId: string, now: number): Promise<Candidate[]> {
+export async function candidatesFor(env: Env, provider: ProviderId, systemId: string, now: number, upstream?: (req: Request) => Promise<Response>): Promise<Candidate[]> {
   const r = await env.DB.prepare(
-    `SELECT id, secret, cooldown_until, backoff_level, rr_at,
+    `SELECT id, secret, auth_type, account, expires_at, cooldown_until, backoff_level, rr_at,
             (SELECT strategy FROM provider_setting WHERE provider = ?1) AS strategy
      FROM connection WHERE provider = ?1 AND disabled = 0 ORDER BY priority, created_at`,
   )
     .bind(provider)
-    .all<{ id: string; secret: string; cooldown_until: number; backoff_level: number; rr_at: number; strategy: string | null }>();
+    .all<{ id: string; secret: string; auth_type: string; account: string | null; expires_at: number | null; cooldown_until: number; backoff_level: number; rr_at: number; strategy: string | null }>();
   const account = (row: (typeof r.results)[number]): Candidate => ({
     connection: row.id,
     backoffLevel: row.backoff_level,
-    key: () => apiKeyOf(env, row.secret),
+    account: row.account,
+    key: () =>
+      row.auth_type === "oauth"
+        ? upstream
+          ? accessToken(env, upstream, { id: row.id, provider, secret: row.secret, expires_at: row.expires_at }, now)
+          : Promise.resolve(null)
+        : apiKeyOf(env, row.secret),
   });
   const free = r.results.filter((x) => x.cooldown_until <= now);
   // Array.sort is stable: connections that answered at the same time keep their priority order.
   if (r.results[0]?.strategy === "round-robin") free.sort((a, b) => a.rr_at - b.rr_at);
   const cooling = r.results.filter((x) => x.cooldown_until > now).sort((a, b) => a.cooldown_until - b.cooldown_until);
   const envKey = providerKey(env, provider, systemId);
-  const fromEnv: Candidate[] = envKey ? [{ connection: null, backoffLevel: 0, key: () => Promise.resolve(envKey) }] : [];
+  const fromEnv: Candidate[] = envKey ? [{ connection: null, backoffLevel: 0, account: null, key: () => Promise.resolve(envKey) }] : [];
   return [...free.map(account), ...fromEnv, ...cooling.map(account)];
 }
 
@@ -156,7 +170,9 @@ export type TestResult = { ok: true } | { ok: false; status: number; message: st
  * Null: no such connection.
  */
 export async function testConnection(env: Env, upstream: (req: Request) => Promise<Response>, id: string): Promise<TestResult | null> {
-  const row = await env.DB.prepare("SELECT provider, secret FROM connection WHERE id = ?").bind(id).first<{ provider: string; secret: string }>();
+  const row = await env.DB.prepare("SELECT provider, secret, auth_type, expires_at FROM connection WHERE id = ?")
+    .bind(id)
+    .first<{ provider: string; secret: string; auth_type: string; expires_at: number | null }>();
   if (!row || !isProvider(row.provider)) return null;
   const now = Math.floor(Date.now() / 1000);
   const fail = async (status: number, message: string): Promise<TestResult> => {
@@ -165,6 +181,14 @@ export async function testConnection(env: Env, upstream: (req: Request) => Promi
       .run();
     return { ok: false, status, message };
   };
+  if (row.auth_type === "oauth") {
+    // A subscription login is usable when its token is still good or the provider renews it. No model call.
+    const token = await accessToken(env, upstream, { id, provider: row.provider, secret: row.secret, expires_at: row.expires_at }, now);
+    if (token === null) return fail(0, "the stored tokens cannot be opened (CONNECTIONS_KEY changed)");
+    if (typeof token !== "string") return fail(401, token.error);
+    await env.DB.prepare("UPDATE connection SET cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, updated_at = ? WHERE id = ?").bind(now, id).run();
+    return { ok: true };
+  }
   const key = await apiKeyOf(env, row.secret);
   if (!key) return fail(0, "the stored key cannot be opened (CONNECTIONS_KEY changed)");
   const def = providerDef(row.provider);

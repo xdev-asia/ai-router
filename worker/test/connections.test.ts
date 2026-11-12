@@ -123,8 +123,8 @@ describe("admin: providers and account order", () => {
     expect(list.slice(0, 6).map((p) => p.id)).toEqual(["anthropic", "openai", "gemini", "openrouter", "deepseek", "groq"]);
     const rest = list.slice(6).map((p) => p.id);
     expect(rest).toEqual([...rest].sort());
-    expect(list).toHaveLength(47);
-    expect(new Set(list.map((p) => p.id)).size).toBe(47);
+    expect(list).toHaveLength(48);
+    expect(new Set(list.map((p) => p.id)).size).toBe(48);
     expect(list.find((p) => p.id === "anthropic")).toEqual({
       id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first", color: "#D97757", mark: "AN",
     });
@@ -133,6 +133,9 @@ describe("admin: providers and account order", () => {
     expect(list.find((p) => p.id === "openai")).toMatchObject({ env_key: true });
     expect(list.find((p) => p.id === "mistral")).toMatchObject({ name: "Mistral", format: "openai", env_key: false });
     expect(list.find((p) => p.id === "vercel-ai-gateway")).toMatchObject({ name: "Vercel AI Gateway" });
+    // A subscription login is told apart by its auth kind.
+    expect(list.find((p) => p.id === "codex")).toMatchObject({ name: "OpenAI Codex", format: "codex", auth: ["oauth"] });
+    expect((list as unknown as { auth: string[] }[]).filter((p) => p.auth[0] === "oauth")).toHaveLength(1);
     expect(list.every((p) => p.key_url === null || p.key_url.startsWith("https://"))).toBe(true);
     // Every provider has a colour and one to three letters for its mark in the console.
     const marks = list as unknown as { id: string; color: string; mark: string }[];

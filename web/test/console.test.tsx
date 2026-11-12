@@ -479,6 +479,79 @@ describe("providers", () => {
     expect(await screen.findByText(t("providers.testFailed", { name: "Backup", error: "401 Invalid API Key" }))).toBeTruthy();
   });
 
+  describe("subscription login", () => {
+    const CODEX = { id: "codex", name: "OpenAI Codex", format: "codex", auth: ["oauth"], env_key: false, key_url: "https://chatgpt.com/codex", strategy: "fill-first", color: "#3B82F6", mark: "CX" };
+    const SIGNED_IN = account({ id: "o1", provider: "codex", auth_type: "oauth", name: "dev@example.com", hint: null, account: "acc_1", expires_at: 1_790_003_600 });
+    const AUTHORIZE = "https://auth.openai.com/oauth/authorize?state=abc";
+    let opened: string[];
+
+    beforeEach(() => {
+      opened = [];
+      vi.spyOn(window, "open").mockImplementation((url) => {
+        opened.push(String(url));
+        return null;
+      });
+      routes["GET /admin/providers"] = () => json([...PROVIDER_LIST, CODEX]);
+      routes["GET /admin/connections"] = () => json([WORK, SIGNED_IN]);
+      routes["POST /admin/oauth/codex/start"] = () => json({ authorize_url: AUTHORIZE });
+      routes["POST /admin/oauth/codex/finish"] = () => json(SIGNED_IN, 201);
+    });
+
+    async function openCodex() {
+      window.location.hash = "#/providers/codex";
+      await signIn();
+      await screen.findByText("dev@example.com");
+    }
+
+    it("lists subscription providers in their own section, before the API key providers", async () => {
+      window.location.hash = "#/providers";
+      await signIn();
+      await screen.findByRole("link", { name: /OpenAI Codex/ });
+      // The section headings of the page, in page order (the sidebar has a heading of its own).
+      const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent).filter((h) => h !== t("nav.title"));
+      expect(headings).toEqual([t("providers.section.oauth"), t("providers.section.api_key")]);
+    });
+
+    it("warns that a subscription login may break the provider's terms", async () => {
+      await openCodex();
+      expect(screen.getByText(t("providers.riskNotice"))).toBeTruthy();
+      // There is no key to get: the link goes to the provider's sign-up page.
+      expect(screen.getByRole("link", { name: t("providers.signUp") }).getAttribute("href")).toBe("https://chatgpt.com/codex");
+      expect(screen.queryByRole("link", { name: t("providers.getKey") })).toBeNull();
+    });
+
+    it("signing in opens the provider's page in a new tab, then takes the address the browser ended on", async () => {
+      await openCodex();
+      fireEvent.click(screen.getByRole("button", { name: t("providers.add") }));
+      await waitFor(() => expect(opened).toEqual([AUTHORIZE]));
+      expect(calls.find((c) => c.url === "/admin/oauth/codex/start")).toMatchObject({ method: "POST" });
+
+      const back = "http://localhost:1455/auth/callback?code=xyz&state=abc";
+      fireEvent.change(await screen.findByLabelText(t("providers.oauth.callback")), { target: { value: back } });
+      fireEvent.click(screen.getByRole("button", { name: t("providers.oauth.finish") }));
+      await waitFor(() => expect(calls.find((c) => c.url === "/admin/oauth/codex/finish")).toMatchObject({ method: "POST", body: { callback_url: back } }));
+      expect(await screen.findByText(t("providers.signedIn", { name: "dev@example.com" }))).toBeTruthy();
+    });
+
+    it("shows what the provider answered when the sign-in is refused, and keeps the dialog open", async () => {
+      routes["POST /admin/oauth/codex/finish"] = () => json({ error: "provider_refused", message: "code expired" }, 502);
+      await openCodex();
+      fireEvent.click(screen.getByRole("button", { name: t("providers.add") }));
+      fireEvent.change(await screen.findByLabelText(t("providers.oauth.callback")), { target: { value: "http://localhost:1455/auth/callback?code=x&state=abc" } });
+      fireEvent.click(screen.getByRole("button", { name: t("providers.oauth.finish") }));
+      expect(await screen.findByText(t("providers.oauth.failed", { message: "code expired" }))).toBeTruthy();
+      expect(screen.getByLabelText(t("providers.oauth.callback"))).toBeTruthy();
+    });
+
+    it("a signed-in connection can be renamed but has no key to replace", async () => {
+      await openCodex();
+      fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: dev@example.com` }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.edit") }));
+      expect(screen.getByLabelText(t("providers.name"))).toBeTruthy();
+      expect(screen.queryByLabelText(t("providers.apiKey"))).toBeNull();
+    });
+  });
+
   it("providerLogo: the logo file of a provider that has one, else null (its letters show instead)", () => {
     expect(providerLogo("mistral")).toBe("/providers/mistral.png");
     expect(providerLogo("vercel-ai-gateway")).toBe("/providers/vercel-ai-gateway.png");
