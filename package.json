@@ -1,8 +1,9 @@
 {
-  "name": "llm",
+  "name": "ai-router",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@12.14.0",
   "scripts": {
     "pretest": "node scripts/ensure-dist.mjs",
     "test": "vitest run --config vitest.config.ts",

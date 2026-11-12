@@ -38,7 +38,6 @@ A provider is a path prefix: another one can be added beside `/anthropic` withou
 | `CONSOLE_EMAILS` | var | Comma-separated xDev account emails (verified) allowed into the console |
 
 ```sh
-cd services/llm
 corepack pnpm exec wrangler d1 create xdev-llm        # put the id in wrangler.jsonc
 corepack pnpm exec wrangler d1 migrations apply xdev-llm --remote
 openssl rand -base64 32 | tee /dev/tty | tr -d '\n' | shasum -a 256 | cut -d' ' -f1 \
@@ -49,11 +48,11 @@ corepack pnpm exec wrangler secret put ANTHROPIC_KEYS            # {"chat":"sk-a
 Then pick a hostname (a route in `wrangler.jsonc`), deploy, open the console, sign in and add the systems.
 Each system's token is shown once.
 
-xDev ID sign-in: register the gateway at xDev ID (a super admin, from `services/id`), put the client id in
+xDev ID sign-in: register the gateway at xDev ID (a super admin, from `services/id` in the `cloud` repo), put the client id in
 `OIDC_CLIENT_ID` and the secret in `OIDC_CLIENT_SECRET`:
 
 ```sh
-XDEV_ADMIN_TOKEN=... node ../id/scripts/admin.mjs oauth-client "AI router" https://<host>/auth/callback
+XDEV_ADMIN_TOKEN=... node ../cloud/services/id/scripts/admin.mjs oauth-client "AI router" https://<host>/auth/callback
 corepack pnpm exec wrangler secret put OIDC_CLIENT_SECRET
 ```
 
@@ -142,16 +141,16 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 
 ## Local development and tests
 
-Same install as `services/id` (needs a GitHub Packages token for `@xdev-asia/ui`).
+The install needs a GitHub Packages token (`read:packages`) for `@xdev-asia/ui`, in `~/.npmrc`.
 
 ```sh
-corepack pnpm --filter llm run typecheck
-corepack pnpm --filter llm run test        # Worker, in workerd with a fake upstream
-corepack pnpm --filter llm run test:web    # console, jsdom
-corepack pnpm --filter llm run build
+corepack pnpm run typecheck
+corepack pnpm run test        # Worker, in workerd with a fake upstream
+corepack pnpm run test:web    # console, jsdom
+corepack pnpm run build
 ```
 
-Local secrets go in `services/llm/.dev.vars` (git-ignored).
+Local secrets go in `.dev.vars` (git-ignored).
 
 ### In Docker
 
