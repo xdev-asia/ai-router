@@ -36,7 +36,7 @@ export function openaiRoutes(upstream: Upstream): Hono<AppEnv> {
   });
 
   /** Claude models (from Anthropic), then the combos and exact provider/model entries this system may use. */
-  r.get("/v1/models", async (c: Context<AppEnv>) => {
+  const models = async (c: Context<AppEnv>) => {
     const g = await checkSystem(c.env, c.req.raw, false);
     if (!g.ok) return gateError(g);
     const patterns = allowedPatterns(g.system.allowed_models);
@@ -77,7 +77,10 @@ export function openaiRoutes(upstream: Upstream): Hono<AppEnv> {
       }
     }
     return Response.json({ object: "list", data }, { headers: { "cache-control": "no-store" } });
-  });
+  };
+  r.get("/v1/models", models);
+  // 9router answers GET /v1 with the model list too.
+  r.get("/v1", models);
 
   r.all("*", () => errorResponse(404, "this gateway serves /v1/chat/completions and /v1/models here", "invalid_request_error", "not_found"));
   return r;

@@ -189,7 +189,20 @@ usage (to meter) and drops that chunk when the client did not ask for it.
 | Call | |
 |---|---|
 | `POST /openai/v1/chat/completions` | as above |
-| `GET /openai/v1/models` | allowed Claude models, allowed combos, and exact `provider/model` entries of the allow-list |
+| `GET /openai/v1/models`, `GET /openai/v1` | allowed Claude models, allowed combos, and exact `provider/model` entries of the allow-list |
+
+**9router's paths.** The same calls also answer at `/v1` with no provider prefix, as in 9router:
+`baseURL: "https://<host>/v1"` works for both SDKs.
+
+| Path | Same as |
+|---|---|
+| `POST /v1/chat/completions`, `GET /v1/models`, `GET /v1` | `/openai/v1/...` |
+| `POST /v1/messages`, `POST /v1/messages/count_tokens` | `/anthropic/v1/...` (Anthropic only; 9router also translates these to other providers) |
+| `/v1/v1/*` | `/v1/*` |
+| `GET /api/health` | `GET /health` |
+
+Any origin may call `/v1/*` from a browser (CORS `*`, as in 9router); the gateway token is still required. The admin
+API and `/openai`, `/anthropic` send no CORS headers.
 
 Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of the gateway's own refusals:
 `invalid_api_key`, `system_disabled`, `monthly_token_cap`, `model_not_found`, `model_not_allowed`, `not_configured`.

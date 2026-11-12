@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { adminRoutes } from "./admin";
 import { consoleAuthRoutes, type Idp } from "./console-auth";
 import type { AppEnv } from "./env";
@@ -34,6 +35,7 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
     await next();
   });
   app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/api/health", (c) => c.json({ ok: true }));
   // A provider's sign-in page sends the browser back here (Codex: http://localhost:1455/auth/callback, so only
   // when that port reaches this Worker). Anything that is not one of our pending logins is the console's own
   // sign-in with xDev ID, handled below.
@@ -48,8 +50,26 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   });
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
   app.route("/admin", adminRoutes(deps.upstream));
-  app.route("/anthropic", anthropicRoutes(deps.upstream));
-  app.route("/openai", openaiRoutes(deps.upstream));
+  const anthropic = anthropicRoutes(deps.upstream);
+  const openai = openaiRoutes(deps.upstream);
+  app.route("/anthropic", anthropic);
+  app.route("/openai", openai);
+
+  // 9router's paths: /v1/* with no provider prefix. Same handlers, same gateway token, same metering.
+  // Any origin may call them (9router: CORS *); the gateway token is still required.
+  // Allowed headers mirror the preflight's: a "*" there would not cover Authorization.
+  const v1Cors = cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], maxAge: 86400 });
+  app.use("/v1", v1Cors);
+  app.use("/v1/*", v1Cors);
+  app.all("/v1/v1/*", (c) => {
+    const url = new URL(c.req.url);
+    url.pathname = url.pathname.replace(/^(\/v1)+\/v1\//, "/v1/");
+    return app.fetch(new Request(url, c.req.raw), c.env, c.executionCtx);
+  });
+  app.all("/v1/messages", (c) => anthropic.fetch(c.req.raw, c.env, c.executionCtx));
+  app.all("/v1/messages/*", (c) => anthropic.fetch(c.req.raw, c.env, c.executionCtx));
+  app.all("/v1", (c) => openai.fetch(c.req.raw, c.env, c.executionCtx));
+  app.all("/v1/*", (c) => openai.fetch(c.req.raw, c.env, c.executionCtx));
   app.notFound((c) => anthropicError(c, 404, "not_found_error", "not found"));
   return app;
 }
