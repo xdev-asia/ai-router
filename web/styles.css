@@ -96,3 +96,62 @@ body {
   font: var(--type-control);
   color: var(--text-1);
 }
+
+/* Providers: a row fills its sortable item, so status, switch and menu line up at the right edge. */
+.account-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Providers: the facts under an account's name, one per line. */
+.account-meta-line {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+/* Providers: one heading per kind of provider above its grid of cards. */
+.providers-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x-space-3);
+}
+
+.providers-section-title {
+  margin: 0;
+  font: var(--type-control);
+  font-size: 15px;
+  color: var(--text-1);
+}
+
+.provider-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--x-space-1) var(--x-space-3);
+}
+
+/* Provider page: the way back, then the provider's mark beside its name. */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--x-space-1);
+  align-self: flex-start;
+  color: var(--text-2);
+  font: var(--type-status);
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--text-1);
+}
+
+.provider-head {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
+}
+
+/* The name takes the rest of the row; without this the header shrinks to one letter per line. */
+.provider-head > :last-child {
+  flex: 1;
+  min-width: 0;
+}

@@ -119,6 +119,34 @@ export interface Combo {
   updated_at: number;
 }
 
+/** A provider the gateway can reach. `env_key`: the environment holds a key for it. */
+export interface Provider {
+  id: string;
+  name: string;
+  format: string;
+  auth: string[];
+  env_key: boolean;
+}
+
+/** One account at a provider. The key itself never reaches the console: only its last 4 characters. */
+export interface Connection {
+  id: string;
+  provider: string;
+  auth_type: "api_key" | "oauth";
+  name: string;
+  hint: string | null;
+  expires_at: number | null;
+  priority: number;
+  disabled: boolean;
+  /** Unix seconds; the account is set aside while this is in the future. */
+  cooldown_until: number;
+  last_error: string | null;
+  last_error_at: number | null;
+  last_used_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 /** One pattern per line or comma; the same rule as the gateway's (providers.ts PATTERN). */
 export const MODEL_PATTERN = /^(\*|[a-z]+\/\*|[a-z]+\/[A-Za-z0-9._:\/@+-]{1,200})$/;
 /** A combo target: provider/model or a bare claude-* model. */

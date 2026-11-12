@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App, pageFromHash } from "../App";
+import { App, pageFromHash, providerFromHash } from "../App";
 import { setToken } from "../api";
 import { resetLang, t } from "../i18n";
 import { parseCap } from "../pages/Systems";
@@ -239,6 +239,205 @@ describe("combos", () => {
     fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
     expect(await screen.findByText(t("settings.modelsBad", { bad: "gpt-5" }))).toBeTruthy();
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+});
+
+describe("providers", () => {
+  const PROVIDER_LIST = [
+    { id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true },
+    { id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false },
+    { id: "groq", name: "Groq", format: "openai", auth: ["api_key"], env_key: false },
+  ];
+  const account = (over: Record<string, unknown>) => ({
+    id: "c1",
+    provider: "openai",
+    auth_type: "api_key",
+    name: "Work",
+    hint: "1234",
+    expires_at: null,
+    priority: 1,
+    disabled: false,
+    cooldown_until: 0,
+    last_error: null,
+    last_error_at: null,
+    last_used_at: 1_790_000_000,
+    created_at: 1_790_000_000,
+    updated_at: 1_790_000_000,
+    ...over,
+  });
+  const WORK = account({});
+  const BACKUP = account({ id: "c2", name: "Backup", hint: "9999", priority: 2, cooldown_until: Math.floor(Date.now() / 1000) + 600, last_error: "429 slow down" });
+
+  beforeEach(() => {
+    routes["GET /admin/providers"] = () => json(PROVIDER_LIST);
+    routes["GET /admin/connections"] = () => json([WORK, BACKUP]);
+    routes["POST /admin/connections"] = () => json(account({ id: "c3", name: "New", hint: "5678", priority: 3 }), 201);
+    routes["PATCH /admin/connections/c1"] = () => json(WORK);
+    routes["DELETE /admin/connections/c2"] = () => new Response(null, { status: 204 });
+    routes["PUT /admin/providers/openai/order"] = () => json([BACKUP, WORK]);
+  });
+
+  async function openProvider() {
+    window.location.hash = "#/providers/openai";
+    await signIn();
+    await screen.findByText("Work");
+  }
+
+  it("lists the providers as cards that link to their accounts, with what each has", async () => {
+    window.location.hash = "#/providers";
+    await signIn();
+    expect(await screen.findByRole("heading", { name: t("providers.title") })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: t("providers.section.api_key") })).toBeTruthy();
+
+    const openai = screen.getByRole("link", { name: /OpenAI/ });
+    expect(openai.getAttribute("href")).toBe("#/providers/openai");
+    expect(openai.textContent).toContain(t("providers.connected", { n: "1" }));
+    expect(openai.textContent).toContain(t("providers.setAside", { n: "1" }));
+    expect(screen.getByRole("link", { name: /Anthropic/ }).textContent).toContain(t("providers.envKey"));
+    expect(screen.getByRole("link", { name: /Groq/ }).textContent).toContain(t("providers.none"));
+  });
+
+  it("narrows the cards with the search field and the status filter", async () => {
+    window.location.hash = "#/providers";
+    await signIn();
+    await screen.findByRole("link", { name: /OpenAI/ });
+
+    fireEvent.change(screen.getByRole("searchbox", { name: t("providers.search") }), { target: { value: "gro" } });
+    expect(screen.queryByRole("link", { name: /OpenAI/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Groq/ })).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: t("providers.search") }), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText(t("providers.filter")), { target: { value: "connected" } });
+    expect(screen.getByRole("link", { name: /OpenAI/ })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Groq/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Anthropic/ })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText(t("providers.filter")), { target: { value: "none" } });
+    expect(screen.queryByRole("link", { name: /OpenAI/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Groq/ })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Anthropic/ })).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: t("providers.search") }), { target: { value: "zzz" } });
+    expect(screen.getByText(t("providers.noMatch"))).toBeTruthy();
+  });
+
+  it("a provider's switch turns all of its accounts off, and only providers with accounts have one", async () => {
+    routes["PATCH /admin/connections/c2"] = () => json(BACKUP);
+    window.location.hash = "#/providers";
+    await signIn();
+    await screen.findByRole("link", { name: /OpenAI/ });
+    expect(screen.queryByRole("switch", { name: t("providers.useProvider", { name: "Groq" }) })).toBeNull();
+
+    fireEvent.click(screen.getByRole("switch", { name: t("providers.useProvider", { name: "OpenAI" }) }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    expect(calls.filter((c) => c.method === "PATCH").map((c) => [c.url, c.body])).toEqual([
+      ["/admin/connections/c1", { disabled: true }],
+      ["/admin/connections/c2", { disabled: true }],
+    ]);
+  });
+
+  it("the provider page names the provider, counts its accounts and links back", async () => {
+    await openProvider();
+    expect(screen.getByRole("heading", { name: "OpenAI" })).toBeTruthy();
+    expect(screen.getByText(t("providers.connections", { n: "2" }))).toBeTruthy();
+    expect(screen.getByRole("link", { name: t("providers.back") }).getAttribute("href")).toBe("#/providers");
+  });
+
+  it("shows each account with the end of its key and why it is set aside, never a key", async () => {
+    await openProvider();
+    expect(screen.getByText("Backup")).toBeTruthy();
+    expect(screen.getByText(/1234/)).toBeTruthy();
+    expect(screen.getByText(/429 slow down/)).toBeTruthy();
+    expect(screen.getAllByText(t("providers.status.ok"))).toHaveLength(1);
+    expect(screen.getAllByText(new RegExp(t("providers.status.cooling", { time: ".*" })))).toHaveLength(1);
+  });
+
+  it("adds an account for this provider and does not show the key again", async () => {
+    await openProvider();
+    fireEvent.click(screen.getByRole("button", { name: t("providers.add") }));
+    const key = screen.getByLabelText(t("providers.apiKey")) as HTMLInputElement;
+    expect(key.type).toBe("password");
+    fireEvent.change(screen.getByLabelText(t("providers.name")), { target: { value: "New" } });
+    fireEvent.change(key, { target: { value: "sk-new-12345678" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST" && c.url === "/admin/connections")).toMatchObject({ body: { provider: "openai", name: "New", api_key: "sk-new-12345678" } }));
+    expect(await screen.findByText(t("providers.savedNotice", { name: "New" }))).toBeTruthy();
+    expect(document.body.textContent).not.toContain("sk-new-12345678");
+  });
+
+  it("asks for a name and a key before calling the API", async () => {
+    await openProvider();
+    fireEvent.click(screen.getByRole("button", { name: t("providers.add") }));
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    expect(await screen.findByText(t("providers.nameRequired"))).toBeTruthy();
+    expect(screen.getByText(t("providers.apiKeyRequired"))).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("renames without touching the key when the key field is left empty", async () => {
+    await openProvider();
+    fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: Work` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.edit") }));
+    fireEvent.change(screen.getByLabelText(t("providers.name")), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")).toMatchObject({ url: "/admin/connections/c1", body: { name: "Renamed" } }));
+    expect(calls.find((c) => c.method === "PATCH")!.body).not.toHaveProperty("api_key");
+  });
+
+  it("turns an account off with its switch", async () => {
+    await openProvider();
+    fireEvent.click(screen.getByRole("switch", { name: t("providers.enabled", { name: "Work" }) }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")).toMatchObject({ url: "/admin/connections/c1", body: { disabled: true } }));
+  });
+
+  it("saves the new order after an account is moved with the keyboard", async () => {
+    await openProvider();
+    const handle = () => screen.getByRole("button", { name: t("providers.move", { name: "Work" }) });
+    fireEvent.keyDown(handle(), { key: " " });
+    fireEvent.keyDown(handle(), { key: "ArrowDown" });
+    fireEvent.keyDown(handle(), { key: " " });
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/providers/openai/order", body: { ids: ["c2", "c1"] } }));
+  });
+
+  it("deletes an account after a confirmation", async () => {
+    await openProvider();
+    fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: Backup` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.delete") }));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: t("providers.delete") }));
+    expect(await screen.findByText(t("providers.deletedNotice", { name: "Backup" }))).toBeTruthy();
+    expect(calls.find((c) => c.method === "DELETE")).toMatchObject({ url: "/admin/connections/c2" });
+  });
+
+  it("says so when the environment also holds a key for the provider", async () => {
+    routes["GET /admin/connections"] = () => json([]);
+    window.location.hash = "#/providers/anthropic";
+    await signIn();
+    expect(await screen.findByText(t("providers.envKeyNote"))).toBeTruthy();
+    expect(screen.getByText(t("providers.empty"))).toBeTruthy();
+  });
+
+  it("providerFromHash: the provider of a detail page, else null", () => {
+    expect(providerFromHash("#/providers/openai")).toBe("openai");
+    expect(providerFromHash("#/providers")).toBeNull();
+    expect(providerFromHash("#/providers/Bad Id")).toBeNull();
+    expect(providerFromHash("#/systems")).toBeNull();
+    expect(pageFromHash("#/providers")).toBe("providers");
+    expect(pageFromHash("#/providers/openai")).toBe("providers");
+  });
+});
+
+describe("theme", () => {
+  it("the theme switch paints the choice on the page and keeps it for the next visit", async () => {
+    window.location.hash = "#/systems";
+    await signIn();
+    await screen.findByText("Chat");
+    fireEvent.click(screen.getByRole("button", { name: t("theme.light") }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(localStorage.getItem("xdev-llm.theme")).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: t("theme.dark") }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(localStorage.getItem("xdev-llm.theme")).toBe("dark");
   });
 });
 
