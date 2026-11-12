@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { System } from "./auth";
-import { CODEX_URL, chatToCodex, codexHeaders, codexToChatStream, readCodex } from "./codex";
+import { CODEX_URL, ENDED_EARLY, type Step, chatToCodex, codexHeaders, codexSteps, codexToChatStream, readCodex } from "./codex";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess } from "./connections";
 import type { AppEnv } from "./env";
 import { ANTHROPIC_VERSION, allowedPatterns, allows, parseModel, providerDef, targetName, usageOfOpenAI, type Target } from "./providers";
@@ -178,7 +178,21 @@ async function callCodex(c: Context<AppEnv>, upstream: Upstream, system: System,
     return failure(up);
   }
   if (stream) {
-    const { client, usage } = codexToChatStream(up.body, target.model, includeUsage);
+    // The first step decides the status: a failure reported before any answer is a 502, not a 200 with an error.
+    const steps = codexSteps(up.body);
+    let first: IteratorResult<Step>;
+    try {
+      first = await steps.next();
+    } catch {
+      first = { done: false, value: { kind: "failed", message: "the stream from the provider broke off" } };
+    }
+    if (first.done || first.value.kind === "failed") {
+      const message = first.done ? ENDED_EARLY : first.value.kind === "failed" ? first.value.message : ENDED_EARLY;
+      await steps.return(undefined).catch(() => undefined);
+      record(c, system, new Response(null, { status: 502 }), false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
+      return { ok: false, res: errorResponse(502, message, "api_error"), status: 502, message, retryable: true, retryAfter: null };
+    }
+    const { client, usage } = codexToChatStream(first.value, steps, target.model, includeUsage);
     record(c, system, up, true, usage, target.provider, saved);
     return { ok: true, res: new Response(client, { headers: SSE_HEADERS }) };
   }
@@ -237,17 +251,23 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
       const key = await cand.key();
       if (!key) continue;
       if (typeof key !== "string") {
-        // A subscription login the provider will not renew: say so, set the account aside, try the next one.
-        attempt = { ok: false, res: errorResponse(401, key.error, "authentication_error", "provider_auth"), status: 401, message: key.error, retryable: false, retryAfter: null };
-        await noteFailure(c.env.DB, cand, 401, key.error, null, now);
+        // A subscription login with no usable token (401: sign in again; 502: the sign-in service is down): say
+        // so, set the account aside, try the next one. An answer from an earlier account is kept.
+        attempt ??= { ok: false, res: errorResponse(key.status, key.error, key.status === 401 ? "authentication_error" : "api_error", "provider_auth"), status: key.status, message: key.error, retryable: true, retryAfter: null };
+        await noteFailure(c.env.DB, cand, key.status, key.error, null, now);
         continue;
       }
       try {
-        attempt = format === "anthropic"
-          ? await callAnthropic(c, upstream, system, key, target, req, savers)
-          : format === "codex"
-            ? await callCodex(c, upstream, system, key, cand.account, target, req, savers)
-            : await callOpenAICompatible(c, upstream, system, key, target, req, savers);
+        if (format === "anthropic") attempt = await callAnthropic(c, upstream, system, key, target, req, savers);
+        else if (format === "codex") {
+          attempt = await callCodex(c, upstream, system, key, cand.account, target, req, savers);
+          // The token was refused before it expired (revoked, or renewed elsewhere): renew it once and send again.
+          if (!attempt.ok && attempt.status === 401) {
+            const renewed = await cand.key(true);
+            if (typeof renewed === "string") attempt = await callCodex(c, upstream, system, renewed, cand.account, target, req, savers);
+            else if (renewed) attempt = { ok: false, res: errorResponse(renewed.status, renewed.error, renewed.status === 401 ? "authentication_error" : "api_error", "provider_auth"), status: renewed.status, message: renewed.error, retryable: true, retryAfter: null };
+          }
+        } else attempt = await callOpenAICompatible(c, upstream, system, key, target, req, savers);
       } catch (e) {
         if (e instanceof TranslateError) return errorResponse(400, e.message, "invalid_request_error");
         attempt = { ok: false, res: errorResponse(502, `could not reach ${target.provider}`, "api_error"), status: 502, message: `could not reach ${target.provider}`, retryable: true, retryAfter: null };

@@ -5,7 +5,7 @@ import { consoleUser, sameOrigin } from "./console-auth";
 import { createApiKeyConnection, getConnection, isStrategy, listConnections, sealApiKey, testConnection } from "./connections";
 import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, providerDef, type ProviderId } from "./providers";
 import type { AppEnv } from "./env";
-import { OAUTH, finishLogin, startLogin } from "./oauth";
+import { finishLogin, oauthDef, startLogin } from "./oauth";
 import type { Upstream } from "./proxy";
 import { reportRoutes } from "./report";
 import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
@@ -194,13 +194,14 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
    * provider sent the browser back with: the whole address (`callback_url`) or its `code` and `state`.
    */
   a.post("/oauth/:provider/start", async (c) => {
-    const url = await startLogin(c.env, c.req.param("provider"));
-    return url ? c.json({ authorize_url: url }) : c.json({ error: "not_found" }, 404);
+    const r = await startLogin(c.env, c.req.param("provider"));
+    if (r.ok) return c.json({ authorize_url: r.url });
+    return r.error === "not_configured" ? c.json(NO_BOX, 500) : c.json({ error: "not_found" }, 404);
   });
 
   a.post("/oauth/:provider/finish", async (c) => {
     const provider = c.req.param("provider");
-    if (!OAUTH[provider]) return c.json({ error: "not_found" }, 404);
+    if (!oauthDef(provider)) return c.json({ error: "not_found" }, 404);
     const b = await readJson(c.req.raw);
     let code: unknown = b?.code;
     let state: unknown = b?.state;
@@ -253,6 +254,9 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     const b = await readJson(c.req.raw);
     if (!b || typeof b.provider !== "string" || !isProvider(b.provider) || !isName(b.name) || !isApiKey(b.api_key)) {
       return c.json({ error: "invalid_input", hint: "provider: a known provider id, name: 1-100 chars, api_key: the provider's key" }, 400);
+    }
+    if (providerDef(b.provider).auth === "oauth") {
+      return c.json({ error: "invalid_input", hint: "this provider takes a sign-in, not an API key: POST /admin/oauth/:provider/start" }, 400);
     }
     const created = await createApiKeyConnection(c.env, b.provider, b.name.trim(), b.api_key.trim());
     if (!created) return c.json(NO_BOX, 500);

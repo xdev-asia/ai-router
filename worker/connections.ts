@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 import { ANTHROPIC_VERSION, isProvider, providerDef, providerKey, type ProviderId } from "./providers";
-import { accessToken } from "./oauth";
+import { oauthToken } from "./oauth";
 import { open, seal } from "./secret-box";
 
 /**
@@ -96,9 +96,11 @@ export interface Candidate {
   account: string | null;
   /**
    * The key or access token to send. Null: the secret cannot be opened (CONNECTIONS_KEY changed), skip it.
-   * `{error}`: an OAuth connection whose token the provider refused to renew; the user has to sign in again.
+   * `{error}`: an OAuth connection with no usable token: 401, the provider refused to renew it (the user has to
+   * sign in again); 502, the sign-in service is unavailable. `force`: renew an OAuth token even when it looks
+   * valid (the provider just refused it).
    */
-  key: () => Promise<string | { error: string } | null>;
+  key: (force?: boolean) => Promise<string | { error: string; status: number } | null>;
 }
 
 /**
@@ -118,18 +120,19 @@ export async function candidatesFor(env: Env, provider: ProviderId, systemId: st
     connection: row.id,
     backoffLevel: row.backoff_level,
     account: row.account,
-    key: () =>
-      row.auth_type === "oauth"
-        ? upstream
-          ? accessToken(env, upstream, { id: row.id, provider, secret: row.secret, expires_at: row.expires_at }, now)
-          : Promise.resolve(null)
-        : apiKeyOf(env, row.secret),
+    key: async (force = false) => {
+      if (row.auth_type !== "oauth") return apiKeyOf(env, row.secret);
+      if (!upstream) return null;
+      const t = await oauthToken(env, upstream, { id: row.id, provider, secret: row.secret, expires_at: row.expires_at }, now, force);
+      return t === null ? null : "token" in t ? t.token : t;
+    },
   });
   const free = r.results.filter((x) => x.cooldown_until <= now);
   // Array.sort is stable: connections that answered at the same time keep their priority order.
   if (r.results[0]?.strategy === "round-robin") free.sort((a, b) => a.rr_at - b.rr_at);
   const cooling = r.results.filter((x) => x.cooldown_until > now).sort((a, b) => a.cooldown_until - b.cooldown_until);
-  const envKey = providerKey(env, provider, systemId);
+  // A subscription provider is reached through its sign-ins only: a key in the environment is not one of them.
+  const envKey = providerDef(provider).auth === "oauth" ? null : providerKey(env, provider, systemId);
   const fromEnv: Candidate[] = envKey ? [{ connection: null, backoffLevel: 0, account: null, key: () => Promise.resolve(envKey) }] : [];
   return [...free.map(account), ...fromEnv, ...cooling.map(account)];
 }
@@ -182,10 +185,12 @@ export async function testConnection(env: Env, upstream: (req: Request) => Promi
     return { ok: false, status, message };
   };
   if (row.auth_type === "oauth") {
-    // A subscription login is usable when its token is still good or the provider renews it. No model call.
-    const token = await accessToken(env, upstream, { id, provider: row.provider, secret: row.secret, expires_at: row.expires_at }, now);
-    if (token === null) return fail(0, "the stored tokens cannot be opened (CONNECTIONS_KEY changed)");
-    if (typeof token !== "string") return fail(401, token.error);
+    // A subscription login is usable when the provider renews its token: always renewed here, no model call.
+    const t = await oauthToken(env, upstream, { id, provider: row.provider, secret: row.secret, expires_at: row.expires_at }, now, true);
+    if (t === null) return fail(0, "the stored tokens cannot be opened (CONNECTIONS_KEY changed)");
+    if (!("token" in t)) return fail(t.status, t.error);
+    // Only a renewal clears the failure; the old token still working says nothing about the account.
+    if (t.unavailable !== undefined) return fail(502, `the sign-in service is unavailable: ${t.unavailable}`);
     await env.DB.prepare("UPDATE connection SET cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, updated_at = ? WHERE id = ?").bind(now, id).run();
     return { ok: true };
   }

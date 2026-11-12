@@ -22,7 +22,7 @@ export interface OAuthDef {
   refreshLeadS: number;
 }
 
-export const OAUTH: Record<string, OAuthDef> = {
+export const OAUTH: Readonly<Record<string, OAuthDef>> = {
   codex: {
     clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
     authorizeUrl: "https://auth.openai.com/oauth/authorize",
@@ -35,6 +35,18 @@ export const OAUTH: Record<string, OAuthDef> = {
 };
 
 const PENDING_TTL_S = 600;
+
+/** The provider's login, only for its own names: never `constructor`, `toString` or another inherited property. */
+export const oauthDef = (provider: string): OAuthDef | null => (Object.hasOwn(OAUTH, provider) ? OAUTH[provider]! : null);
+
+/** Whether tokens can be sealed (CONNECTIONS_KEY set and usable): no login starts or finishes without it. */
+const canSeal = async (env: Env): Promise<boolean> => (await seal(env, "probe")) !== null;
+
+/** RFC 3986 form for the query: `%20` for a space, which some authorize pages need (URLSearchParams writes `+`). */
+const query = (params: Record<string, string>) =>
+  Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
 type Fetch = (req: Request) => Promise<Response>;
 
 function base64Url(bytes: Uint8Array): string {
@@ -56,10 +68,14 @@ function claims(jwt: unknown): Record<string, unknown> {
   }
 }
 
+export type StartResult = { ok: true; url: string } | { ok: false; error: "not_found" | "not_configured" };
+
 /** The page to send the browser to. Stores the PKCE verifier until the provider sends the browser back. */
-export async function startLogin(env: Env, provider: string): Promise<string | null> {
-  const def = OAUTH[provider];
-  if (!def) return null;
+export async function startLogin(env: Env, provider: string): Promise<StartResult> {
+  const def = oauthDef(provider);
+  if (!def) return { ok: false, error: "not_found" };
+  // A login whose tokens could not be stored is not started: the user would sign in for nothing.
+  if (!(await canSeal(env))) return { ok: false, error: "not_configured" };
   const state = random(32);
   const verifier = random(64);
   const challenge = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
@@ -68,11 +84,8 @@ export async function startLogin(env: Env, provider: string): Promise<string | n
     env.DB.prepare("DELETE FROM oauth_pending WHERE created_at < ?").bind(now - PENDING_TTL_S),
     env.DB.prepare("INSERT INTO oauth_pending (state, provider, verifier, created_at) VALUES (?, ?, ?, ?)").bind(state, provider, verifier, now),
   ]);
-  const u = new URL(def.authorizeUrl);
-  for (const [k, v] of Object.entries({ response_type: "code", client_id: def.clientId, redirect_uri: def.redirectUri, scope: def.scope, code_challenge: challenge, code_challenge_method: "S256", state, ...def.extra })) {
-    u.searchParams.set(k, v);
-  }
-  return u.toString();
+  const params = { response_type: "code", client_id: def.clientId, redirect_uri: def.redirectUri, scope: def.scope, code_challenge: challenge, code_challenge_method: "S256", state, ...def.extra };
+  return { ok: true, url: `${def.authorizeUrl}?${query(params)}` };
 }
 
 export const isPendingState = async (db: D1Database, state: string): Promise<boolean> =>
@@ -88,6 +101,8 @@ interface Tokens {
   id_token?: string;
 }
 
+const NOT_CONFIGURED = { ok: false, status: 500, error: "not_configured", message: "set the CONNECTIONS_KEY secret: 32 random bytes, base64" } as const;
+
 /** What a provider's error answer says, without anything it should not: its description, its code, or the status. */
 async function refusal(res: Response): Promise<string> {
   const b = (await res.json().catch(() => null)) as { error?: unknown; error_description?: unknown } | null;
@@ -98,18 +113,23 @@ async function refusal(res: Response): Promise<string> {
   return `sign-in service answered ${res.status}`;
 }
 
+const expiry = (now: number, expiresIn: unknown) => now + (typeof expiresIn === "number" && expiresIn > 0 ? expiresIn : 3600);
+
 /**
  * Finishes a login: trades the code for tokens, seals them, and stores them as a connection named after the
- * account's email. Signing in again as the same account replaces that connection's tokens. `provider` null: the
- * one the state was issued for.
+ * account's email. Signing in again as the same person of the same account replaces that connection's tokens;
+ * another person of a shared (team) account gets a connection of their own. `provider` null: the one the state
+ * was issued for.
  */
 export async function finishLogin(env: Env, upstream: Fetch, provider: string | null, code: string, state: string): Promise<LoginResult> {
+  // Checked before the state is used up and the code is spent, so the user can sign in again once it is set.
+  if (!(await canSeal(env))) return NOT_CONFIGURED;
   const now = Math.floor(Date.now() / 1000);
   // Single use: the row is gone before the provider is asked, so a replay finds nothing.
   const pending = await env.DB.prepare("DELETE FROM oauth_pending WHERE state = ? AND created_at >= ? RETURNING provider, verifier")
     .bind(state, now - PENDING_TTL_S)
     .first<{ provider: string; verifier: string }>();
-  const def = pending ? OAUTH[pending.provider] : undefined;
+  const def = pending ? oauthDef(pending.provider) : null;
   if (!pending || !def || (provider !== null && provider !== pending.provider)) {
     return { ok: false, status: 400, error: "invalid_state", message: "this sign-in was not started here, was already used, or is older than 10 minutes" };
   }
@@ -133,52 +153,82 @@ export async function finishLogin(env: Env, upstream: Fetch, provider: string | 
   const id = claims(t.id_token);
   const auth = (id["https://api.openai.com/auth"] ?? {}) as { chatgpt_account_id?: unknown };
   const account = typeof auth.chatgpt_account_id === "string" ? auth.chatgpt_account_id : null;
-  const name = typeof id.email === "string" && id.email !== "" ? id.email.slice(0, 100) : "Account";
+  const email = typeof id.email === "string" && id.email !== "" ? id.email : null;
+  // The person who signed in: one ChatGPT team account has many.
+  const subject = typeof id.sub === "string" && id.sub !== "" ? id.sub : email;
+  const name = email ? email.slice(0, 100) : "Account";
   const secret = await seal(env, JSON.stringify({ access_token: t.access_token, refresh_token: t.refresh_token, id_token: t.id_token } satisfies Tokens));
-  if (!secret) return { ok: false, status: 500, error: "not_configured", message: "set the CONNECTIONS_KEY secret: 32 random bytes, base64" };
-  const expiresAt = now + (typeof t.expires_in === "number" && t.expires_in > 0 ? t.expires_in : 3600);
+  if (!secret) return NOT_CONFIGURED;
+  const expiresAt = expiry(now, t.expires_in);
 
-  const existing = account
-    ? await env.DB.prepare("SELECT id FROM connection WHERE provider = ? AND account = ?").bind(pending.provider, account).first<{ id: string }>()
-    : null;
+  // A connection stored before `subject` existed (NULL) is taken as this person's, and gets their subject.
+  const existing =
+    account && subject
+      ? await env.DB.prepare("SELECT id FROM connection WHERE provider = ? AND account = ? AND (subject = ? OR subject IS NULL) ORDER BY subject IS NULL LIMIT 1")
+          .bind(pending.provider, account, subject)
+          .first<{ id: string }>()
+      : null;
   if (existing) {
     await env.DB.prepare(
-      "UPDATE connection SET secret = ?, name = ?, expires_at = ?, cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, updated_at = ? WHERE id = ?",
+      "UPDATE connection SET secret = ?, name = ?, subject = ?, expires_at = ?, cooldown_until = 0, backoff_level = 0, last_error = NULL, last_error_at = NULL, updated_at = ? WHERE id = ?",
     )
-      .bind(secret, name, expiresAt, now, existing.id)
+      .bind(secret, name, subject, expiresAt, now, existing.id)
       .run();
     return { ok: true, id: existing.id, name };
   }
   const connectionId = crypto.randomUUID();
   await env.DB.prepare(
-    `INSERT INTO connection (id, provider, auth_type, name, secret, account, expires_at, priority, created_at, updated_at)
-     VALUES (?, ?, 'oauth', ?, ?, ?, ?, (SELECT COALESCE(MAX(priority), 0) + 1 FROM connection WHERE provider = ?), ?, ?)`,
+    `INSERT INTO connection (id, provider, auth_type, name, secret, account, subject, expires_at, priority, created_at, updated_at)
+     VALUES (?, ?, 'oauth', ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(priority), 0) + 1 FROM connection WHERE provider = ?), ?, ?)`,
   )
-    .bind(connectionId, pending.provider, name, secret, account, expiresAt, pending.provider, now, now)
+    .bind(connectionId, pending.provider, name, secret, account, subject, expiresAt, pending.provider, now, now)
     .run();
   return { ok: true, id: connectionId, name };
 }
 
 /**
- * The access token of an OAuth connection, refreshed first when it has little time left. `{error}`: the provider
- * refused the refresh (the user has to sign in again). Null: the stored tokens cannot be opened.
+ * An OAuth connection's access token.
+ * - `token`: the one to send. `renewed`: the provider issued it just now (or another request had just stored a
+ *   newer one). `unavailable`: a renewal was due but the sign-in service could not be used, so the old token,
+ *   still valid, is sent; this is the reason.
+ * - `error`: no usable token. Status 401: the provider refused the renewal, the user has to sign in again. 502:
+ *   the sign-in service is unavailable and the old token has expired.
+ * - null: the stored tokens cannot be opened (CONNECTIONS_KEY changed).
  */
-export async function accessToken(
-  env: Env,
-  upstream: Fetch,
-  row: { id: string; provider: string; secret: string; expires_at: number | null },
-  now: number,
-): Promise<string | { error: string } | null> {
-  const def = OAUTH[row.provider];
-  const plain = await open(env, row.secret);
-  if (!def || plain === null) return null;
-  let t: Tokens;
+export type TokenResult = { token: string; renewed: boolean; unavailable?: string } | { error: string; status: 401 | 502 } | null;
+
+export interface OAuthRow {
+  id: string;
+  provider: string;
+  secret: string;
+  expires_at: number | null;
+}
+
+async function openTokens(env: Env, secret: string): Promise<Tokens | null> {
+  const plain = await open(env, secret);
+  if (plain === null) return null;
   try {
-    t = JSON.parse(plain) as Tokens;
+    const t = JSON.parse(plain) as Partial<Tokens>;
+    return typeof t.access_token === "string" && typeof t.refresh_token === "string" ? (t as Tokens) : null;
   } catch {
     return null;
   }
-  if (row.expires_at !== null && row.expires_at - now >= def.refreshLeadS) return t.access_token;
+}
+
+/**
+ * The access token of an OAuth connection, renewed first when it has little time left, or always with `force`
+ * (Codex answered 401, or the console tests the connection).
+ */
+export async function oauthToken(env: Env, upstream: Fetch, row: OAuthRow, now: number, force = false): Promise<TokenResult> {
+  const def = oauthDef(row.provider);
+  const t = def ? await openTokens(env, row.secret) : null;
+  if (!def || !t) return null;
+  if (!force && row.expires_at !== null && row.expires_at - now >= def.refreshLeadS) return { token: t.access_token, renewed: false };
+
+  const stillValid = row.expires_at !== null && row.expires_at > now;
+  const unavailable = (reason: string): TokenResult =>
+    stillValid ? { token: t.access_token, renewed: false, unavailable: reason } : { error: `the sign-in service is unavailable: ${reason}`, status: 502 };
+
   let res: Response;
   try {
     res = await upstream(
@@ -189,18 +239,40 @@ export async function accessToken(
       }),
     );
   } catch {
-    // The old token may still be good for the time it has left.
-    return row.expires_at !== null && row.expires_at > now ? t.access_token : { error: "sign in again: could not reach the sign-in service" };
+    return unavailable("could not reach it");
   }
-  if (!res.ok) return { error: `sign in again: ${await refusal(res)}` };
+  if (res.status === 400 || res.status === 401) {
+    const reason = await refusal(res);
+    // A refresh token is single use: when another request renewed first, this one is refused. Its new tokens
+    // are stored by then; use them.
+    const current = await env.DB.prepare("SELECT secret, expires_at FROM connection WHERE id = ?")
+      .bind(row.id)
+      .first<{ secret: string; expires_at: number | null }>()
+      .catch(() => null);
+    if (current && current.secret !== row.secret && (current.expires_at === null || current.expires_at > Math.floor(Date.now() / 1000))) {
+      const newer = await openTokens(env, current.secret);
+      if (newer) return { token: newer.access_token, renewed: true };
+    }
+    return { error: `sign in again: ${reason}`, status: 401 };
+  }
+  if (!res.ok) return unavailable(`it answered ${res.status}`);
   const fresh = (await res.json().catch(() => null)) as (Partial<Tokens> & { expires_in?: unknown }) | null;
-  if (!fresh || typeof fresh.access_token !== "string") return { error: "sign in again: the sign-in service sent no token" };
-  const next: Tokens = { access_token: fresh.access_token, refresh_token: typeof fresh.refresh_token === "string" ? fresh.refresh_token : t.refresh_token, id_token: fresh.id_token ?? t.id_token };
+  if (!fresh || typeof fresh.access_token !== "string") return unavailable("it sent no token");
+  const next: Tokens = {
+    access_token: fresh.access_token,
+    refresh_token: typeof fresh.refresh_token === "string" ? fresh.refresh_token : t.refresh_token,
+    id_token: typeof fresh.id_token === "string" ? fresh.id_token : t.id_token,
+  };
   const secret = await seal(env, JSON.stringify(next));
   if (secret) {
-    await env.DB.prepare("UPDATE connection SET secret = ?, expires_at = ?, updated_at = ? WHERE id = ?")
-      .bind(secret, now + (typeof fresh.expires_in === "number" && fresh.expires_in > 0 ? fresh.expires_in : 3600), now, row.id)
-      .run();
+    try {
+      // Compare-and-swap: when another request stored newer tokens meanwhile, those are kept.
+      await env.DB.prepare("UPDATE connection SET secret = ?, expires_at = ?, updated_at = ? WHERE id = ? AND secret = ?")
+        .bind(secret, expiry(now, fresh.expires_in), now, row.id, row.secret)
+        .run();
+    } catch {
+      // The token is good for this request; the next one renews again.
+    }
   }
-  return next.access_token;
+  return { token: next.access_token, renewed: true };
 }
