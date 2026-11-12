@@ -5,3 +5,4 @@ dist
 .admin-token
 .superpowers
 .local-system-token
+.codex-relay.env

@@ -47,6 +47,8 @@ A provider is a path prefix: another one can be added beside `/anthropic` withou
 | `OIDC_ISSUER` | var | `https://id.xdev.asia/api/auth` |
 | `OIDC_CLIENT_ID` | var | This gateway's client id at xDev ID. Empty: xDev ID sign-in is off |
 | `CONSOLE_EMAILS` | var | Comma-separated xDev account emails (verified) allowed into the console |
+| `CODEX_RELAY_URL` | var | Base URL of the Codex relay (`https://relay.example.com`). Unset: Codex requests go straight to chatgpt.com, which refuses them from a Worker ([Codex relay](#codex-relay)) |
+| `CODEX_RELAY_SECRET` | secret | The relay's `RELAY_SECRET` (`openssl rand -base64 32`). Required when `CODEX_RELAY_URL` is set |
 
 ```sh
 corepack pnpm exec wrangler d1 create xdev-llm        # put the id in wrangler.jsonc
@@ -107,14 +109,43 @@ written anew; the CLI's instructions text is vendored in `worker/vendor/`). Call
   email. Signing in again as the same account replaces its tokens.
 - **Renewed** before a request when the access token has less than 10 minutes left. A refusal sets the connection
   aside with "sign in again" as its last error.
-- **Sent** to `https://chatgpt.com/backend-api/codex/responses` as an OpenAI Responses request, always as a
-  stream; the answer comes back as a chat completion (text and function tool calls; reasoning is not returned).
+- **Sent** to `https://chatgpt.com/backend-api/codex/responses`, through the [Codex relay](#codex-relay), as an
+  OpenAI Responses request, always as a stream; the answer comes back as a chat completion (text and function tool calls; reasoning is not returned).
   `temperature`, `max_tokens` and the other sampling settings are dropped: the backend refuses them.
 - Using a ChatGPT subscription outside OpenAI's own apps may be against its terms. The account can be limited or
   closed. The console says so on the provider's page.
-- Not tried against the real service from this repo's tests: they use a fake upstream.
+- Tried against the real service on 2026-11-12, through the relay, plain and `stream: true`, with `codex/gpt-5.6-luna`
+  and `codex/gpt-6.1-sol`. The backend refuses older ids for a ChatGPT account (`gpt-5.2-codex`: 400
+  `model_not_found`); the list changes, and 9router's Codex provider tracks it. The tests use a fake upstream.
 
 Other subscription logins (Claude Pro/Max, Gemini CLI, Copilot...) are not built yet.
+
+### Codex relay
+
+chatgpt.com answers `403` with an HTML block page to any request that carries a `Cf-Worker` header, and a Cloudflare
+Worker adds that header to every request it sends. So the gateway cannot call Codex itself: it sends the request to
+`relay/codex-relay.mjs`, a small Node server (no dependencies) that runs outside Cloudflare and sends it on.
+
+- It serves `POST /codex/responses` (and `GET /health`), and sends only to
+  `https://chatgpt.com/backend-api/codex/responses`: not an open proxy.
+- It checks `x-relay-secret` against its `RELAY_SECRET` (at least 32 characters; it does not start without it). A
+  wrong or missing secret gets `403` with `x-relay-error: relay_unauthorized`; the gateway reports that as
+  `not_configured` and does not set the account aside.
+- It sends on only the headers the Codex CLI sends (authorization, account id, originator, user agent, version,
+  session) and passes back the status, the body as a stream, `content-type`, `retry-after` and `x-codex-*`.
+- It logs method, path, status and time only: never a header or a body.
+- When the relay is not set and chatgpt.com blocks the request, the gateway answers `502 codex_blocked`, naming
+  the relay, instead of passing the HTML on.
+
+Production: run the relay on a host that is not a Cloudflare Worker and serves it over HTTPS (the access token
+and the secret travel in its headers), then set the gateway's `CODEX_RELAY_URL` and `CODEX_RELAY_SECRET`:
+
+```sh
+RELAY_SECRET=... PORT=8790 node relay/codex-relay.mjs   # or: docker build relay
+corepack pnpm exec wrangler secret put CODEX_RELAY_SECRET
+```
+
+Tried so far in Docker (below) only. Deno, Vercel and other hosts are not tried.
 
 ## Connections: several accounts per provider
 
@@ -232,6 +263,7 @@ corepack pnpm run typecheck
 corepack pnpm run test        # Worker, in workerd with a fake upstream
 corepack pnpm run test:web    # console, jsdom
 corepack pnpm run build
+node --test relay/test/codex-relay.test.mjs   # Codex relay
 ```
 
 Local secrets go in `.dev.vars` (git-ignored).
@@ -243,6 +275,16 @@ Local secrets go in `.dev.vars` (git-ignored).
 ```sh
 corepack pnpm run build      # the console, on the host (needs the GitHub Packages token)
 docker compose up --build    # .dev.vars is mounted read-only; the local D1 lives in a volume
+```
+
+The stack has a second service, `codex-relay` ([Codex relay](#codex-relay)), reached by the Worker as
+`http://codex-relay:8790` and not published on this machine. It reads `RELAY_SECRET` from `.codex-relay.env`
+(git-ignored); put the same value in `.dev.vars`:
+
+```sh
+secret=$(openssl rand -base64 32)
+echo "RELAY_SECRET=$secret" > .codex-relay.env
+printf 'CODEX_RELAY_URL=http://codex-relay:8790\nCODEX_RELAY_SECRET=%s\n' "$secret" >> .dev.vars
 ```
 
 Port `1455` of this machine is mapped to the same Worker. Signing in to a Codex (ChatGPT) account needs it:

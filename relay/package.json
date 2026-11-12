@@ -1,0 +1,11 @@
+{
+  "name": "ai-router-codex-relay",
+  "private": true,
+  "type": "module",
+  "description": "Forwards ai-router's Codex requests to chatgpt.com from outside Cloudflare (README, Codex relay).",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node codex-relay.mjs",
+    "test": "node --test test/codex-relay.test.mjs"
+  }
+}

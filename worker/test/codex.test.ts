@@ -435,3 +435,63 @@ describe("requests through a Codex account", () => {
     ]);
   });
 });
+
+describe("the Codex relay", () => {
+  // chatgpt.com refuses every request that carries the Cf-Worker header, and a Worker cannot leave it out.
+  const RELAY = { CODEX_RELAY_URL: "https://relay.test/", CODEX_RELAY_SECRET: "test-relay-secret" };
+  const hi = { model: "codex/gpt-5.2-codex", messages: [{ role: "user", content: "hi" }] };
+  const lastError = async (id: unknown) => (await env.DB.prepare("SELECT last_error FROM connection WHERE id = ?").bind(id).first<{ last_error: string | null }>())!.last_error;
+
+  it("sends Codex requests to CODEX_RELAY_URL with the relay secret, and answers as usual", async () => {
+    const token = await system();
+    await signIn();
+    const up = fakeUpstream(() => sse(HELLO));
+    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, hi), RELAY);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text).choices[0].message.content).toBe("Hello");
+    const sent = up.calls[0]!;
+    expect(sent.url).toBe("https://relay.test/codex/responses");
+    expect(sent.headers.get("x-relay-secret")).toBe("test-relay-secret");
+    expect(sent.headers.get("authorization")).toBe("Bearer at-1");
+    expect(sent.headers.get("chatgpt-account-id")).toBe("acc_1");
+    expect(JSON.parse(up.bodies[0]!)).toMatchObject({ model: "gpt-5.2-codex", stream: true });
+    expect(text).not.toContain("test-relay-secret");
+  });
+
+  it("a relay address without its secret sends nothing and does not set the account aside", async () => {
+    const token = await system();
+    const { connection } = await signIn();
+    const up = fakeUpstream(() => sse(HELLO));
+    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, hi), { CODEX_RELAY_URL: "https://relay.test" });
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text).error).toMatchObject({ code: "not_configured", message: "not_configured: CODEX_RELAY_URL is set but CODEX_RELAY_SECRET is not" });
+    expect(up.calls).toHaveLength(0);
+    expect(await lastError(connection.id)).toBeNull();
+  });
+
+  it("a relay that refuses the secret (403, x-relay-error) is a gateway error: no token renewal, the account is not set aside", async () => {
+    const token = await system();
+    const { connection } = await signIn();
+    const up = fakeUpstream(() => new Response(JSON.stringify({ error: "relay_unauthorized" }), { status: 403, headers: { "content-type": "application/json", "x-relay-error": "relay_unauthorized" } }));
+    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, hi), RELAY);
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text).error).toMatchObject({ code: "not_configured", message: "not_configured: the Codex relay refused CODEX_RELAY_SECRET" });
+    expect(up.calls.map((r) => new URL(r.url).host)).toEqual(["relay.test"]);
+    expect(await lastError(connection.id)).toBeNull();
+  });
+
+  it("chatgpt.com's block page becomes an error that names the relay, and the account is not set aside", async () => {
+    const token = await system();
+    const { connection } = await signIn();
+    const up = fakeUpstream(() => new Response("<html><body>blocked</body></html>", { status: 403, headers: { "content-type": "text/html; charset=UTF-8" } }));
+    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, hi));
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text).error).toMatchObject({
+      code: "codex_blocked",
+      message: "chatgpt.com refuses requests sent from a Cloudflare Worker: run the Codex relay and set CODEX_RELAY_URL and CODEX_RELAY_SECRET (README, Codex relay)",
+    });
+    expect(text).not.toContain("<html");
+    expect(up.calls).toHaveLength(1);
+    expect(await lastError(connection.id)).toBeNull();
+  });
+});

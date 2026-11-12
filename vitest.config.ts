@@ -32,6 +32,9 @@ export default defineConfig({
             OIDC_CLIENT_ID: "llm-client",
             OIDC_CLIENT_SECRET: "test-oidc-secret",
             CONSOLE_EMAILS: "owner@example.com, second@example.com",
+            // .dev.vars is read too: keep a local relay out of the tests (worker/test/codex.test.ts sets its own).
+            CODEX_RELAY_URL: "",
+            CODEX_RELAY_SECRET: "",
           },
         },
       };

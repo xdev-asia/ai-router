@@ -145,6 +145,28 @@ export function codexHeaders(token: string, account: string | null): Headers {
   return h;
 }
 
+/**
+ * Where a Codex request goes. chatgpt.com refuses any request with the Cf-Worker header (a block page, 403), and
+ * every request a Worker sends has it; so with CODEX_RELAY_URL set the request goes to the relay (`relay/`),
+ * which sends it on from a plain server. The relay checks CODEX_RELAY_SECRET.
+ */
+export function codexDestination(env: { CODEX_RELAY_URL?: string; CODEX_RELAY_SECRET?: string }): { ok: true; url: string; secret: string | null } | { ok: false; message: string } {
+  const relay = env.CODEX_RELAY_URL?.trim();
+  if (!relay) return { ok: true, url: CODEX_URL, secret: null };
+  const secret = env.CODEX_RELAY_SECRET?.trim();
+  if (!secret) return { ok: false, message: "not_configured: CODEX_RELAY_URL is set but CODEX_RELAY_SECRET is not" };
+  return { ok: true, url: relay.replace(/\/+$/, "") + "/codex/responses", secret };
+}
+
+export const RELAY_SECRET_HEADER = "x-relay-secret";
+/** Set by the relay on its own refusals (403), so they are not read as chatgpt.com's. */
+export const RELAY_ERROR_HEADER = "x-relay-error";
+
+/** chatgpt.com's answer to a request from a Worker: a 403 HTML page, where its own refusals are JSON. */
+export const isBlockPage = (res: Response): boolean => res.status === 403 && (res.headers.get("content-type") ?? "").startsWith("text/html");
+
+export const BLOCKED_MESSAGE = "chatgpt.com refuses requests sent from a Cloudflare Worker: run the Codex relay and set CODEX_RELAY_URL and CODEX_RELAY_SECRET (README, Codex relay)";
+
 /** The JSON events of a Responses SSE stream, in order. Lines that are not JSON are skipped. */
 async function* codexEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Json> {
   const reader = body.pipeThrough(new TextDecoderStream()).getReader();

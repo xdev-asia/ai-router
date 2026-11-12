@@ -4,3 +4,5 @@ node_modules
 web
 worker/test
 *.md
+relay
+.codex-relay.env

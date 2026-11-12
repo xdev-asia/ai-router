@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { System } from "./auth";
-import { CODEX_URL, ENDED_EARLY, type Step, chatToCodex, codexHeaders, codexSteps, codexToChatStream, readCodex } from "./codex";
+import { BLOCKED_MESSAGE, ENDED_EARLY, RELAY_ERROR_HEADER, RELAY_SECRET_HEADER, codexDestination, isBlockPage, type Step, chatToCodex, codexHeaders, codexSteps, codexToChatStream, readCodex } from "./codex";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess } from "./connections";
 import type { AppEnv } from "./env";
 import { ANTHROPIC_VERSION, allowedPatterns, allows, parseModel, providerDef, targetName, usageOfOpenAI, type Target } from "./providers";
@@ -29,7 +29,18 @@ export function errorResponse(status: number, message: string, type: string, cod
 /** 429 and 5xx (and network failures) may succeed on another target; anything else is the request's fault. */
 const retryable = (status: number) => status === 429 || status >= 500;
 
-type Attempt = { ok: true; res: Response } | { ok: false; res: Response; status: number; message: string; retryable: boolean; retryAfter: number | null };
+/** `gateway`: the failure is the gateway's own (its set-up, or a refusal of where it runs), not the account's. */
+type Attempt = { ok: true; res: Response } | { ok: false; res: Response; status: number; message: string; retryable: boolean; retryAfter: number | null; gateway?: true };
+
+const gatewayFailure = (status: number, message: string, code: string, type = "server_error"): Attempt => ({
+  ok: false,
+  res: errorResponse(status, message, type, code, { "x-should-retry": "false" }),
+  status,
+  message,
+  retryable: true,
+  retryAfter: null,
+  gateway: true,
+});
 
 /** Rebuilds an upstream error (Anthropic or OpenAI shape) as an OpenAI error with the same status. */
 async function failure(up: Response): Promise<Attempt> {
@@ -172,7 +183,20 @@ async function callCodex(c: Context<AppEnv>, upstream: Upstream, system: System,
   const saved = applySavers(shaped, "openai", savers);
   const stream = req.stream === true;
   const includeUsage = stream && (req.stream_options as Json | undefined)?.include_usage === true;
-  const up = await upstream(new Request(CODEX_URL, { method: "POST", headers: codexHeaders(token, account), body: JSON.stringify(chatToCodex(shaped, target.model)) }));
+  const dest = codexDestination(c.env);
+  if (!dest.ok) return gatewayFailure(500, dest.message, "not_configured");
+  const headers = codexHeaders(token, account);
+  if (dest.secret) headers.set(RELAY_SECRET_HEADER, dest.secret);
+  const up = await upstream(new Request(dest.url, { method: "POST", headers, body: JSON.stringify(chatToCodex(shaped, target.model)) }));
+  if (dest.secret && up.headers.get(RELAY_ERROR_HEADER) === "relay_unauthorized") {
+    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
+    return gatewayFailure(500, "not_configured: the Codex relay refused CODEX_RELAY_SECRET", "not_configured");
+  }
+  if (isBlockPage(up)) {
+    record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
+    await up.body?.cancel();
+    return gatewayFailure(502, BLOCKED_MESSAGE, "codex_blocked", "api_error");
+  }
   if (!up.ok || !up.body) {
     record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
     return failure(up);
@@ -276,7 +300,7 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
         c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now).catch(() => undefined));
         break;
       }
-      if (!accountFailure(attempt.status)) break;
+      if (attempt.gateway || !accountFailure(attempt.status)) break;
       await noteFailure(c.env.DB, cand, attempt.status, attempt.message, attempt.retryAfter, now);
     }
     if (!attempt) {

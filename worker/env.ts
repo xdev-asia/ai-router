@@ -18,6 +18,13 @@ export interface Env {
   OIDC_CLIENT_SECRET?: string;
   /** Public: comma-separated emails (verified at xDev ID) allowed into the console. */
   CONSOLE_EMAILS?: string;
+  /**
+   * Public: base URL of the Codex relay (`relay/`). chatgpt.com refuses every request carrying the Cf-Worker
+   * header, which a Worker cannot leave out, so Codex requests go through this relay when it is set.
+   */
+  CODEX_RELAY_URL?: string;
+  /** Secret: the shared secret the Codex relay checks (its RELAY_SECRET). Required when CODEX_RELAY_URL is set. */
+  CODEX_RELAY_SECRET?: string;
 }
 
 /** `startedAt`: when the request reached the gateway (ms), for the latency of its usage rows. */

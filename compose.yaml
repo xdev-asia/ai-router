@@ -10,5 +10,13 @@ services:
       - ./.dev.vars:/app/.dev.vars:ro
       # Local D1 (systems, usage, console sessions) survives restarts.
       - state:/app/.wrangler/state
+    depends_on:
+      - codex-relay
+  # chatgpt.com refuses requests from a Worker (Cf-Worker header), so Codex goes through this relay.
+  # Reached as http://codex-relay:8790 from ai-router only: no port on the host.
+  codex-relay:
+    build: ./relay
+    env_file: .codex-relay.env
+    restart: unless-stopped
 volumes:
   state:
