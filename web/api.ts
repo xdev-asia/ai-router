@@ -138,6 +138,9 @@ export interface Provider {
   /** The provider's page for creating a key. */
   key_url: string | null;
   strategy: "fill-first" | "round-robin";
+  /** The provider's own colour (a CSS hex colour) and one to three letters, for its `Emblem`. */
+  color: string;
+  mark: string;
 }
 
 /** One account at a provider. The key itself never reaches the console: only its last 4 characters. */

@@ -170,7 +170,7 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     return c.json(
       (Object.keys(PROVIDERS) as ProviderId[]).map((id) => {
         const def = providerDef(id);
-        return { id, name: def.name, format: def.format, auth: ["api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first" };
+        return { id, name: def.name, format: def.format, auth: ["api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first", color: def.color, mark: def.mark };
       }),
     );
   });

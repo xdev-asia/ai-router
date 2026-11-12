@@ -1,0 +1,56 @@
+/**
+ * Providers that have a logo file in `public/providers/<id>.png` (128 px). The files are the provider logos that
+ * ship with 9router (MIT); the logos themselves are trademarks of their owners and are used here only to name
+ * the provider. A provider without a file shows its letters instead.
+ */
+const WITH_LOGO: ReadonlySet<string> = new Set([
+  "agnes",
+  "alicode",
+  "alicode-intl",
+  "alims-intl",
+  "alitp-intl",
+  "anthropic",
+  "atria",
+  "bai",
+  "baidu",
+  "bazaarlink",
+  "blackbox",
+  "bluesminds",
+  "byteplus",
+  "cerebras",
+  "chutes",
+  "cohere",
+  "dahl",
+  "deepseek",
+  "featherless",
+  "fireworks",
+  "gemini",
+  "glm-cn",
+  "groq",
+  "hyperbolic",
+  "kilo-gateway",
+  "llm7",
+  "mistral",
+  "morph",
+  "nanobanana",
+  "nebius",
+  "nvidia",
+  "openai",
+  "openrouter",
+  "perplexity",
+  "poolside",
+  "sambanova",
+  "sensenova",
+  "sensenova-intl",
+  "siliconflow",
+  "tencent",
+  "together",
+  "tokenharbor",
+  "tokenrouter",
+  "venice",
+  "vercel-ai-gateway",
+  "volcengine-ark",
+]);
+
+/** The logo's address for a provider id, or null when there is no file for it. */
+export const providerLogo = (id: string): string | null => (WITH_LOGO.has(id) ? `/providers/${id}.png` : null);

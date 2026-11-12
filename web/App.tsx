@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { AppShell, BrandMark, Button, NavList, ThemeSwitch } from "@xdev-asia/ui";
+import { AppShell, BrandMark, Button, Container, NavList, ThemeSwitch } from "@xdev-asia/ui";
 import { checkSession, setAuth, signOut, useAuth } from "./api";
 import { t, useLang } from "./i18n";
 import { LangSelect } from "./LangSelect";
@@ -111,7 +111,10 @@ export function App() {
           </>
         }
       >
-        {page === "usage" ? <Usage /> : page === "token-saver" ? <TokenSaver /> : page === "combos" ? <Combos /> : page === "providers" ? provider ? <ProviderDetail key={provider} id={provider} /> : <Providers /> : <Systems />}
+        {/* One width for every page (1280px at most), as the xdev-ui admin layout asks; the shell already pads. */}
+        <Container size="xl" gutter={false}>
+          {page === "usage" ? <Usage /> : page === "token-saver" ? <TokenSaver /> : page === "combos" ? <Combos /> : page === "providers" ? provider ? <ProviderDetail key={provider} id={provider} /> : <Providers /> : <Systems />}
+        </Container>
       </AppShell>
     </NotifyContext.Provider>
   );

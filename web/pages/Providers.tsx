@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Avatar,
   Banner,
   Button,
   Card,
@@ -11,6 +10,7 @@ import {
   Grid,
   Icon,
   ListRow,
+  Emblem,
   MenuButton,
   PageHeader,
   ResourceCard,
@@ -26,6 +26,7 @@ import {
 import { ApiError, api, useLoad, type Connection, type Provider } from "../api";
 import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
+import { providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -132,13 +133,16 @@ export function Providers() {
         if (cards.length === 0) return null;
         return (
           <section key={kind} className="providers-section">
-            <h2 className="providers-section-title">{t(title)}</h2>
+            <div className="providers-section-head">
+              <h2 className="providers-section-title">{t(title)}</h2>
+              <span className="providers-section-count">{cards.length}</span>
+            </div>
             <Grid minItemWidth="15rem" gap={3}>
               {cards.map(({ provider, accounts }) => (
                 <ResourceCard
                   key={provider.id}
                   href={`#/providers/${provider.id}`}
-                  leading={<Avatar name={provider.name} />}
+                  leading={<Emblem name={provider.name} text={provider.mark} color={provider.color} src={providerLogo(provider.id)} />}
                   title={provider.name}
                   status={<ProviderStatus provider={provider} accounts={accounts} />}
                   dimmed={accounts.length > 0 && accounts.every((a) => a.disabled)}
@@ -269,7 +273,7 @@ export function ProviderDetail({ id }: { id: string }) {
         {t("providers.back")}
       </a>
       <div className="provider-head">
-        <Avatar name={provider?.name ?? id} size="lg" />
+        <Emblem name={provider?.name ?? id} text={provider?.mark} color={provider?.color} src={providerLogo(id)} size="lg" />
         <PageHeader
           title={provider?.name ?? id}
           description={loaded ? t("providers.connections", { n: String(mine.length) }) : undefined}

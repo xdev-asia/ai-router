@@ -16,9 +16,10 @@ const client = new Anthropic({ apiKey: process.env.LLM_GATEWAY_TOKEN, baseURL: "
 The feature set and the console's layout follow [9router](https://github.com/decolua/9router) (MIT): provider
 connections with fallback between accounts, round robin, combos, token savers, usage, and the Providers pages.
 The code here is written anew for a Cloudflare Worker, D1 and `@xdev-asia/ui`, with two exceptions that are
-9router's own files: the token-saver filters under `worker/savers/vendor/` (see
-`worker/savers/THIRD_PARTY_NOTICES.md`), and the names, base URLs and key pages of the providers added in
-`worker/providers.ts`. `docs/9router/` holds screenshots of its dashboard and a page-by-page comparison.
+9router's own files or data: the token-saver filters under `worker/savers/vendor/` (see
+`worker/savers/THIRD_PARTY_NOTICES.md`); the names, colours, base URLs and key pages of the providers in
+`worker/providers.ts`; and the provider logos in `web/public/providers/` (128 px PNG). The logos are trademarks of
+their owners and are used only to name each provider. `docs/9router/` holds screenshots of its dashboard and a page-by-page comparison.
 
 ## What it does
 

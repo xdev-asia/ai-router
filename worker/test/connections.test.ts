@@ -126,7 +126,7 @@ describe("admin: providers and account order", () => {
     expect(list).toHaveLength(47);
     expect(new Set(list.map((p) => p.id)).size).toBe(47);
     expect(list.find((p) => p.id === "anthropic")).toEqual({
-      id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first",
+      id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first", color: "#D97757", mark: "AN",
     });
     // vitest.config.ts leaves deepseek out of PROVIDER_KEYS.
     expect(list.find((p) => p.id === "deepseek")).toMatchObject({ name: "DeepSeek", format: "openai", env_key: false });
@@ -134,6 +134,10 @@ describe("admin: providers and account order", () => {
     expect(list.find((p) => p.id === "mistral")).toMatchObject({ name: "Mistral", format: "openai", env_key: false });
     expect(list.find((p) => p.id === "vercel-ai-gateway")).toMatchObject({ name: "Vercel AI Gateway" });
     expect(list.every((p) => p.key_url === null || p.key_url.startsWith("https://"))).toBe(true);
+    // Every provider has a colour and one to three letters for its mark in the console.
+    const marks = list as unknown as { id: string; color: string; mark: string }[];
+    expect(marks.filter((p) => !/^#[0-9A-Fa-f]{6}$/.test(p.color) || !/^[A-Z0-9]{1,3}$/.test(p.mark)).map((p) => p.id)).toEqual([]);
+    expect(marks.find((p) => p.id === "openai")).toMatchObject({ color: "#10A37F", mark: "OA" });
   });
 
   it("PUT /providers/:id/order renumbers the provider's connections in the given order", async () => {

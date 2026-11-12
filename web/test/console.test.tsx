@@ -4,6 +4,7 @@ import { App, pageFromHash, providerFromHash } from "../App";
 import { setToken } from "../api";
 import { resetLang, t } from "../i18n";
 import { parseCap } from "../pages/Systems";
+import { providerLogo } from "../provider-logos";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -268,9 +269,9 @@ describe("combos", () => {
 
 describe("providers", () => {
   const PROVIDER_LIST = [
-    { id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first" },
-    { id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false, key_url: "https://platform.openai.com/api-keys", strategy: "fill-first" },
-    { id: "groq", name: "Groq", format: "openai", auth: ["api_key"], env_key: false, key_url: null, strategy: "round-robin" },
+    { id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first", color: "#D97757", mark: "AN" },
+    { id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false, key_url: "https://platform.openai.com/api-keys", strategy: "fill-first", color: "#10A37F", mark: "OA" },
+    { id: "groq", name: "Groq", format: "openai", auth: ["api_key"], env_key: false, key_url: null, strategy: "round-robin", color: "#F55036", mark: "GQ" },
   ];
   const account = (over: Record<string, unknown>) => ({
     id: "c1",
@@ -319,6 +320,13 @@ describe("providers", () => {
     expect(openai.textContent).toContain(t("providers.setAside", { n: "1" }));
     expect(screen.getByRole("link", { name: /Anthropic/ }).textContent).toContain(t("providers.envKey"));
     expect(screen.getByRole("link", { name: /Groq/ }).textContent).toContain(t("providers.none"));
+
+    // Each card carries the provider's own logo, on its colour.
+    const mark = screen.getByRole("img", { name: "OpenAI" });
+    expect(mark.querySelector("img")!.getAttribute("src")).toBe("/providers/openai.png");
+    expect(mark.getAttribute("style")).toContain("#10A37F");
+    // The section says how many providers it holds.
+    expect(screen.getByRole("heading", { name: t("providers.section.api_key") }).parentElement!.textContent).toContain("3");
   });
 
   it("narrows the cards with the search field and the status filter", async () => {
@@ -469,6 +477,13 @@ describe("providers", () => {
     fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: Backup` }));
     fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.test") }));
     expect(await screen.findByText(t("providers.testFailed", { name: "Backup", error: "401 Invalid API Key" }))).toBeTruthy();
+  });
+
+  it("providerLogo: the logo file of a provider that has one, else null (its letters show instead)", () => {
+    expect(providerLogo("mistral")).toBe("/providers/mistral.png");
+    expect(providerLogo("vercel-ai-gateway")).toBe("/providers/vercel-ai-gateway.png");
+    expect(providerLogo("runcrate")).toBeNull();
+    expect(providerLogo("../secret")).toBeNull();
   });
 
   it("providerFromHash: the provider of a detail page, else null", () => {

@@ -116,11 +116,21 @@ body {
   gap: var(--x-space-3);
 }
 
+.providers-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--x-space-2);
+}
+
 .providers-section-title {
   margin: 0;
-  font: var(--type-control);
-  font-size: 15px;
+  font: var(--type-section);
   color: var(--text-1);
+}
+
+.providers-section-count {
+  font: var(--type-status);
+  color: var(--text-2);
 }
 
 .provider-status {
