@@ -5,6 +5,7 @@ import type { AppEnv, Env } from "./env";
 import { anthropicError } from "./errors";
 import { allowedPatterns, allows, parseModel, targetName } from "./providers";
 import { anyOn, applySavers, saversFor } from "./savers";
+import { getTokenSaver } from "./settings";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
 export type Upstream = (req: Request) => Promise<Response>;
@@ -163,7 +164,8 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
     const refused = modelRefused(c, g.system, body);
     if (refused) return refused;
     // Token savers rewrite the body; with none on, the client's bytes go upstream untouched.
-    const savers = saversFor(g.system, c.req.raw);
+    // Headroom is not applied here: it only takes requests in OpenAI shape (see /openai/v1).
+    const savers = saversFor(g.system, c.req.raw, await getTokenSaver(c.env.DB));
     let rtkSaved = 0;
     if (anyOn(savers)) {
       try {

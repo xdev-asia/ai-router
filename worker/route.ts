@@ -6,7 +6,9 @@ import { ANTHROPIC_VERSION, PROVIDERS, allowedPatterns, allows, parseModel, prov
 import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
+import { headroomCompress } from "./headroom";
 import { applySavers, saversFor, type Savers } from "./savers";
+import { getTokenSaver } from "./settings";
 
 export { ANTHROPIC_VERSION };
 
@@ -194,7 +196,9 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
   const cooling = ref.kind === "combo" ? await coolingTargets(c.env.DB, targets.map(targetName), now) : new Set<string>();
   const order = [...targets.filter((t) => !cooling.has(targetName(t))), ...targets.filter((t) => cooling.has(targetName(t)))];
 
-  const savers = saversFor(system, c.req.raw);
+  const savers = saversFor(system, c.req.raw, await getTokenSaver(c.env.DB));
+  // Headroom takes the request in OpenAI shape, before it is translated or sent anywhere.
+  if (savers.headroom) req = await headroomCompress(upstream, savers.headroom, req);
   let last: Response | null = null;
   for (const [i, target] of order.entries()) {
     let attempt: Attempt | null = null;

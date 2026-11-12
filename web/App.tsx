@@ -8,16 +8,17 @@ import { SignIn } from "./pages/SignIn";
 import { Combos } from "./pages/Combos";
 import { ProviderDetail, Providers } from "./pages/Providers";
 import { Systems } from "./pages/Systems";
+import { TokenSaver } from "./pages/TokenSaver";
 import { Usage } from "./pages/Usage";
 import { useTheme } from "./theme";
 import { ui } from "./ui-labels";
 
-export type Page = "systems" | "providers" | "combos" | "usage";
+export type Page = "systems" | "providers" | "combos" | "usage" | "token-saver";
 
-/** Hash routes (`#/systems`, `#/providers`, `#/combos`, `#/usage`), so no page path ever collides with the /admin API. */
+/** Hash routes (`#/systems`, `#/providers`, `#/combos`, `#/usage`, `#/token-saver`), so no page path ever collides with the /admin API. */
 export function pageFromHash(hash: string): Page {
   if (hash === "#/providers" || hash.startsWith("#/providers/")) return "providers";
-  return hash === "#/usage" ? "usage" : hash === "#/combos" ? "combos" : "systems";
+  return hash === "#/usage" ? "usage" : hash === "#/token-saver" ? "token-saver" : hash === "#/combos" ? "combos" : "systems";
 }
 
 /** The provider of `#/providers/<id>`; null on any other page. */
@@ -95,6 +96,7 @@ export function App() {
               { id: "providers", label: t("nav.providers"), icon: "plug", href: "#/providers" },
               { id: "combos", label: t("nav.combos"), icon: "list", href: "#/combos" },
               { id: "usage", label: t("nav.usage"), icon: "activity", href: "#/usage" },
+              { id: "token-saver", label: t("nav.tokenSaver"), icon: "zap", href: "#/token-saver" },
             ]}
           />
         }
@@ -109,7 +111,7 @@ export function App() {
           </>
         }
       >
-        {page === "usage" ? <Usage /> : page === "combos" ? <Combos /> : page === "providers" ? provider ? <ProviderDetail key={provider} id={provider} /> : <Providers /> : <Systems />}
+        {page === "usage" ? <Usage /> : page === "token-saver" ? <TokenSaver /> : page === "combos" ? <Combos /> : page === "providers" ? provider ? <ProviderDetail key={provider} id={provider} /> : <Providers /> : <Systems />}
       </AppShell>
     </NotifyContext.Provider>
   );

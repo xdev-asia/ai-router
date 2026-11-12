@@ -538,6 +538,71 @@ describe("usage", () => {
   });
 });
 
+describe("token saver", () => {
+  const SETTINGS = { rtk: true, caveman: null, ponytail: "lite", custom_prompt: null, headroom: { enabled: false, url: null } };
+  const puts = () => calls.filter((c) => c.method === "PUT" && c.url === "/admin/token-saver").map((c) => c.body);
+
+  beforeEach(() => {
+    routes["GET /admin/token-saver"] = () => json(SETTINGS);
+    routes["PUT /admin/token-saver"] = () => json(SETTINGS);
+  });
+
+  async function openSavers() {
+    window.location.hash = "#/token-saver";
+    await signIn();
+    await screen.findByRole("switch", { name: t("saver.rtk") });
+  }
+
+  it("shows the gateway's savers as they are set", async () => {
+    await openSavers();
+    expect(screen.getByRole("heading", { name: t("saver.title") })).toBeTruthy();
+    expect((screen.getByRole("switch", { name: t("saver.rtk") }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(t("saver.caveman")) as HTMLSelectElement).value).toBe("");
+    expect((screen.getByLabelText(t("saver.ponytail")) as HTMLSelectElement).value).toBe("lite");
+    expect((screen.getByRole("switch", { name: t("saver.headroom") }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("a switch or a level is saved at once, alone", async () => {
+    await openSavers();
+    fireEvent.click(screen.getByRole("switch", { name: t("saver.rtk") }));
+    await waitFor(() => expect(puts()).toEqual([{ rtk: false }]));
+    fireEvent.change(screen.getByLabelText(t("saver.caveman")), { target: { value: "full" } });
+    await waitFor(() => expect(puts()).toEqual([{ rtk: false }, { caveman: "full" }]));
+    fireEvent.change(screen.getByLabelText(t("saver.ponytail")), { target: { value: "" } });
+    await waitFor(() => expect(puts()[2]).toEqual({ ponytail: null }));
+    // One notice per save.
+    expect((await screen.findAllByText(t("saver.saved"))).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("saves the custom prompt with its button", async () => {
+    await openSavers();
+    fireEvent.change(screen.getByLabelText(t("saver.custom")), { target: { value: "Answer in British English." } });
+    fireEvent.click(screen.getByRole("button", { name: t("saver.saveCustom") }));
+    await waitFor(() => expect(puts()).toEqual([{ custom_prompt: "Answer in British English." }]));
+  });
+
+  it("Headroom needs an address before it can be switched on, and refuses one that is not a web address", async () => {
+    await openSavers();
+    const sw = screen.getByRole("switch", { name: t("saver.headroom") }) as HTMLInputElement;
+    expect(sw.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(t("saver.headroomUrl")), { target: { value: "headroom" } });
+    fireEvent.click(screen.getByRole("button", { name: t("saver.saveHeadroom") }));
+    expect(await screen.findByText(t("saver.headroomUrlBad"))).toBeTruthy();
+    expect(puts()).toEqual([]);
+
+    fireEvent.change(screen.getByLabelText(t("saver.headroomUrl")), { target: { value: "https://headroom.test" } });
+    fireEvent.click(screen.getByRole("button", { name: t("saver.saveHeadroom") }));
+    await waitFor(() => expect(puts()).toEqual([{ headroom: { enabled: false, url: "https://headroom.test" } }]));
+  });
+
+  it("switches Headroom on when it has an address", async () => {
+    routes["GET /admin/token-saver"] = () => json({ ...SETTINGS, headroom: { enabled: false, url: "https://headroom.test" } });
+    await openSavers();
+    fireEvent.click(screen.getByRole("switch", { name: t("saver.headroom") }));
+    await waitFor(() => expect(puts()).toEqual([{ headroom: { enabled: true, url: "https://headroom.test" } }]));
+  });
+});
+
 describe("helpers", () => {
   it("parseCap: empty is no cap, digits are a cap, anything else is invalid", () => {
     expect(parseCap("")).toBeNull();
@@ -551,6 +616,10 @@ describe("helpers", () => {
     expect(pageFromHash("#/combos")).toBe("combos");
     expect(pageFromHash("#/usage")).toBe("usage");
     expect(pageFromHash("#/whatever")).toBe("systems");
+  });
+
+  it("pageFromHash knows the token saver page", () => {
+    expect(pageFromHash("#/token-saver")).toBe("token-saver");
   });
 
   it("pageFromHash: usage or systems", () => {

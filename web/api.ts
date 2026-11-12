@@ -113,6 +113,15 @@ export interface System {
 
 export type SaverLevel = "lite" | "full" | "ultra";
 
+/** The savers every system gets (GET/PUT /admin/token-saver). */
+export interface TokenSaverSettings {
+  rtk: boolean;
+  caveman: SaverLevel | null;
+  ponytail: SaverLevel | null;
+  custom_prompt: string | null;
+  headroom: { enabled: boolean; url: string | null };
+}
+
 export interface Combo {
   name: string;
   targets: string[];

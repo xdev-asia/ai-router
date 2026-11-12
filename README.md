@@ -142,7 +142,18 @@ usage (to meter) and drops that chunk when the client did not ask for it.
 Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of the gateway's own refusals:
 `invalid_api_key`, `system_disabled`, `monthly_token_cap`, `model_not_found`, `model_not_allowed`, `not_configured`.
 
-## Token savers (per system, off by default)
+## Token savers (off by default)
+
+Set for the whole gateway on the console's Token saver page (`PUT /admin/token-saver`), and per system with
+`PATCH /admin/systems/:id`. A system's own Caveman or Ponytail level wins over the gateway's; RTK is on when either
+has it on. The gateway-wide setting also has two things a system cannot set:
+
+| Field | Effect |
+|---|---|
+| `custom_prompt` | Up to 4,000 characters appended to the system prompt of every request, after the savers' own instructions |
+| `headroom: {enabled, url}` | Before a `/openai/v1` request goes anywhere, its messages are posted to `<url>/v1/compress` of a [Headroom](https://github.com/chopratejas/headroom) proxy and replaced by the answer. Fail-open: a failure, a timeout (3 s) or an answer that is not the same messages in the same roles leaves the request as it was. Not applied on `/anthropic`. The endpoint takes no key and receives the conversation: use a Headroom you run. Not tried against a real Headroom here |
+
+Per system:
 
 Ported from 9router (MIT), which ports RTK (Apache-2.0) and adapts Caveman (Apache-2.0) and Ponytail (MIT); see
 `worker/savers/THIRD_PARTY_NOTICES.md`. Set with `PATCH /admin/systems/:id`:
@@ -177,6 +188,8 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `PUT /providers/:id/strategy` | `{strategy: "fill-first" \| "round-robin"}` | `{provider, strategy}`; `400`; `404` |
 | `POST /connections/:id/test` | | `{ok: true}` or `{ok: false, status, message}`: the provider's answer to a model-list request with the connection's key; `404` |
 | `PUT /providers/:id/order` | `{ids: [...]}` (every connection of the provider, once each) | the provider's connections in the new order; `400`; `404` |
+| `GET /token-saver` | | `{rtk, caveman, ponytail, custom_prompt, headroom: {enabled, url}}` |
+| `PUT /token-saver` | any of those fields | the settings; `400` |
 | `GET /combos` | | `[{name, targets, updated_at}]` |
 | `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
 | `DELETE /combos/:name` | | `204`; `404` |

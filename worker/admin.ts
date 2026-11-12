@@ -7,6 +7,7 @@ import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, prov
 import type { AppEnv } from "./env";
 import type { Upstream } from "./proxy";
 import { reportRoutes } from "./report";
+import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
 import { currentMonth, monthRange } from "./usage";
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
@@ -298,6 +299,19 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
   });
 
   reportRoutes(a);
+
+  /** The savers every system gets (settings.ts). PUT takes any of the fields and keeps the others. */
+  a.get("/token-saver", async (c) => c.json(await getTokenSaver(c.env.DB)));
+
+  a.put("/token-saver", async (c) => {
+    const b = await readJson(c.req.raw);
+    const next = b ? mergeTokenSaver(await getTokenSaver(c.env.DB), b) : null;
+    if (!next) {
+      return c.json({ error: "invalid_input", hint: "rtk: boolean; caveman, ponytail: lite, full, ultra or null; custom_prompt: up to 4000 chars or null; headroom: {enabled, url}" }, 400);
+    }
+    await saveTokenSaver(c.env.DB, next);
+    return c.json(next);
+  });
 
   a.all("*", (c) => c.json({ error: "not_found" }, 404));
 

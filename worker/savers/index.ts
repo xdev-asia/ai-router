@@ -23,20 +23,40 @@ export interface Savers {
   rtk: boolean;
   caveman: Level | null;
   ponytail: Level | null;
+  /** The gateway's custom system prompt, appended after the savers' own instructions. */
+  custom?: string | null;
+  /** URL of the Headroom proxy when it is on (worker/headroom.ts). Not applied by `applySavers`. */
+  headroom?: string | null;
 }
 
 export const OFF: Savers = { rtk: false, caveman: null, ponytail: null };
 
-export function saversFor(system: { rtk?: number | boolean; caveman?: string | null; ponytail?: string | null }, req: Request): Savers {
+/** The gateway-wide part of the savers (worker/settings.ts), in the shape this module needs. */
+export interface GatewaySavers {
+  rtk: boolean;
+  caveman: Level | null;
+  ponytail: Level | null;
+  custom_prompt: string | null;
+  headroom: { enabled: boolean; url: string | null };
+}
+
+/**
+ * The savers for one request: the system's own level wins over the gateway's, RTK is on when either has it on,
+ * the custom prompt and Headroom come from the gateway. `x-gateway-token-saver: off` switches all of it off.
+ */
+export function saversFor(system: { rtk?: number | boolean; caveman?: string | null; ponytail?: string | null }, req: Request, gateway?: GatewaySavers): Savers {
   if (req.headers.get("x-gateway-token-saver")?.toLowerCase() === "off") return OFF;
   return {
-    rtk: system.rtk === 1 || system.rtk === true,
-    caveman: isLevel(system.caveman) ? system.caveman : null,
-    ponytail: isLevel(system.ponytail) ? system.ponytail : null,
+    rtk: system.rtk === 1 || system.rtk === true || gateway?.rtk === true,
+    caveman: isLevel(system.caveman) ? system.caveman : (gateway?.caveman ?? null),
+    ponytail: isLevel(system.ponytail) ? system.ponytail : (gateway?.ponytail ?? null),
+    custom: gateway?.custom_prompt ?? null,
+    headroom: gateway?.headroom.enabled ? gateway.headroom.url : null,
   };
 }
 
-export const anyOn = (s: Savers) => s.rtk || s.caveman !== null || s.ponytail !== null;
+/** Whether `applySavers` would change the request body. */
+export const anyOn = (s: Savers) => s.rtk || s.caveman !== null || s.ponytail !== null || Boolean(s.custom);
 
 type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -105,6 +125,7 @@ function instructions(s: Savers): string[] {
   const out: string[] = [];
   if (s.caveman) out.push(CAVEMAN_PROMPTS[s.caveman] as string);
   if (s.ponytail) out.push(PONYTAIL_PROMPTS[s.ponytail] as string);
+  if (s.custom) out.push(s.custom);
   return out;
 }
 

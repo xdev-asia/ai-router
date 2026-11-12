@@ -164,3 +164,15 @@ body {
   font: var(--type-status);
   color: var(--text-2);
 }
+
+/* Token saver: the Headroom address with its Save button on the same line. */
+.saver-inline {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--x-space-2);
+}
+
+.saver-inline > :first-child {
+  flex: 1;
+  min-width: 0;
+}
