@@ -126,7 +126,8 @@ export function record(c: Context<AppEnv>, system: System, up: Response, streame
     usage
       .catch(() => EMPTY)
       .then((u) =>
-        recordUsage(c.env.DB, { ...u, system_id: system.id, provider, request_id: requestId, status: up.status, streamed, rtk_saved_bytes: rtkSaved }),
+        // Taken when the usage is known: for a stream, that is its last byte.
+        recordUsage(c.env.DB, { ...u, system_id: system.id, provider, request_id: requestId, status: up.status, streamed, rtk_saved_bytes: rtkSaved, latency_ms: Date.now() - c.get("startedAt") }),
       )
       // Logs the system and status only: never keys, tokens or content.
       .catch((e: unknown) => console.error("usage record failed", system.id, up.status, e instanceof Error ? e.name : "error")),

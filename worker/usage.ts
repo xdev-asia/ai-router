@@ -74,14 +74,16 @@ export interface UsageRow extends Usage {
   streamed: boolean;
   /** Bytes RTK removed from this request (0 when off). */
   rtk_saved_bytes?: number;
+  /** Milliseconds from the request reaching the gateway to the provider's last byte. */
+  latency_ms?: number;
 }
 
 export async function recordUsage(db: D1Database, r: UsageRow, nowSec = Math.floor(Date.now() / 1000)): Promise<void> {
   await db
     .prepare(
       `INSERT INTO usage (system_id, provider, request_id, model, status, streamed,
-         input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, at, rtk_saved_bytes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, at, rtk_saved_bytes, latency_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       r.system_id,
@@ -96,6 +98,7 @@ export async function recordUsage(db: D1Database, r: UsageRow, nowSec = Math.flo
       r.cache_read_input_tokens,
       nowSec,
       r.rtk_saved_bytes ?? 0,
+      r.latency_ms ?? null,
     )
     .run();
 }

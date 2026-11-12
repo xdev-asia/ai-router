@@ -6,6 +6,7 @@ import { createApiKeyConnection, getConnection, isStrategy, listConnections, sea
 import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, providerDef, type ProviderId } from "./providers";
 import type { AppEnv } from "./env";
 import type { Upstream } from "./proxy";
+import { reportRoutes } from "./report";
 import { currentMonth, monthRange } from "./usage";
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
@@ -295,6 +296,8 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
       .all();
     return c.json({ month: `${year}-${String(month).padStart(2, "0")}`, rows: r.results });
   });
+
+  reportRoutes(a);
 
   a.all("*", (c) => c.json({ error: "not_found" }, 404));
 

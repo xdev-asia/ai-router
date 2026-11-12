@@ -20,6 +20,10 @@ export interface Deps {
  */
 export function makeApp(deps: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("startedAt", Date.now());
+    await next();
+  });
   app.get("/health", (c) => c.json({ ok: true }));
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
   app.route("/admin", adminRoutes(deps.upstream));

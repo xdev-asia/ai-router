@@ -20,4 +20,5 @@ export interface Env {
   CONSOLE_EMAILS?: string;
 }
 
-export type AppEnv = { Bindings: Env };
+/** `startedAt`: when the request reached the gateway (ms), for the latency of its usage rows. */
+export type AppEnv = { Bindings: Env; Variables: { startedAt: number } };

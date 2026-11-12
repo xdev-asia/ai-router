@@ -169,6 +169,44 @@ export function patternsOf(s: Pick<System, "allowed_models">): string[] {
   }
 }
 
+export interface UsageTokens {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  /** US dollars, from the owner's prices; null when nothing in the group has a price. */
+  cost: number | null;
+}
+
+export interface UsageRequest {
+  id: number;
+  /** Unix seconds. */
+  at: number;
+  system_id: string;
+  provider: string;
+  model: string | null;
+  status: number;
+  streamed: boolean;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  latency_ms: number | null;
+}
+
+export type UsagePeriod = "today" | "24h" | "7d" | "30d" | "60d" | "all";
+
+export interface UsageSummary {
+  period: UsagePeriod;
+  from: number;
+  totals: UsageTokens & { unpriced_requests: number };
+  by_provider: (UsageTokens & { provider: string })[];
+  by_model: (UsageTokens & { provider: string; model: string | null })[];
+  by_system: (UsageTokens & { system_id: string })[];
+  recent: UsageRequest[];
+}
+
 export interface UsageRow {
   system_id: string;
   provider: string;

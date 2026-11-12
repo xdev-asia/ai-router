@@ -4,7 +4,6 @@ import { App, pageFromHash, providerFromHash } from "../App";
 import { setToken } from "../api";
 import { resetLang, t } from "../i18n";
 import { parseCap } from "../pages/Systems";
-import { lastMonths } from "../pages/Usage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -19,10 +18,33 @@ const SYSTEM = {
   caveman: null,
   ponytail: null,
 };
+/** The month's usage per system, which the Systems page shows against each cap. */
 const USAGE = {
   month: "2026-11",
   rows: [
     { system_id: "chat", provider: "anthropic", model: "claude-opus-5-5", requests: 3, input_tokens: 400, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+  ],
+};
+const TOKENS = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+const SUMMARY = {
+  period: "24h",
+  from: 1_790_000_000,
+  totals: { requests: 3, input_tokens: 4010, output_tokens: 620, cache_creation_input_tokens: 30, cache_read_input_tokens: 240, cost: 3.6, unpriced_requests: 1 },
+  by_provider: [
+    { provider: "openai", ...TOKENS, requests: 2, input_tokens: 4000, output_tokens: 600, cost: 3.6 },
+    { provider: "groq", ...TOKENS, requests: 1, input_tokens: 10, output_tokens: 20, cost: null },
+  ],
+  by_model: [
+    { provider: "openai", model: "gpt-5", ...TOKENS, requests: 2, input_tokens: 4000, output_tokens: 600, cost: 3.6 },
+    { provider: "groq", model: "llama-4", ...TOKENS, requests: 1, input_tokens: 10, output_tokens: 20, cost: null },
+  ],
+  by_system: [{ system_id: "chat", ...TOKENS, requests: 3, input_tokens: 4010, output_tokens: 620, cost: 3.6 }],
+  recent: [{ id: 9, at: 1_790_000_500, system_id: "chat", provider: "openai", model: "gpt-5", status: 429, streamed: false, ...TOKENS, input_tokens: 77, latency_ms: 812 }],
+};
+const REQUESTS = {
+  rows: [
+    { id: 9, at: 1_790_000_500, system_id: "chat", provider: "openai", model: "gpt-5", status: 429, streamed: false, ...TOKENS, input_tokens: 77, latency_ms: 812 },
+    { id: 8, at: 1_790_000_400, system_id: "chat", provider: "groq", model: "llama-4", status: 200, streamed: true, ...TOKENS, output_tokens: 55, latency_ms: null },
   ],
 };
 
@@ -43,6 +65,8 @@ beforeEach(() => {
   routes = {
     "GET /admin/systems": () => json([SYSTEM]),
     "GET /admin/usage": () => json(USAGE),
+    "GET /admin/usage/summary": () => json(SUMMARY),
+    "GET /admin/usage/requests": () => json(REQUESTS),
     "POST /admin/systems": () => json({ id: "xdevd", token: "xllm_new_token" }, 201),
     "PATCH /admin/systems/chat": () => json(SYSTEM),
     "GET /admin/combos": () => json([{ name: "fast", targets: ["groq/llama", "claude-haiku-5-5"], updated_at: 1 }]),
@@ -106,7 +130,7 @@ describe("sign in", () => {
   it("signs out when the API answers 401", async () => {
     await signIn();
     await screen.findByText("Chat");
-    routes["GET /admin/usage"] = () => json({ error: "unauthorized" }, 401);
+    routes["GET /admin/usage/summary"] = () => json({ error: "unauthorized" }, 401);
     window.location.hash = "#/usage";
     fireEvent(window, new HashChangeEvent("hashchange"));
     expect(await screen.findByLabelText(t("signin.token"))).toBeTruthy();
@@ -472,12 +496,45 @@ describe("theme", () => {
 });
 
 describe("usage", () => {
-  it("shows totals and one row per system and model", async () => {
+  async function openUsage() {
     window.location.hash = "#/usage";
     await signIn();
-    expect(await screen.findByRole("heading", { name: t("usage.title") })).toBeTruthy();
-    expect(await screen.findByText("claude-opus-5-5")).toBeTruthy();
-    expect(calls.some((c) => /\/admin\/usage\?month=\d{4}-\d{2}$/.test(c.url))).toBe(true);
+    await screen.findByRole("heading", { name: t("usage.title") });
+  }
+
+  it("shows the last 24 hours: totals, the cost estimate, and what is behind them", async () => {
+    await openUsage();
+    // The total and the only system's row both read 4,010 input tokens.
+    expect(await screen.findAllByText("4,010")).toHaveLength(2);
+    expect(calls.some((c) => c.url === "/admin/usage/summary?period=24h")).toBe(true);
+    // The total, and the provider, system and model that make it up.
+    expect(screen.getAllByText("~$3.60")).toHaveLength(4);
+    expect(screen.getByText(t("usage.unpriced", { n: "1" }))).toBeTruthy();
+    expect(screen.getAllByText("gpt-5").length).toBeGreaterThan(0);
+    expect(screen.getByText("llama-4")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: t("usage.byProvider") })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: t("usage.topModels") })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: t("usage.recent") })).toBeTruthy();
+  });
+
+  it("loads another period when one is picked", async () => {
+    await openUsage();
+    await screen.findAllByText("4,010");
+    fireEvent.click(screen.getByRole("button", { name: t("usage.period.7d") }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/summary?period=7d")).toBe(true));
+  });
+
+  it("Details lists each request with its status and latency, and filters by provider", async () => {
+    routes["GET /admin/providers"] = () => json([{ id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false, key_url: null, strategy: "fill-first" }]);
+    await openUsage();
+    fireEvent.click(screen.getByRole("tab", { name: t("usage.tab.details") }));
+    expect(await screen.findByText("812 ms")).toBeTruthy();
+    expect(screen.getByText("429")).toBeTruthy();
+    expect(screen.getByText("llama-4")).toBeTruthy();
+    expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100")).toBe(true);
+
+    fireEvent.change(await screen.findByLabelText(t("usage.filter.provider")), { target: { value: "openai" } });
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100&provider=openai")).toBe(true));
   });
 });
 
@@ -494,14 +551,6 @@ describe("helpers", () => {
     expect(pageFromHash("#/combos")).toBe("combos");
     expect(pageFromHash("#/usage")).toBe("usage");
     expect(pageFromHash("#/whatever")).toBe("systems");
-  });
-
-  it("lastMonths: 12 UTC months, newest first, across a year edge", () => {
-    const m = lastMonths(new Date(Date.UTC(2026, 0, 15)));
-    expect(m).toHaveLength(12);
-    expect(m[0]).toBe("2026-01");
-    expect(m[1]).toBe("2025-12");
-    expect(m[11]).toBe("2025-02");
   });
 
   it("pageFromHash: usage or systems", () => {

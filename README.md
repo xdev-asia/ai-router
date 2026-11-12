@@ -28,7 +28,7 @@ The code here is written anew for a Cloudflare Worker, D1 and `@xdev-asia/ui`, w
 | Disable | A disabled system gets `403 permission_error` |
 | Cap | Tokens this UTC month (input + output + cache write + cache read) checked before the request; at or over the cap: `429 rate_limit_error` with `x-should-retry: false`. One request can go over the cap; the next one is refused |
 | Forward | `POST /anthropic/v1/messages` and `/anthropic/v1/messages/count_tokens`, query string kept. Only `anthropic-version`, `anthropic-beta`, `content-type` and `accept` are passed on; the key becomes the system's Anthropic key |
-| Meter | One `usage` row per Messages request: model, status, token counts, request id. Streaming replies are read on a copy of the stream. No request or response content is stored |
+| Meter | One `usage` row per Messages request: model, status, token counts, request id, and the time from the request's arrival to the provider's last byte. Streaming replies are read on a copy of the stream. No request or response content is stored |
 
 The body is not changed, so thinking, caching, tools and fallbacks work as when calling Anthropic directly.
 A provider is a path prefix: another one can be added beside `/anthropic` without touching it.
@@ -181,6 +181,11 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
 | `DELETE /combos/:name` | | `204`; `404` |
 | `GET /usage?month=YYYY-MM` | | `{month, rows}` per system, provider and model |
+| `GET /usage/summary?period=` | `today`, `24h` (default), `7d`, `30d`, `60d`, `all` | `{period, from, totals, by_provider, by_model, by_system, recent}`; each group has its token sums and a `cost` (null without a price); `totals.unpriced_requests`; `recent`: the last 10 requests |
+| `GET /usage/requests` | `?provider=&system=&from=&to=` (unix seconds), `limit` (1-200, default 50), `before` (a row id) | `{rows}`: one per request, newest first, with status, tokens and `latency_ms` |
+| `GET /pricing` | | `[{target, input, output, cache_read, cache_write}]`, US dollars per million tokens |
+| `PUT /pricing` | `{target: "provider/model", input, output, cache_read?, cache_write?}` | the price. A target also prices every model whose name starts with it; the longest match wins |
+| `DELETE /pricing?target=` | | `204`; `404` |
 
 ## Local development and tests
 
