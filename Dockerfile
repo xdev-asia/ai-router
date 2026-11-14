@@ -14,9 +14,13 @@ WORKDIR /src
 ENV CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+# pnpm does not expand ${VAR} in a repository's .npmrc credentials, so the token goes in a user config on a tmpfs:
+# it is gone after this step and never in a layer. .npmrc still maps @xdev-asia to GitHub Packages.
 RUN --mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN \
     --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    corepack pnpm install --frozen-lockfile
+    --mount=type=tmpfs,target=/run/npm \
+    printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > /run/npm/npmrc \
+    && NPM_CONFIG_USERCONFIG=/run/npm/npmrc corepack pnpm install --frozen-lockfile
 COPY tsconfig.json vite.config.ts ./
 COPY web ./web
 # The console keeps the build it came from and reloads when the gateway reports another (web/version.ts).

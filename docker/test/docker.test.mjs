@@ -85,3 +85,19 @@ describe("build version", () => {
     assert.match(final, /ENV APP_VERSION=\$APP_VERSION APP_BUILT_AT=\$APP_BUILT_AT/);
   });
 });
+
+describe("package token", () => {
+  const install = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8")
+    .split(/^FROM /m)
+    .find((s) => s.includes("AS console-build"))
+    .match(/^RUN [^\n]*(?:\\\n[^\n]*)*pnpm install[^\n]*/m)?.[0];
+
+  // pnpm ignores ${VAR} in a repository's .npmrc credentials, so the token goes in a user config.
+  it("the install reads the token from a user config on tmpfs, never from a layer", () => {
+    assert.ok(install, "console-build has a pnpm install step");
+    assert.match(install, /--mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN/);
+    assert.match(install, /--mount=type=tmpfs,target=\/run\/npm/);
+    assert.match(install, /> \/run\/npm\/npmrc/);
+    assert.match(install, /NPM_CONFIG_USERCONFIG=\/run\/npm\/npmrc corepack pnpm install --frozen-lockfile/);
+  });
+});
