@@ -2,12 +2,18 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   Banner,
   BarChart,
+  BrandMark,
   Button,
   Card,
   DataTable,
+  Emblem,
   EmptyState,
   Field,
+  FlowMap,
   Grid,
+  GridItem,
+  List,
+  ListRow,
   Meter,
   Segmented,
   Select,
@@ -20,21 +26,25 @@ import {
   sortTableRows,
   type BarDatum,
   type DataTableColumn,
+  type FlowMapNode,
   type MeterTone,
   type TableSort,
   type TimeSeriesTick,
 } from "@xdev-asia/ui";
-import { api, useLoad, type Provider, type System, type UsageBucket, type UsageChart, type UsagePeriod, type UsageRequest, type UsageSummary, type UsageTokens } from "../api";
+import { api, useLoad, type Connection, type Provider, type System, type UsageBucket, type UsageChart, type UsagePeriod, type UsageRequest, type UsageSummary, type UsageTokens } from "../api";
 import { formatNumber, t, useLang, type Lang, type StringKey } from "../i18n";
+import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 
 const PERIODS: UsagePeriod[] = ["today", "24h", "7d", "30d", "60d", "all"];
-/** Rows in the recent list on the Overview; the Details tab has the rest. */
-const RECENT_ROWS = 10;
+/** Rows in the recent list beside the router map; the Details tab has the rest. */
+const RECENT_ROWS = 12;
 /** Bars in the top models chart; the breakdown table has every model. */
 const TOP_MODELS = 5;
 /** Rows the Details tab asks for at a time. */
 const PAGE = 100;
+/** Boxes a side of the router map shows; past that the quietest fold into one "N others" box. */
+const MAP_SIDE = 8;
 
 export type Metric = "tokens" | "requests" | "cost" | "errors";
 type Breakdown = "model" | "provider" | "account" | "key";
@@ -58,6 +68,16 @@ const locale = (lang: Lang) => (lang === "vi" ? "vi-VN" : "en-US");
 
 const formatTime = (at: number, lang: Lang) =>
   new Date(at * 1000).toLocaleString(locale(lang), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+/** "3 min ago", in the owner's language; "now" under a minute. */
+export function formatAgo(at: number, lang: Lang, now = Date.now() / 1000): string {
+  const s = Math.max(0, Math.round(now - at));
+  const rtf = new Intl.RelativeTimeFormat(locale(lang), { numeric: "auto", style: "short" });
+  if (s < 60) return rtf.format(0, "second");
+  if (s < 3600) return rtf.format(-Math.floor(s / 60), "minute");
+  if (s < 86_400) return rtf.format(-Math.floor(s / 3600), "hour");
+  return rtf.format(-Math.floor(s / 86_400), "day");
+}
 
 /** "Nov 14, 06:30 PM": a group's last request, to the minute. */
 const formatDay = (at: number, lang: Lang) => new Date(at * 1000).toLocaleString(locale(lang), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -139,6 +159,68 @@ export function chartTicks(buckets: readonly UsageBucket[], step: number, lang: 
 
 /** Below 95% of requests answered is a problem; below 99% is worth a look. */
 const successTone = (rate: number): MeterTone => (rate >= 99 ? "ok" : rate >= 95 ? "warn" : "danger");
+
+/** One end of the router map: a system on the left, a provider on the right, with its requests in the period. */
+export interface RouteEnd {
+  id: string;
+  name: string;
+  requests: number;
+  errors: number;
+  src?: string | null;
+  color?: string | null;
+  text?: string;
+}
+
+/**
+ * The two sides of the router map. Systems: every system, and any in the period's rows that is gone since.
+ * Providers: every provider with an account, and any the period's rows name.
+ */
+export function routerEnds(data: UsageSummary, providers: Provider[], connections: Connection[], systems: System[]): { sources: RouteEnd[]; nodes: RouteEnd[] } {
+  const sources = new Map<string, RouteEnd>(systems.map((s) => [s.id, { id: s.id, name: s.name, requests: 0, errors: 0, src: clientLogo(s.name) }]));
+  for (const r of data.by_system) {
+    const name = sources.get(r.system_id)?.name ?? r.name ?? r.system_id;
+    sources.set(r.system_id, { id: r.system_id, name, requests: r.requests, errors: r.errors ?? 0, src: clientLogo(name) });
+  }
+  const meta = new Map(providers.map((p) => [p.id, p]));
+  const end = (id: string): RouteEnd => {
+    const p = meta.get(id);
+    return { id, name: p?.name ?? id, requests: 0, errors: 0, src: providerLogo(id), color: p?.color ?? null, text: p?.mark };
+  };
+  const nodes = new Map<string, RouteEnd>();
+  for (const c of connections) if (!nodes.has(c.provider)) nodes.set(c.provider, end(c.provider));
+  for (const r of data.by_provider) nodes.set(r.provider, { ...(nodes.get(r.provider) ?? end(r.provider)), requests: r.requests, errors: r.errors ?? 0 });
+  return { sources: [...sources.values()], nodes: [...nodes.values()] };
+}
+
+/**
+ * One side as map boxes, by name. More than `limit` keeps the busiest and folds the rest into one "N others" box,
+ * last. A line's weight is its requests against the busiest box on the side; its tone follows the success rate.
+ */
+export function routeSide(ends: readonly RouteEnd[], limit = MAP_SIDE): FlowMapNode[] {
+  const ranked = [...ends].sort((a, b) => b.requests - a.requests || a.name.localeCompare(b.name));
+  const shown = ranked.length > limit ? ranked.slice(0, limit - 1) : ranked;
+  const rest = ranked.slice(shown.length);
+  const folded: RouteEnd[] = rest.length
+    ? [{ id: "others:", name: t("usage.route.others", { n: formatNumber(rest.length) }), text: "+", requests: rest.reduce((n, e) => n + e.requests, 0), errors: rest.reduce((n, e) => n + e.errors, 0) }]
+    : [];
+  const all = [...shown.sort((a, b) => a.name.localeCompare(b.name)), ...folded];
+  const max = Math.max(1, ...all.map((e) => e.requests));
+  return all.map((e) => {
+    const rate = e.requests > 0 ? ((e.requests - e.errors) / e.requests) * 100 : null;
+    const n = formatNumber(e.requests);
+    return {
+      id: e.id,
+      name: e.name,
+      src: e.src,
+      color: e.color,
+      text: e.text,
+      active: e.requests > 0,
+      weight: e.requests / max,
+      tone: rate === null || rate >= 99 ? undefined : rate >= 95 ? "warn" : "danger",
+      detail: e.requests === 0 ? t("usage.route.idle") : e.errors > 0 ? t("usage.route.failed", { n, failed: formatNumber(e.errors) }) : t("usage.route.requests", { n }),
+    };
+  });
+}
 
 function Status({ code }: { code: number }) {
   return <StatusDot tone={code < 400 ? "ok" : code === 429 || code >= 500 ? "warn" : "danger"} label={String(code)} />;
@@ -225,6 +307,73 @@ function Totals({ data, loading }: { data: UsageSummary | null; loading: boolean
   );
 }
 
+/** The period as a route: systems send requests into the router, which spreads them over the providers. */
+function RouterMap({ data, loading, providers }: { data: UsageSummary | null; loading: boolean; providers: Provider[] | null }) {
+  const [connections] = useLoad<Connection[]>("/connections");
+  const [systems] = useLoad<System[]>("/systems");
+  // An account or system list that failed to load only hides the idle boxes; the period's rows still draw.
+  const waiting = loading || providers === null || connections.status === "loading" || systems.status === "loading";
+  const ends = data && !waiting ? routerEnds(data, providers, connections.status === "ready" ? connections.data : [], systems.status === "ready" ? systems.data : []) : null;
+  const totals = data?.totals;
+  return (
+    <Card title={t("usage.route.title")} subtitle={t("usage.route.subtitle")} headingLevel={2}>
+      {waiting && <Skeleton lines={6} announce labels={{ loading: t("loading") }} />}
+      {ends && ends.sources.length + ends.nodes.length === 0 && <EmptyState size="inline" icon="activity" title={t("usage.route.empty")} />}
+      {ends && totals && ends.sources.length + ends.nodes.length > 0 && (
+        <FlowMap
+          className="usage-router-map"
+          label={t("usage.route.label")}
+          labels={{ zoomIn: t("usage.route.zoomIn"), zoomOut: t("usage.route.zoomOut"), fit: t("usage.route.fit"), controls: t("usage.route.controls") }}
+          hub={{
+            name: t("app.name"),
+            mark: <BrandMark variant="tile" size={28} />,
+            detail: t("usage.route.hub", { n: formatNumber(totals.requests), ms: formatMs(totals.latency_ms) }),
+          }}
+          sources={routeSide(ends.sources)}
+          nodes={routeSide(ends.nodes)}
+        />
+      )}
+    </Card>
+  );
+}
+
+/** The period's last requests as a feed beside the map: the provider's mark, the model, how long ago, latency and status. */
+function RecentFeed({ rows, loading, providerName, empty, onViewAll }: { rows: UsageRequest[]; loading: boolean; providerName: Map<string, string>; empty: ReactNode; onViewAll: () => void }) {
+  const [lang] = useLang();
+  return (
+    <Card title={t("usage.recent")} headingLevel={2} actions={<Button size="sm" onClick={onViewAll}>{t("usage.viewAll")}</Button>}>
+      {loading && <Skeleton lines={6} announce labels={{ loading: t("loading") }} />}
+      {!loading && rows.length === 0 && empty}
+      {!loading && rows.length > 0 && (
+        <List className="usage-recent" aria-label={t("usage.recent")}>
+          {rows.map((r) => {
+            const name = providerName.get(r.provider) ?? r.provider;
+            return (
+              <ListRow
+                as="li"
+                key={r.id}
+                leading={<Emblem name={name} src={providerLogo(r.provider)} size="sm" />}
+                title={r.model ?? "—"}
+                meta={
+                  <>
+                    {name} · <time dateTime={new Date(r.at * 1000).toISOString()} title={formatTime(r.at, lang)}>{formatAgo(r.at, lang)}</time>
+                  </>
+                }
+                trailing={
+                  <span className="usage-recent-end">
+                    <span className="muted">{formatMs(r.latency_ms)}</span>
+                    <Status code={r.status} />
+                  </span>
+                }
+              />
+            );
+          })}
+        </List>
+      )}
+    </Card>
+  );
+}
+
 function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters>) => void }) {
   const [providers] = useLoad<Provider[]>("/providers");
   const [period, setPeriod] = useState<UsagePeriod>("24h");
@@ -243,6 +392,14 @@ function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters
       <Totals data={data} loading={loading} />
       {totals && totals.unpriced_requests > 0 && (
         <Banner tone="info" title={t("usage.unpriced", { n: formatNumber(totals.unpriced_requests) })} action={<Button href="#/pricing">{t("usage.setPrices")}</Button>} />
+      )}
+      {report.status !== "error" && (
+        <Grid columns={{ base: 1, xl: 3 }} gap={3}>
+          <GridItem span={{ base: 1, xl: 2 }}>
+            <RouterMap data={data} loading={loading} providers={providers.status === "ready" ? providers.data : providers.status === "error" ? [] : null} />
+          </GridItem>
+          <RecentFeed rows={(data?.recent ?? []).slice(0, RECENT_ROWS)} loading={loading} providerName={providerName} empty={empty} onViewAll={() => onOpenDetails({})} />
+        </Grid>
       )}
       <OverTime period={period} />
       <Grid columns={{ base: 1, lg: 2 }} gap={3}>
@@ -263,18 +420,6 @@ function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters
         />
       </Grid>
       <BreakdownCard data={data} loading={loading} providerName={providerName} empty={empty} period={period} onOpenDetails={onOpenDetails} />
-      <Card
-        title={t("usage.recent")}
-        headingLevel={2}
-        flush
-        actions={
-          <Button size="sm" onClick={() => onOpenDetails({})}>
-            {t("usage.viewAll")}
-          </Button>
-        }
-      >
-        <RequestTable caption={t("usage.recent")} rows={(data?.recent ?? []).slice(0, RECENT_ROWS)} loading={loading} empty={empty} />
-      </Card>
     </Stack>
   );
 }

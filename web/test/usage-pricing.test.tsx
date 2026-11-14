@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setAuth, type PriceRow, type UsageBucket } from "../api";
 import { resetLang, t } from "../i18n";
 import { PRICE_TARGET, Pricing, filterPrices, formatPrice } from "../pages/Pricing";
-import { Usage, allTokens, bucketValue, cacheRate, chartTicks, formatChange, percentChange, requestQuery, successRate, toCsv } from "../pages/Usage";
+import { Usage, allTokens, bucketValue, cacheRate, chartTicks, formatAgo, formatChange, percentChange, requestQuery, routeSide, routerEnds, successRate, toCsv, type RouteEnd } from "../pages/Usage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -119,7 +119,52 @@ describe("usage figures", () => {
   });
 });
 
+describe("router map", () => {
+  const end = (id: string, requests: number, errors = 0): RouteEnd => ({ id, name: id.toUpperCase(), requests, errors });
+
+  it("lists every system and every provider with an account, idle ones too, and keeps a gone system by its row's name", () => {
+    const data = { ...SUMMARY, by_system: [...SUMMARY.by_system, { system_id: "old", name: "Old app", ...TOKENS, requests: 1, cost: null }] } as unknown as Parameters<typeof routerEnds>[0];
+    const providers = [{ id: "openai", name: "OpenAI", color: "#10a37f", mark: "OA" }, { id: "groq", name: "Groq", color: "#f55036", mark: "GQ" }] as Parameters<typeof routerEnds>[1];
+    const connections = [{ provider: "groq" }, { provider: "groq" }] as Parameters<typeof routerEnds>[2];
+    const systems = [{ id: "chat", name: "Chat" }, { id: "batch", name: "Cursor batch" }] as Parameters<typeof routerEnds>[3];
+    const { sources, nodes } = routerEnds(data, providers, connections, systems);
+    expect(sources.map((s) => [s.id, s.name, s.requests])).toEqual([["chat", "Chat", 4], ["batch", "Cursor batch", 0], ["old", "Old app", 1]]);
+    expect(sources.map((s) => s.src ?? null)).toEqual([null, "/cli/cursor.png", null]);
+    expect(nodes.map((n) => [n.id, n.name, n.requests, n.text])).toEqual([["groq", "Groq", 0, "GQ"], ["openai", "OpenAI", 4, "OA"]]);
+  });
+
+  it("weighs each line against the busiest box and tones it by success rate", () => {
+    const side = routeSide([end("b", 50, 1), end("a", 100, 10), end("c", 0)]);
+    expect(side.map((n) => n.id)).toEqual(["a", "b", "c"]);
+    expect(side.map((n) => n.weight)).toEqual([1, 0.5, 0]);
+    expect(side.map((n) => n.tone)).toEqual(["danger", "warn", undefined]);
+    expect(side.map((n) => n.active)).toEqual([true, true, false]);
+    expect(side[0].detail).toBe(t("usage.route.failed", { n: "100", failed: "10" }));
+    expect(side[2].detail).toBe(t("usage.route.idle"));
+  });
+
+  it("folds the quietest past the limit into one box, last", () => {
+    const side = routeSide([end("a", 5), end("b", 4), end("c", 3), end("d", 2), end("e", 1)], 3);
+    expect(side.map((n) => n.name)).toEqual(["A", "B", t("usage.route.others", { n: "3" })]);
+    expect(side[2].detail).toBe(t("usage.route.requests", { n: "6" }));
+    expect(side[2].weight).toBe(1);
+    expect(routeSide([end("a", 1), end("b", 1), end("c", 1)], 3)).toHaveLength(3);
+  });
+});
+
 describe("usage overview", () => {
+  it("draws the route from systems through the router to providers", async () => {
+    routes["GET /admin/systems"] = () => json([{ id: "chat", name: "Chat app", monthly_token_cap: null }, { id: "idle", name: "Idle app", monthly_token_cap: null }]);
+    render(<Usage />);
+    const card = await screen.findByRole("region", { name: t("usage.route.title") });
+    await within(card).findByText("Idle app");
+    expect(within(card).getByText("Chat app")).toBeTruthy();
+    expect(within(card).getByText("OpenAI")).toBeTruthy();
+    expect(within(card).getAllByText(t("usage.route.requests", { n: "4" }))).toHaveLength(2);
+    expect(within(card).getByText(t("usage.route.idle"))).toBeTruthy();
+    expect(within(card).getByRole("group", { name: t("usage.route.controls") })).toBeTruthy();
+  });
+
   it("draws the period over time and switches between tokens, requests and cost", async () => {
     render(<Usage />);
     const chart = await screen.findByRole("figure", { name: t("usage.chart.perHour", { metric: t("usage.metric.tokens") }) });
@@ -319,5 +364,17 @@ describe("pricing page", () => {
     expect(screen.getByText(t("pricing.removeBody"))).toBeTruthy();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: t("pricing.remove") }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith(encodeURIComponent("groq/llama-4")))).toBe(true));
+  });
+});
+
+describe("formatAgo", () => {
+  it("says how long ago a request was, in the owner's language, rounding down", () => {
+    const now = 1_800_000_000;
+    expect(formatAgo(now - 20, "en", now)).toBe("now");
+    expect(formatAgo(now - 3 * 60 - 59, "en", now)).toBe("3 min. ago");
+    expect(formatAgo(now - 2 * 3600, "en", now)).toBe("2 hr. ago");
+    expect(formatAgo(now - 3 * 86_400, "en", now)).toBe("3 days ago");
+    expect(formatAgo(now + 30, "en", now)).toBe("now"); // a clock a little ahead never reads as the future
+    expect(formatAgo(now - 5 * 60, "vi", now)).toMatch(/5 phút trước/);
   });
 });

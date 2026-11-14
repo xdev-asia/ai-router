@@ -12,7 +12,9 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@xdev-asia/ui": "3.5.0",
+    "@fontsource/be-vietnam-pro": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@xdev-asia/ui": "3.6.0",
     "hono": "^4.13.16",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

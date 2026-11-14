@@ -17,9 +17,20 @@ text is in [`worker/savers/vendor/LICENSE-9router`](worker/savers/vendor/LICENSE
 | `worker/wire.ts`, `worker/oauth.ts`, `worker/cloudcode.ts`, `worker/provider-headers.ts` | the registry and executors at commit `54a88d04`: endpoints, header names and values, public client ids | values taken, code written anew |
 | `worker/models.ts` | the model-name rules (`open-sse/services/model.js`, `open-sse/utils/modelMarkers.js`): the `(level)` suffix, the `[1m]` marker, the provider guess | rules followed, code written anew |
 | `worker/vendor/codexInstructions.js` | `open-sse/config/codexInstructions.js` at commit `54a88d04` | copied unchanged (the text itself is the Codex CLI's, below) |
-| `web/public/providers/`, `web/public/cli/` | the provider and tool logo files | copied |
+| `web/public/providers/*.png`, `web/public/cli/` | the provider and tool logo files | copied |
 
 The provider and tool logos are trademarks of their owners and are used only to name each provider or tool.
+
+## LobeHub Icons (MIT)
+
+https://github.com/lobehub/lobe-icons, the `@lobehub/icons-static-svg` package, version 1.102.0, MIT License (the package's `license` field;
+the package ships no license file).
+
+| Here | Taken from LobeHub Icons | How |
+|---|---|---|
+| `web/public/providers/*.svg`, `web/public/clients/` | the provider and app logos (`icons/*.svg`) | copied unchanged, renamed to the provider id |
+
+The logos are trademarks of their owners and are used only to name each provider or app.
 
 ## Projects 9router's files port or adapt
 

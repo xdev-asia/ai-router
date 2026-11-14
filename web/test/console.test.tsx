@@ -5,7 +5,7 @@ import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
 import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
-import { providerLogo } from "../provider-logos";
+import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 import { buildLabel } from "../version";
 
@@ -536,7 +536,7 @@ describe("providers", () => {
 
     // Each card carries the provider's own logo, on its colour.
     const mark = screen.getByRole("img", { name: "OpenAI" });
-    expect(mark.querySelector("img")!.getAttribute("src")).toBe("/providers/openai.png");
+    expect(mark.querySelector("img")!.getAttribute("src")).toBe("/providers/openai.svg");
     expect(mark.getAttribute("style")).toContain("#10A37F");
     // The section says how many providers it holds.
     expect(screen.getByRole("heading", { name: t("providers.section.api_key") }).parentElement!.textContent).toContain("3");
@@ -798,10 +798,18 @@ describe("providers", () => {
   });
 
   it("providerLogo: the logo file of a provider that has one, else null (its letters show instead)", () => {
-    expect(providerLogo("mistral")).toBe("/providers/mistral.png");
-    expect(providerLogo("vercel-ai-gateway")).toBe("/providers/vercel-ai-gateway.png");
+    expect(providerLogo("mistral")).toBe("/providers/mistral.svg");
+    expect(providerLogo("alicode")).toBe("/providers/alicode.png");
     expect(providerLogo("runcrate")).toBeNull();
     expect(providerLogo("../secret")).toBeNull();
+  });
+
+  it("clientLogo: a system named after a tool shows that tool's logo; other names keep their letters", () => {
+    expect(clientLogo("Claude Code")).toBe("/cli/claude-code.png");
+    expect(clientLogo("n8n flows")).toBe("/clients/n8n.svg");
+    expect(clientLogo("Batch jobs")).toBeNull();
+    // A tool name inside another word is not that tool.
+    expect(clientLogo("Authorized bot")).toBeNull();
   });
 
   it("providerFromHash: the provider of a detail page, else null", () => {

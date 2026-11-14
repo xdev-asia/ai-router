@@ -644,3 +644,23 @@ body {
   align-items: flex-start;
   gap: var(--x-space-1);
 }
+
+/* Usage: the router map, a little shorter than FlowMap's default; on a phone it fits to a shorter box. */
+.usage-router-map {
+  height: calc(var(--x-space-8) * 13);
+}
+/* The feed beside the map scrolls within the map's height, so the two cards line up. */
+.usage-recent {
+  max-height: calc(var(--x-space-8) * 13);
+  overflow-y: auto;
+}
+.usage-recent-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--x-space-2);
+}
+@media (max-width: 767.98px) {
+  .usage-router-map {
+    height: calc(var(--x-space-8) * 8);
+  }
+}
