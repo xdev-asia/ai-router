@@ -22,7 +22,19 @@ describe("health", () => {
     const up = fakeUpstream(jsonReply);
     const { res, text } = await call(up, "/health");
     expect(res.status).toBe(200);
-    expect(JSON.parse(text)).toEqual({ ok: true });
+    expect(JSON.parse(text)).toEqual({ ok: true, version: "dev", built_at: null });
+  });
+
+  it("GET /health says which build is running (APP_VERSION, APP_BUILT_AT from the image)", async () => {
+    const up = fakeUpstream(jsonReply);
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const { text } = await call(up, "/health", undefined, { APP_VERSION: sha, APP_BUILT_AT: "2026-11-14T03:00:00Z" });
+    expect(JSON.parse(text)).toEqual({ ok: true, version: sha, built_at: "2026-11-14T03:00:00Z" });
+  });
+
+  it("GET /health counts a blank APP_VERSION as a local build", async () => {
+    const { text } = await call(fakeUpstream(jsonReply), "/health", undefined, { APP_VERSION: " ", APP_BUILT_AT: "" });
+    expect(JSON.parse(text)).toEqual({ ok: true, version: "dev", built_at: null });
   });
 });
 

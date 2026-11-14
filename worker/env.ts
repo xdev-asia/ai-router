@@ -34,6 +34,10 @@ export interface Env {
   /** Public and secret: the Google OAuth client Antigravity signs in with. Either unset: the Antigravity provider shows as unavailable. */
   GOOGLE_ANTIGRAVITY_CLIENT_ID?: string;
   GOOGLE_ANTIGRAVITY_CLIENT_SECRET?: string;
+  /** Public: the commit this gateway was built from, set by the Docker image (CI). Unset: a local build, `dev`. */
+  APP_VERSION?: string;
+  /** Public: when that image was built (ISO 8601). */
+  APP_BUILT_AT?: string;
 }
 
 /**

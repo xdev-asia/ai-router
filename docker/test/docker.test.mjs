@@ -47,6 +47,11 @@ export type AppEnv = { Bindings: Env; Variables: { startedAt: number } };`;
     assert.deepEqual(envNames(source), ["ANTHROPIC_BASE_URL", "CONNECTIONS_KEY", "GOOGLE_GEMINI_CLI_CLIENT_ID"]);
   });
 
+  it("passes the image's build (APP_VERSION, APP_BUILT_AT) on to the Worker", () => {
+    const names = envNames(readFileSync(new URL("../../worker/env.ts", import.meta.url), "utf8"));
+    assert.ok(names.includes("APP_VERSION") && names.includes("APP_BUILT_AT"));
+  });
+
   it("takes the container's env first, then the generated defaults, and nothing else", () => {
     const names = ["CONNECTIONS_KEY", "CODEX_RELAY_URL", "ANTHROPIC_KEYS"];
     const env = workerEnv(names, { CONNECTIONS_KEY: "from-dev-vars", PATH: "/usr/bin", ANTHROPIC_KEYS: "" }, {
@@ -59,5 +64,24 @@ export type AppEnv = { Bindings: Env; Variables: { startedAt: number } };`;
   it("quotes each value so JSON and = survive", () => {
     const text = devVars({ ANTHROPIC_KEYS: '{"chat":"sk-ant-fake"}', CONNECTIONS_KEY: "abc==", ODD: `it's "x"` });
     assert.equal(text, `ANTHROPIC_KEYS='{"chat":"sk-ant-fake"}'\nCONNECTIONS_KEY='abc=='\nODD=\`it's "x"\`\n`);
+  });
+});
+
+describe("build version", () => {
+  const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+
+  it("CI hands the commit and build time to the image", () => {
+    const ci = read(".github/workflows/ci.yml");
+    assert.match(ci, /APP_VERSION=\$\{\{ github\.sha \}\}/);
+    assert.match(ci, /APP_BUILT_AT=/);
+  });
+
+  it("the image keeps them for the console build and the Worker", () => {
+    const stages = read("Dockerfile").split(/^FROM /m).slice(1);
+    const build = stages.find((s) => s.includes("AS console-build"));
+    const final = stages.at(-1);
+    for (const stage of [build, final]) assert.match(stage, /ARG APP_VERSION=dev/);
+    assert.match(build, /ENV APP_VERSION=\$APP_VERSION/);
+    assert.match(final, /ENV APP_VERSION=\$APP_VERSION APP_BUILT_AT=\$APP_BUILT_AT/);
   });
 });

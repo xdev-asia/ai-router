@@ -82,6 +82,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The build the gateway reports on /health and the console compares against (README, Which build is running).
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            APP_BUILT_AT=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           # The console's @xdev-asia/ui comes from GitHub Packages (Dockerfile, console-build).
           secrets: |
             npm_token=${{ secrets.NPM_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}

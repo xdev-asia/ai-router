@@ -582,6 +582,7 @@ body {
 }
 
 /* The palette trigger sits on the nav's own inset, above the first list. */
+.console-new-build { margin-bottom: var(--x-space-4); }
 .console-palette { width: auto; margin: var(--x-space-3) var(--x-space-2) 0; }
 
 /* Translator: the example and translate buttons, at the end of the request card. */

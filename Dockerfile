@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# The gateway in Docker: workerd through `wrangler dev`, with a local D1. Not the production runtime (that is
-# Cloudflare Workers). CI builds this image on every push to main (ghcr.io/xdev-asia/ai-router); compose.yaml
-# runs it.
+# The gateway in Docker: workerd through `wrangler dev`, with a local D1. CI builds this image on every push to
+# main (ghcr.io/xdev-asia/ai-router) with APP_VERSION (the commit) and APP_BUILT_AT; compose.yaml runs it.
+# A local build is `dev` unless you pass them: --build-arg APP_VERSION=$(git rev-parse HEAD)
 #
 # The console needs @xdev-asia/ui from GitHub Packages, so a build from source takes a token (read:packages):
 #   NODE_AUTH_TOKEN=... docker build --secret id=npm_token,env=NODE_AUTH_TOKEN .
@@ -19,6 +19,9 @@ RUN --mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN \
     corepack pnpm install --frozen-lockfile
 COPY tsconfig.json vite.config.ts ./
 COPY web ./web
+# The console keeps the build it came from and reloads when the gateway reports another (web/version.ts).
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 RUN corepack pnpm run build
 
 # Only dist/, at the root: `--build-context console=dist` puts the host's dist/ here instead.
@@ -41,6 +44,10 @@ COPY --chown=node:node worker ./worker
 COPY --chown=node:node docker/start.mjs docker/secrets.mjs ./docker/
 COPY --from=console --chown=node:node / ./dist
 RUN mkdir -p .wrangler/state
+# Late, so a new commit rebuilds only this layer. start.mjs hands both to the Worker (GET /health).
+ARG APP_VERSION=dev
+ARG APP_BUILT_AT=
+ENV APP_VERSION=$APP_VERSION APP_BUILT_AT=$APP_BUILT_AT
 EXPOSE 8787
-LABEL org.opencontainers.image.description="ai-router: LLM gateway (wrangler dev, local D1)"
+LABEL org.opencontainers.image.description="ai-router: LLM gateway (wrangler dev, local D1)"       org.opencontainers.image.revision=$APP_VERSION
 CMD ["node", "docker/start.mjs"]

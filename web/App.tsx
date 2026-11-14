@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { AppShell, BrandMark, Container, MenuButton, NavList, PaletteTrigger, SearchInput, ServiceStatus, ShellTitle, ThemeSwitch, type IconName } from "@xdev-asia/ui";
+import { AppShell, Banner, BrandMark, Button, Container, MenuButton, NavList, PaletteTrigger, SearchInput, ServiceStatus, ShellTitle, ThemeSwitch, type IconName } from "@xdev-asia/ui";
 import { checkSession, setAuth, signOut, useAuth, useLoad, type Auth, type Combo, type Connection } from "./api";
 import { t, useLang, type StringKey } from "./i18n";
 import { LangSelect } from "./LangSelect";
@@ -25,6 +25,7 @@ import { ShellTitleContext } from "./shell";
 import { useTheme } from "./theme";
 import { useTranslatorShown } from "./translator-pref";
 import { ui } from "./ui-labels";
+import { BUILD, buildLabel, useNewBuild } from "./version";
 
 export type Page = "systems" | "providers" | "combos" | "cli-tools" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
 
@@ -150,6 +151,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
   const [pageTitle, setPageTitle] = useState<ReactNode | null>(null);
   const [providerQuery, setProviderQuery] = useState("");
   const stats = useNavStats(page);
+  const newBuild = useNewBuild();
 
   const current = PAGES.find((p) => p.id === page) ?? PAGES[0];
   const title = pageTitle ?? <ShellTitle icon={current.icon} title={t(current.title)} description={t(current.description)} />;
@@ -187,7 +189,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
             />
           )),
           ]}
-          navFooter={<ServiceStatus tone="ok" label={t("shell.online")} detail={`v${__APP_VERSION__}`} />}
+          navFooter={<ServiceStatus tone="ok" label={t("shell.online")} detail={buildLabel(BUILD)} />}
           title={title}
           actions={
             <>
@@ -222,6 +224,21 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
         >
           {/* One width for every page (1280px at most), as the xdev-ui admin layout asks; the shell already pads. */}
           <Container size="xl" gutter={false}>
+            {newBuild && (
+              <div className="console-new-build">
+                <Banner
+                  tone="info"
+                  title={t("build.newTitle")}
+                  action={
+                    <Button variant="secondary" onClick={() => window.location.reload()}>
+                      {t("build.reload")}
+                    </Button>
+                  }
+                >
+                  {t("build.newBody", { version: buildLabel(newBuild) })}
+                </Banner>
+              </div>
+            )}
             {page === "cli-tools" ? (
               <CliTools tool={cliToolFromHash(hash)} />
             ) : page === "media" ? (

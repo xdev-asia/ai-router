@@ -7,6 +7,7 @@ import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
 import { providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
+import { buildLabel } from "../version";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -315,7 +316,16 @@ describe("frame", () => {
     expect(within(side).getByText(t("app.name"))).toBeTruthy();
     expect(within(side).getByText(t("app.tagline"))).toBeTruthy();
     expect(within(side).getByText(t("shell.online"))).toBeTruthy();
-    expect(within(side).getByText(`v${__APP_VERSION__}`)).toBeTruthy();
+    expect(within(side).getByText(buildLabel(__APP_VERSION__))).toBeTruthy();
+    expect(screen.queryByText(t("build.newTitle"))).toBeNull();
+  });
+
+  it("offers a reload when the gateway runs a newer build than this page", async () => {
+    routes["GET /health"] = () => json({ ok: true, version: "fedcba9876543210fedcba9876543210fedcba98", built_at: null });
+    await signIn();
+    await screen.findByText(t("build.newTitle"));
+    expect(screen.getByText(t("build.newBody", { version: "fedcba9" }))).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("build.reload") })).toBeTruthy();
   });
 
   it("Endpoint & Key opens on the base URL of this origin and the /v1 paths", async () => {

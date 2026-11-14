@@ -359,6 +359,23 @@ After that, a push to `main` reaches the Mac at most 5 minutes after the `image`
 (`restart: unless-stopped`). Watchtower swaps images, not `compose.yaml`: when that file changes, fetch it again and
 run `docker compose up -d`.
 
+#### Which build is running
+
+CI builds each image with the commit it came from (`APP_VERSION`) and the build time (`APP_BUILT_AT`). The gateway
+reports both, with no token:
+
+```sh
+curl -s http://localhost:8787/health
+# {"ok":true,"version":"<commit>","built_at":"<time>"}
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ai-router-ai-router-1
+```
+
+A local build says `"version":"dev"` unless built with `--build-arg APP_VERSION=$(git rev-parse HEAD)`. The console
+shows the first 7 characters of the commit at the foot of the sidebar. It asks `/health` on load, every minute
+and when its tab comes back. When the gateway runs another build (watchtower has swapped the image), an open page
+shows a Reload banner, and a page in a background tab reloads by itself. Compose also checks `/health` every 30
+seconds (`docker compose ps` shows the service as `healthy`).
+
 | Need | How |
 |---|---|
 | Private packages | `docker login ghcr.io` with a token that has `read:packages`, and give watchtower the same in `REPO_USER` and `REPO_PASS` (a `compose.override.yaml` next to `compose.yaml`) |

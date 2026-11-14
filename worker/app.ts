@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { adminRoutes } from "./admin";
 import { consoleAuthRoutes, type Idp } from "./console-auth";
@@ -43,8 +43,11 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*"]) app.use(path, logRequest);
   // The owner's providers (custom-providers.ts), read once per request so routing and the console see them.
   for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*", "/admin/*"]) app.use(path, withCustomProviders);
-  app.get("/health", (c) => c.json({ ok: true }));
-  app.get("/api/health", (c) => c.json({ ok: true }));
+  // No token: compose's healthcheck and the console's new-build check (web/version.ts) read it. The build is a
+  // commit of the repository and a time, nothing secret.
+  const health = (c: Context<AppEnv>) => c.json({ ok: true, version: c.env.APP_VERSION?.trim() || "dev", built_at: c.env.APP_BUILT_AT?.trim() || null });
+  app.get("/health", health);
+  app.get("/api/health", health);
   // A provider's sign-in page sends the browser back here (Codex: http://localhost:1455/auth/callback, so only
   // when that port reaches this Worker). Anything that is not one of our pending logins is the console's own
   // sign-in with xDev ID, handled below.

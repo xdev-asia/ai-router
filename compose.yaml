@@ -37,6 +37,13 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+    # /health also says which build runs: curl -s localhost:8787/health
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   # chatgpt.com refuses requests from a Worker (Cf-Worker header), so Codex goes through this relay.
   # Reached as http://codex-relay:8790 from ai-router only: no port on the host.

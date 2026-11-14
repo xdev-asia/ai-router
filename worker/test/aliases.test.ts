@@ -127,10 +127,11 @@ describe("/v1 aliases (paths with no provider prefix)", () => {
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("GET /api/health answers {ok: true} without a token, like /health", async () => {
+  it("GET /api/health answers without a token, like /health", async () => {
     const up = fakeUpstream(() => json({}));
     const { res, text } = await call(up, "/api/health");
     expect(res.status).toBe(200);
-    expect(JSON.parse(text)).toEqual({ ok: true });
+    expect(JSON.parse(text)).toEqual(JSON.parse((await call(up, "/health")).text));
+    expect(JSON.parse(text)).toMatchObject({ ok: true });
   });
 });

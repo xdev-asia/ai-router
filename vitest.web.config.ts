@@ -1,8 +1,8 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
-import { readFileSync } from "node:fs";
 
-const version = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
+// The build this console comes from: the commit in CI's image (Dockerfile), `dev` anywhere else (web/version.ts).
+const version = process.env.APP_VERSION?.trim() || "dev";
 
 export default defineConfig({
   plugins: [react()],
