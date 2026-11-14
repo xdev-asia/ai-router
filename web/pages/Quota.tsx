@@ -23,6 +23,7 @@ import { ApiError, api, useLoad, type Connection, type Provider } from "../api";
 import { formatNumber, t, useLang, type Lang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { providerLogo } from "../provider-logos";
+import { ui } from "../ui-labels";
 
 /** worker/quota.ts QuotaWindow: one limit of an account. */
 export interface QuotaWindow {
@@ -563,6 +564,7 @@ function CreditsDialog({ conn, lang, onClose, onReset }: { conn: Connection; lan
           columns={columns}
           rows={rows}
           rowKey={(x) => x.key}
+          labels={ui(lang).dataTable}
           empty={<EmptyState icon="inbox" title={t("quota.credits.empty")} />}
         />
       )}

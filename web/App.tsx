@@ -208,6 +208,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
                 <SearchInput
                   size="md"
                   className="console-search"
+                  labels={ui(lang).searchInput}
                   aria-label={t("providers.search")}
                   placeholder={t("providers.searchPlaceholder")}
                   value={providerQuery}
