@@ -36,6 +36,10 @@ export function devVars(vars) {
 
 const WRANGLER = "node_modules/wrangler/bin/wrangler.js";
 
+// wrangler dev takes request.url's host from the route in wrangler.jsonc (ai-router.xdev.asia) but keeps http; behind
+// the Cloudflare Tunnel the browser is on https, and the console's sign-in redirect is built from that origin.
+export const SERVE_ARGS = ["dev", "--ip", "0.0.0.0", "--port", "8787", "--upstream-protocol", "https"];
+
 const run = (args) => {
   const r = spawnSync(process.execPath, [WRANGLER, ...args], { stdio: "inherit" });
   if (r.status !== 0) process.exit(r.status ?? 1);
@@ -54,5 +58,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const names = envNames(readFileSync("worker/env.ts", "utf8"));
   writeFileSync(".dev.vars", devVars(workerEnv(names, process.env, defaults)), { mode: 0o600 });
   run(["d1", "migrations", "apply", "xdev-llm", "--local"]);
-  serve(["dev", "--ip", "0.0.0.0", "--port", "8787"]);
+  serve(SERVE_ARGS);
 }

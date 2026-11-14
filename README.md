@@ -379,9 +379,32 @@ seconds (`docker compose ps` shows the service as `healthy`).
 | Need | How |
 |---|---|
 | Private packages | `docker login ghcr.io` with a token that has `read:packages`, and give watchtower the same in `REPO_USER` and `REPO_PASS` (a `compose.override.yaml` next to `compose.yaml`) |
-| Use it from other machines | The ports listen on the Mac's `127.0.0.1` only. Put a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) (`cloudflared`) or Tailscale in front of `http://localhost:8787` |
+| Use it from other machines | The ports listen on the Mac's `127.0.0.1` only. Give it a [public domain](#a-public-domain), or put Tailscale in front of `http://localhost:8787` |
 | Codex sign-in from another machine | The browser must reach `localhost:1455`: `ssh -L 8787:localhost:8787 -L 1455:localhost:1455 <mac>`, then open `http://localhost:8787` |
 | Stay on one build | Set both images to a `sha-<commit>` tag and `docker compose stop watchtower` |
 
 A self-hosted GitHub Actions runner on the Mac would deploy without the 5-minute wait, but GitHub advises against
 self-hosted runners on public repositories: a pull request could run code on the Mac.
+
+#### A public domain
+
+`ai-router.xdev.asia` (the route in `wrangler.jsonc`) reaches the Mac through a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/): the
+`cloudflared` service dials out to Cloudflare, so the Mac still opens no port. It runs only with the `tunnel` profile.
+
+1. If the domain is a custom domain of the Worker `xdev-llm` (Workers & Pages, xdev-llm, Settings, Domains & Routes),
+   remove it there first: it owns the DNS record. A later `wrangler deploy` from a checkout claims it again.
+2. In Cloudflare Zero Trust, Networks, Tunnels: create a tunnel (Cloudflared), copy its token, and add a public
+   hostname `ai-router.xdev.asia` with the service `http://ai-router:8787`.
+3. On the Mac, next to `compose.yaml`:
+
+   ```sh
+   echo 'TUNNEL_TOKEN=<token>' > .env && chmod 600 .env
+   docker compose --profile tunnel up -d
+   curl -s https://ai-router.xdev.asia/health
+   ```
+
+Use `--profile tunnel` on every later `up`, or put `COMPOSE_PROFILES=tunnel` in `.env` too. `wrangler dev` reports
+`https://ai-router.xdev.asia` as the origin of every request (`--upstream-protocol https`, `docker/start.mjs`): the
+console builds the xDev ID sign-in redirect from it. The Mac keeps its own local D1 (the `state` volume): keys,
+connections and usage stored in the Worker's D1 are not there.

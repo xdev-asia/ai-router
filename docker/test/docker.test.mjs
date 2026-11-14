@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { ensureSecrets } from "../secrets.mjs";
-import { devVars, envNames, workerEnv } from "../start.mjs";
+import { SERVE_ARGS, devVars, envNames, workerEnv } from "../start.mjs";
 
 describe("first-run secrets", () => {
   const dir = mkdtempSync(join(tmpdir(), "ai-router-secrets-"));
@@ -99,5 +99,25 @@ describe("package token", () => {
     assert.match(install, /--mount=type=tmpfs,target=\/run\/npm/);
     assert.match(install, /> \/run\/npm\/npmrc/);
     assert.match(install, /NPM_CONFIG_USERCONFIG=\/run\/npm\/npmrc corepack pnpm install --frozen-lockfile/);
+  });
+});
+
+describe("public domain through a Cloudflare Tunnel", () => {
+  const compose = readFileSync(new URL("../../compose.yaml", import.meta.url), "utf8");
+  const tunnel = compose.match(/^  cloudflared:\n(?:(?: {4}.*)?\n)+/m)?.[0];
+
+  // The tunnel speaks https to the browser and plain http to the container; the Worker builds its own links and the
+  // console's sign-in redirect from request.url, so wrangler dev must report https.
+  it("wrangler dev tells the Worker the public origin is https", () => {
+    assert.deepEqual(SERVE_ARGS, ["dev", "--ip", "0.0.0.0", "--port", "8787", "--upstream-protocol", "https"]);
+  });
+
+  it("compose runs cloudflared only with the tunnel profile, on a token from the environment", () => {
+    assert.ok(tunnel, "compose.yaml has a cloudflared service");
+    assert.match(tunnel, /profiles: \["tunnel"\]/);
+    assert.match(tunnel, /command: \["tunnel", "--no-autoupdate", "run"\]/);
+    assert.match(tunnel, /TUNNEL_TOKEN: \$\{TUNNEL_TOKEN:-\}/);
+    assert.match(tunnel, /restart: unless-stopped/);
+    assert.doesNotMatch(tunnel, /ports:/, "the tunnel dials out; nothing listens on the host");
   });
 });

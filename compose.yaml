@@ -3,7 +3,7 @@
 # Images come from ghcr.io, built by CI on every push to main. `up` pulls the latest ones, and watchtower
 # checks every 5 minutes and restarts a service on a new image. Data (local D1, first-run secrets) is in volumes.
 # Your own settings, both optional: .dev.vars for the gateway, .codex-relay.env for the relay (README, In Docker).
-# Build from source instead: compose.dev.yaml.
+# Build from source instead: compose.dev.yaml. The public domain: the tunnel profile (cloudflared, below).
 name: ai-router
 
 x-updated: &updated
@@ -60,6 +60,22 @@ services:
     depends_on:
       init:
         condition: service_completed_successfully
+
+  # The public domain (README, A public domain): a Cloudflare Tunnel from this machine, so no port is opened.
+  # Only with `docker compose --profile tunnel up -d`, and TUNNEL_TOKEN in .env next to this file.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    pull_policy: always
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      # Not `:?`: compose checks every service, profile or not, so that would stop a plain `up` too.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - ai-router
 
   # Pulls new images of the services labelled above and restarts them. The original containrrr/watchtower is
   # no longer maintained; this is the maintained fork.

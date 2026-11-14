@@ -7,3 +7,4 @@ dist
 .local-system-token
 .codex-relay.env
 .claude/
+.env
