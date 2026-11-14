@@ -301,3 +301,71 @@ describe("request list", () => {
     expect(row!.latency_ms).toBeLessThan(5000);
   });
 });
+
+describe("errors, latency and the previous period", () => {
+  beforeEach(async () => {
+    await usage({ provider: "openai", model: "gpt-5", ago: 300, input: 100, latency: 1000 });
+    await usage({ provider: "openai", model: "gpt-5", ago: 200, status: 429, latency: 200 });
+    await usage({ provider: "openai", model: "gpt-5", ago: 100, input: 50, latency: null });
+    await usage({ system: "xdevd", provider: "groq", model: "llama", ago: 50, status: 500, latency: 3000 });
+    await usage({ provider: "groq", model: "llama", ago: 30 * 3600, input: 7, latency: 400 }); // 30 hours ago: the previous 24h
+    await usage({ provider: "groq", model: "llama", ago: 31 * 3600, status: 400 }); // also the previous 24h
+    await usage({ provider: "groq", model: "llama", ago: 3 * 86_400, input: 9 }); // before both
+  });
+
+  it("counts failed requests (status 400 and up) and averages latency, in total and by group", async () => {
+    const s = await get("/usage/summary?period=24h");
+    expect(s.totals).toMatchObject({ requests: 4, errors: 2, latency_ms: 1400 }); // (1000 + 200 + 3000) / 3 timed
+    const gpt = s.by_model.find((m: { model: string }) => m.model === "gpt-5");
+    expect(gpt).toMatchObject({ requests: 3, errors: 1, latency_ms: 600 });
+    expect(s.by_provider.find((p: { provider: string }) => p.provider === "groq")).toMatchObject({ errors: 1, latency_ms: 3000 });
+    expect(s.by_system.find((x: { system_id: string }) => x.system_id === "xdevd")).toMatchObject({ errors: 1 });
+    expect(s.by_connection[0]).toHaveProperty("errors");
+  });
+
+  it("a group with no timed request has no latency", async () => {
+    await reset();
+    await addSystem("chat");
+    await usage({ provider: "openai", model: "gpt-5", ago: 10, latency: null });
+    const s = await get("/usage/summary?period=24h");
+    expect(s.totals.latency_ms).toBeNull();
+    expect(s.by_model[0].latency_ms).toBeNull();
+  });
+
+  it("totals the window of the same length just before the period, for the change", async () => {
+    const s = await get("/usage/summary?period=24h");
+    expect(s.previous).toMatchObject({ requests: 2, errors: 1, input_tokens: 7 });
+    expect(s.previous).toHaveProperty("cost");
+    expect(s.previous).toHaveProperty("latency_ms", 400);
+    expect((await get("/usage/summary?period=7d")).previous.requests).toBe(0);
+    expect((await get("/usage/summary?period=all")).previous).toBeNull();
+  });
+
+  it("today compares with yesterday up to the same time of day", async () => {
+    const tz = 0;
+    const midnight = Math.floor(now() / 86_400) * 86_400;
+    const sinceMidnight = now() - midnight;
+    await reset();
+    await addSystem("chat");
+    // Yesterday, an hour before this time of day (in), and an hour after it (out), when that is still yesterday.
+    await usage({ provider: "openai", model: "gpt-5", ago: 86_400 + 3600, input: 1 });
+    if (sinceMidnight + 3600 < 86_400) await usage({ provider: "openai", model: "gpt-5", ago: 86_400 - 3600, input: 2 });
+    const s = await get(`/usage/summary?period=today&tz=${tz}`);
+    if (sinceMidnight >= 3600) expect(s.previous).toMatchObject({ requests: 1, input_tokens: 1 });
+    else expect(s.previous.requests).toBe(0);
+  });
+
+  it("each chart bucket counts its failed requests", async () => {
+    const c = await get("/usage/chart?period=24h");
+    expect(c.buckets.reduce((n: number, b: { errors: number }) => n + b.errors, 0)).toBe(2);
+  });
+
+  it("the request list filters by model and by outcome", async () => {
+    const inputs = (r: { rows: { input_tokens: number }[] }) => r.rows.map((x) => x.input_tokens);
+    expect((await get("/usage/requests?model=gpt-5")).rows).toHaveLength(3);
+    expect((await get("/usage/requests?model=llama&status=ok")).rows.map((x: { status: number }) => x.status)).toEqual([200, 200]);
+    expect((await get("/usage/requests?status=error")).rows.map((x: { status: number }) => x.status).sort()).toEqual([400, 429, 500]);
+    expect(inputs(await get("/usage/requests?provider=openai&status=ok"))).toEqual([50, 100]);
+    expect((await admin("GET", "/usage/requests?status=maybe")).res.status).toBe(400);
+  });
+});

@@ -839,8 +839,9 @@ describe("usage", () => {
 
   it("shows the last 24 hours: totals, the cost estimate, and what is behind them", async () => {
     await openUsage();
-    // The total tile reads 4,010 input tokens; the breakdown opens by model, where gpt-5 has 4,000.
-    expect(await screen.findAllByText("4,010")).toHaveLength(1);
+    // Every token of the period in short form (4,010 in, 620 out, 30 + 240 cache), and the share read from the cache.
+    expect(await screen.findByText("4.9K")).toBeTruthy();
+    expect(screen.getByText("5.6%")).toBeTruthy();
     expect(calls.some((c) => c.url === "/admin/usage/summary?period=24h")).toBe(true);
     // The total, and the model that makes it up.
     expect(screen.getAllByText("~$3.60")).toHaveLength(2);
@@ -854,7 +855,7 @@ describe("usage", () => {
 
   it("loads another period when one is picked", async () => {
     await openUsage();
-    await screen.findAllByText("4,010");
+    await screen.findByText("4.9K");
     fireEvent.click(screen.getByRole("button", { name: t("usage.period.7d") }));
     await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/summary?period=7d")).toBe(true));
   });

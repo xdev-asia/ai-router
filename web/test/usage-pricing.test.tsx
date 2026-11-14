@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setAuth, type PriceRow, type UsageBucket } from "../api";
 import { resetLang, t } from "../i18n";
 import { PRICE_TARGET, Pricing, filterPrices, formatPrice } from "../pages/Pricing";
-import { Usage, allTokens, bucketValue, chartTicks } from "../pages/Usage";
+import { Usage, allTokens, bucketValue, cacheRate, chartTicks, formatChange, percentChange, requestQuery, successRate, toCsv } from "../pages/Usage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -78,8 +78,44 @@ describe("usage chart helpers", () => {
     expect(chartTicks(buckets.slice(0, 3), 86_400, "en").map((x) => x.index)).toEqual([0, 1, 2]);
   });
 
+  it("reads errors from a bucket, zero when the worker sent none", () => {
+    expect(bucketValue({ ...b(0, 3, 30, 0), errors: 2 }, "errors")).toBe(2);
+    expect(bucketValue(b(0, 3, 30, 0), "errors")).toBe(0);
+  });
+
   it("counts every token kind", () => {
     expect(allTokens({ ...TOKENS, requests: 1, input_tokens: 1, output_tokens: 2, cache_creation_input_tokens: 3, cache_read_input_tokens: 4, cost: null })).toBe(10);
+  });
+});
+
+describe("usage figures", () => {
+  const row = (over: Partial<typeof TOKENS & { requests: number; errors: number }>) => ({ ...TOKENS, requests: 0, cost: null, ...over });
+
+  it("rates the cache over the prompt and success over requests; no rate without a base", () => {
+    expect(cacheRate(row({ input_tokens: 75, cache_read_input_tokens: 25 }))).toBe(25);
+    expect(cacheRate(row({ output_tokens: 10 }))).toBeNull();
+    expect(successRate(row({ requests: 200, errors: 3 }))).toBe(98.5);
+    expect(successRate(row({ requests: 4 }))).toBe(100);
+    expect(successRate(row({}))).toBeNull();
+  });
+
+  it("compares with the period before only when there is one", () => {
+    expect(percentChange(150, 100)).toBe(50);
+    expect(percentChange(5, 0)).toBeNull();
+    expect(percentChange(5, null)).toBeNull();
+    expect(formatChange(50)).toBe("+50%");
+    expect(formatChange(-4.26)).toBe("−4.3%");
+    expect(formatChange(0.01)).toBe("0%");
+  });
+
+  it("writes CSV with quoted fields where needed", () => {
+    expect(toCsv([["name", "n"], ['a "b", c', 2], [null, 3]])).toBe(["name,n", '"a ""b"", c",2', ",3", ""].join(String.fromCharCode(13, 10)));
+  });
+
+  it("asks for requests with the filters in a fixed order", () => {
+    const none = { provider: "", model: "", system: "", status: "" as const, from: "", to: "" };
+    expect(requestQuery(none)).toBe("limit=100");
+    expect(requestQuery({ ...none, provider: "openai", model: " gpt-5 ", system: "chat", status: "error" })).toBe("limit=100&provider=openai&model=gpt-5&system=chat&status=error");
   });
 });
 
@@ -89,7 +125,8 @@ describe("usage overview", () => {
     const chart = await screen.findByRole("figure", { name: t("usage.chart.perHour", { metric: t("usage.metric.tokens") }) });
     expect(calls.some((c) => /^\/admin\/usage\/chart\?period=24h&tz=-?\d+$/.test(c.url))).toBe(true);
     expect(within(chart).getAllByText(/: 450$/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: t("usage.metric.cost") }));
+    // The breakdown table has a Cost column too; the picker is the chart card's.
+    fireEvent.click(within(screen.getByRole("region", { name: t("usage.chart.title") })).getByRole("button", { name: t("usage.metric.cost") }));
     const cost = await screen.findByRole("figure", { name: t("usage.chart.perHour", { metric: t("usage.metric.cost") }) });
     // The hour with no price says so instead of drawing $0.
     expect(within(cost).getAllByText(new RegExp(`: ${t("usage.chart.noPrice")}$`)).length).toBeGreaterThan(0);
@@ -115,6 +152,60 @@ describe("usage overview", () => {
     fireEvent.click(screen.getByRole("button", { name: t("usage.breakdown.key") }));
     const keys = screen.getByRole("table", { name: t("usage.breakdown.caption", { group: t("usage.breakdown.key") }) });
     expect(within(keys).getByText("Chat app")).toBeTruthy();
+  });
+
+  it("compares each total with the period before, and leaves the change out without one", async () => {
+    routes["GET /admin/usage/summary"] = () =>
+      json({
+        ...SUMMARY,
+        totals: { ...SUMMARY.totals, errors: 1, latency_ms: 900 },
+        previous: { ...SUMMARY.totals, requests: 2, errors: 0, latency_ms: 600 },
+      });
+    render(<Usage />);
+    // 4 requests against 2; one failed of four; slower than before.
+    expect(await screen.findByText("+100%")).toBeTruthy();
+    expect(screen.getByText("75%")).toBeTruthy();
+    expect(screen.getByText("+50%")).toBeTruthy();
+    expect(screen.getAllByText(t("usage.vsPrevious")).length).toBeGreaterThan(0);
+    cleanup();
+    routes["GET /admin/usage/summary"] = () => json({ ...SUMMARY, previous: null });
+    render(<Usage />);
+    await screen.findByRole("table", { name: t("usage.breakdown.caption", { group: t("usage.breakdown.model") }) });
+    expect(screen.queryByText(t("usage.vsPrevious"))).toBeNull();
+  });
+
+  it("opens Details narrowed to a breakdown row; an account row has no link", async () => {
+    routes["GET /admin/usage/requests"] = () => json({ rows: [] });
+    routes["GET /admin/systems"] = () => json([]);
+    render(<Usage />);
+    await screen.findByRole("table", { name: t("usage.breakdown.caption", { group: t("usage.breakdown.model") }) });
+    fireEvent.click(screen.getByRole("button", { name: t("usage.breakdown.account") }));
+    expect(screen.queryByRole("button", { name: t("usage.viewRequestsFor", { name: "Work · …a1b2" }) })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("usage.breakdown.model") }));
+    fireEvent.click(screen.getByRole("button", { name: t("usage.viewRequestsFor", { name: "gpt-5" }) }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100&provider=openai&model=gpt-5")).toBe(true));
+    expect((screen.getByLabelText(t("usage.filter.model")) as HTMLInputElement).value).toBe("gpt-5");
+    fireEvent.click(screen.getByRole("button", { name: t("usage.filter.clear") }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100")).toBe(true));
+  });
+
+  it("pages through requests with the last row's id, and filters by outcome", async () => {
+    const req = (id: number) => ({ id, at: 1_790_000_000 + id, provider: "openai", model: "gpt-5", system_id: "chat", status: 200, ...TOKENS, latency_ms: 100 });
+    routes["GET /admin/systems"] = () => json([]);
+    routes["GET /admin/usage/requests"] = () => {
+      const url = calls[calls.length - 1].url;
+      return json({ rows: url.includes("before=") ? [req(1)] : Array.from({ length: 100 }, (_, i) => req(200 - i)) });
+    };
+    render(<Usage />);
+    fireEvent.click(screen.getByRole("tab", { name: t("usage.tab.details") }));
+    expect(await screen.findByText(t("usage.shown", { n: "100" }))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: t("usage.loadMore") }));
+    expect(await screen.findByText(t("usage.shown", { n: "101" }))).toBeTruthy();
+    expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100&before=101")).toBe(true);
+    // A short page is the last one.
+    expect(screen.queryByRole("button", { name: t("usage.loadMore") })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("usage.filter.statusError") }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100&status=error")).toBe(true));
   });
 
   it("sends the owner's offset for today only", async () => {

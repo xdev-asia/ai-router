@@ -264,6 +264,10 @@ export interface UsageTokens {
   cache_read_input_tokens: number;
   /** US dollars, from the owner's prices; null when nothing in the group has a price. */
   cost: number | null;
+  /** Requests answered with status 400 or above. */
+  errors?: number;
+  /** Mean latency of the requests that recorded one; null when none did. */
+  latency_ms?: number | null;
 }
 
 export interface UsageRequest {
@@ -294,6 +298,8 @@ export interface UsageSummary {
   by_connection?: (UsageTokens & { connection_id: string | null; provider: string; name: string | null; hint: string | null; last_at: number | null })[];
   by_system: (UsageTokens & { system_id: string; name?: string | null; last_at?: number | null })[];
   recent: UsageRequest[];
+  /** The same span just before the period, for the change beside each total; null for "all". */
+  previous?: UsageTokens | null;
 }
 
 /** One bucket of the Usage chart: its start (unix seconds) and what it holds; cost null when nothing in it is priced. */
@@ -302,6 +308,7 @@ export interface UsageBucket {
   requests: number;
   tokens: number;
   cost: number | null;
+  errors?: number;
 }
 
 export interface UsageChart {

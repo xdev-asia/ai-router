@@ -338,19 +338,6 @@ body {
   min-width: 0;
 }
 
-/* Usage overview: the topology on two thirds and the latest requests beside it, stacked on narrow screens. */
-.usage-flow {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: var(--x-space-3);
-}
-
-@media (max-width: 1023.98px) {
-  .usage-flow {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 /* Pricing: search, provider and Add in a right column, as on Combos; row actions side by side; four prices two by two. */
 .pricing-tools {
   display: flex;
