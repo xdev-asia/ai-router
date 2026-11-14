@@ -19,6 +19,8 @@ Some files and data come from other open-source projects, among them [9router](h
 
 ## What it does
 
+![A request from a system's SDK through the gateway's checks to a provider, or to chatgpt.com through the Codex relay](docs/images/request-flow.svg)
+
 | Step | Rule |
 |---|---|
 | Authenticate | The system's gateway token in `x-api-key` (what the SDK sends) or `Authorization: Bearer`. Stored as SHA-256 only |
@@ -299,28 +301,42 @@ corepack pnpm run typecheck
 corepack pnpm run test        # Worker, in workerd with a fake upstream
 corepack pnpm run test:web    # console, jsdom
 corepack pnpm run build
-node --test relay/test/codex-relay.test.mjs   # Codex relay
+node --test relay/test/codex-relay.test.mjs docker/test/docker.test.mjs   # Codex relay, Docker helpers
 ```
 
 Local secrets go in `.dev.vars` (git-ignored).
 
 ### In Docker
 
-`wrangler dev` (workerd, local D1) in a container, on http://localhost:8787 only:
+`wrangler dev` (workerd, local D1) in a container, on http://localhost:8787 only. Nothing to build or set up:
 
 ```sh
-corepack pnpm run build      # the console, on the host (needs the GitHub Packages token)
-docker compose up --build    # .dev.vars is mounted read-only; the local D1 lives in a volume
+docker compose up -d
+docker compose exec ai-router cat /secrets/admin-token   # the console's admin token
 ```
 
-The stack has a second service, `codex-relay` ([Codex relay](#codex-relay)), reached by the Worker as
-`http://codex-relay:8790` and not published on this machine. It reads `RELAY_SECRET` from `.codex-relay.env`
-(git-ignored); put the same value in `.dev.vars`:
+| Service | What it does |
+|---|---|
+| `init` | First run only: makes `CONNECTIONS_KEY`, the admin token (the gateway gets its SHA-256) and the relay secret, in the `secrets` volume |
+| `ai-router` | The gateway, `ghcr.io/xdev-asia/ai-router`. Applies the D1 migrations on start; the local D1 lives in the `state` volume |
+| `codex-relay` | The [Codex relay](#codex-relay), `ghcr.io/xdev-asia/ai-router-relay`, reached as `http://codex-relay:8790`, no port on this machine |
+| `watchtower` | Checks ghcr.io every 5 minutes and restarts `ai-router` or `codex-relay` on a new image ([nicholas-fedor/watchtower](https://github.com/nicholas-fedor/watchtower), the maintained fork) |
+
+CI builds both images on every push to `main` (job `image` in `.github/workflows/ci.yml`), tagged `latest` and
+`sha-<commit>`, for amd64 and arm64. `docker compose up` pulls `latest` every time (`pull_policy: always`), and
+watchtower picks up later pushes. To stay on one build, set the image to a `sha-` tag and stop watchtower.
+
+Your own settings, both optional and git-ignored: `.dev.vars` (any name from [Secrets and setup](#secrets-and-setup),
+such as `PROVIDER_KEYS` or `ADMIN_TOKEN_SHA256`) and `.codex-relay.env` (`RELAY_SECRET`). A value there wins over the
+generated one; restart with `docker compose up -d` after a change. Keep `CODEX_RELAY_SECRET` in `.dev.vars` and
+`RELAY_SECRET` in `.codex-relay.env` equal, or set neither. `docker compose down -v` deletes the volumes: the D1, and the
+generated `CONNECTIONS_KEY`, without which the stored connections cannot be read.
+
+From this checkout instead of ghcr.io (the console from the host's `dist/`, which needs the GitHub Packages token):
 
 ```sh
-secret=$(openssl rand -base64 32)
-echo "RELAY_SECRET=$secret" > .codex-relay.env
-printf 'CODEX_RELAY_URL=http://codex-relay:8790\nCODEX_RELAY_SECRET=%s\n' "$secret" >> .dev.vars
+corepack pnpm run build
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 ```
 
 Port `1455` of this machine is mapped to the same Worker. Signing in to a Codex (ChatGPT) account needs it:
@@ -328,3 +344,40 @@ auth.openai.com sends the browser back to `http://localhost:1455/auth/callback`,
 Stop the Codex CLI's own sign-in first if it is running, since it listens on the same port.
 
 Not the production runtime (that is Cloudflare Workers).
+
+### On a Mac mini (Apple silicon), updated on every push
+
+![Push to main: CI tests, builds the arm64 and amd64 images to ghcr.io; watchtower on the Mac mini pulls them](docs/images/deploy-flow.svg)
+
+Delivery is pulled, not pushed: CI puts the images on ghcr.io (arm64 included) and watchtower on the Mac fetches
+them. The Mac opens no port, and GitHub needs no SSH key or runner on it.
+
+Once:
+
+1. Install Docker Desktop for Mac (Apple silicon) or OrbStack, and have it start at login. In System Settings, turn on
+   starting up after a power failure and keep the Mac from sleeping.
+2. Make the ghcr.io packages `ai-router` and `ai-router-relay` public (package settings, Change visibility). For
+   private ones, see below.
+3. On the Mac:
+
+   ```sh
+   mkdir -p ~/ai-router && cd ~/ai-router
+   curl -fsSLO https://raw.githubusercontent.com/xdev-asia/ai-router/main/compose.yaml
+   docker compose up -d
+   docker compose exec ai-router cat /secrets/admin-token
+   ```
+
+After that, a push to `main` reaches the Mac at most 5 minutes after the `image` job ends
+(`docker compose logs -f watchtower` shows each update). The stack comes back after a reboot once Docker is running
+(`restart: unless-stopped`). Watchtower swaps images, not `compose.yaml`: when that file changes, fetch it again and
+run `docker compose up -d`.
+
+| Need | How |
+|---|---|
+| Private packages | `docker login ghcr.io` with a token that has `read:packages`, and give watchtower the same in `REPO_USER` and `REPO_PASS` (a `compose.override.yaml` next to `compose.yaml`) |
+| Use it from other machines | The ports listen on the Mac's `127.0.0.1` only. Put a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) (`cloudflared`) or Tailscale in front of `http://localhost:8787` |
+| Codex sign-in from another machine | The browser must reach `localhost:1455`: `ssh -L 8787:localhost:8787 -L 1455:localhost:1455 <mac>`, then open `http://localhost:8787` |
+| Stay on one build | Set both images to a `sha-<commit>` tag and `docker compose stop watchtower` |
+
+A self-hosted GitHub Actions runner on the Mac would deploy without the 5-minute wait, but GitHub advises against
+self-hosted runners on public repositories: a pull request could run code on the Mac.

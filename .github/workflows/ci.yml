@@ -1,6 +1,6 @@
 name: ci
 
-# Checks on every PR and push. Deploy on push to main (and manual runs from main)
+# Checks on every PR and push. On main, the Docker images go to ghcr.io (job image). Deploy on push to main (and manual runs from main)
 # only once wrangler.jsonc has the real D1 id; until then the deploy job is skipped
 # with a notice. Secrets ANTHROPIC_KEYS and ADMIN_TOKEN_SHA256 are set on the
 # Worker with `wrangler secret put`, not here (see README.md).
@@ -36,7 +36,59 @@ jobs:
       - run: corepack pnpm run typecheck
       - run: corepack pnpm run test
       - run: corepack pnpm run test:web
+      - run: node --test relay/test/codex-relay.test.mjs docker/test/docker.test.mjs
       - run: corepack pnpm run build
+
+  # Docker images for compose.yaml, on ghcr.io: `latest` and `sha-<commit>`, for amd64 and arm64.
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ai-router
+            context: .
+          - image: ai-router-relay
+            context: relay
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The console's @xdev-asia/ui comes from GitHub Packages (Dockerfile, console-build).
+          secrets: |
+            npm_token=${{ secrets.NPM_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   deploy:
     needs: test

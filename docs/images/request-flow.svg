@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="960" viewBox="0 0 1200 960" role="img" aria-labelledby="title desc" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="14" fill="#1f2937">
+  <title id="title">One request through ai-router</title>
+  <desc id="desc">SDK clients send a gateway token to the Hono Worker. It authenticates the token by SHA-256, checks whether the system is disabled and over its monthly cap, selects a provider, combo and connection, optionally applies token savers, forwards the request and records usage in D1. The React owner console uses the Worker's Admin API. Codex requests go through a Node relay with a shared secret to chatgpt.com, which blocks Cloudflare Worker requests.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="960" fill="#ffffff"/>
+  <text x="32" y="43" font-size="24" font-weight="700">One request through ai-router</text>
+  <text x="32" y="70" fill="#4b5563">A metered inference request: gateway checks, routing, provider response and usage.</text>
+
+  <!-- Worker boundary and the ordered request pipeline. -->
+  <rect x="350" y="100" width="470" height="780" rx="18" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="376" y="134" font-size="18" font-weight="700">ai-router Worker</text>
+  <text x="794" y="134" text-anchor="end" fill="#4b5563">Hono</text>
+
+  <!-- Request arrows; replies follow the reverse network path. -->
+  <path d="M 292 200 H 376" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 585 236 V 254" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 585 316 V 334" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 585 416 V 434" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 585 524 V 542" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 585 624 V 642" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 585 714 V 762" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 794 678 H 842 V 468 H 880" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 842 678 H 880" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 1024 749 V 818" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1040" y="781" font-size="13" fill="#4b5563">forward</text>
+  <text x="602" y="743" font-size="13" fill="#4b5563">response / stream ends</text>
+
+  <!-- Administration and D1 reads/writes. -->
+  <path d="M 162 524 V 574" fill="none" stroke="#2563eb" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="176" y="555" font-size="13" fill="#4b5563">session cookie</text>
+  <path d="M 162 650 V 740" fill="none" stroke="#2563eb" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="176" y="698" font-size="13" fill="#4b5563">manage / query</text>
+  <path d="M 292 770 H 320 V 470 H 350" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 376 810 H 292" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="32" y="164" width="260" height="210" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="52" y="194" font-size="16" font-weight="700">Client systems</text>
+  <text x="52" y="225">Anthropic SDK</text>
+  <text x="52" y="249">OpenAI-compatible clients</text>
+  <text x="52" y="282" font-weight="600">Gateway token + base URL</text>
+  <text x="52" y="307" font-size="13" fill="#4b5563">x-api-key or Bearer auth</text>
+  <text x="52" y="334" font-size="13" fill="#4b5563">/anthropic · /openai/v1</text>
+  <text x="52" y="355" font-size="13" fill="#4b5563">/v1 aliases also supported</text>
+
+  <rect x="376" y="164" width="418" height="72" rx="10" fill="#ffffff" stroke="#2563eb"/>
+  <text x="394" y="192" font-size="16" font-weight="600">1  Authenticate</text>
+  <text x="394" y="216">SHA-256(token) lookup in D1; invalid → 401</text>
+
+  <rect x="376" y="254" width="418" height="62" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="394" y="280" font-size="16" font-weight="600">2  Disabled check</text>
+  <text x="394" y="302">Disabled system → 403</text>
+
+  <rect x="376" y="334" width="418" height="82" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="394" y="361" font-size="16" font-weight="600">3  Monthly token cap</text>
+  <text x="394" y="384">UTC month total ≥ cap → 429; no retry</text>
+  <text x="394" y="404" font-size="13" fill="#4b5563">Input + output + cache write + cache read</text>
+
+  <rect x="376" y="434" width="418" height="90" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="394" y="461" font-size="16" font-weight="600">4  Pick the route</text>
+  <text x="394" y="486">Provider / combo / connection</text>
+  <text x="394" y="508" font-size="13" fill="#4b5563">Check model permissions; choose account / key</text>
+
+  <rect x="376" y="542" width="418" height="82" rx="10" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="394" y="569" font-size="16" font-weight="600">5  Optional token savers</text>
+  <text x="394" y="593">RTK · Caveman · Ponytail</text>
+  <text x="394" y="613" font-size="13" fill="#4b5563">Off by default; optional Headroom on chat paths</text>
+
+  <rect x="376" y="642" width="418" height="72" rx="10" fill="#ffffff" stroke="#2563eb"/>
+  <text x="394" y="670" font-size="16" font-weight="600">6  Forward</text>
+  <text x="394" y="694">Use provider credentials; translate as needed</text>
+
+  <rect x="376" y="762" width="418" height="88" rx="10" fill="#ffffff" stroke="#2563eb"/>
+  <text x="394" y="790" font-size="16" font-weight="600">7  Record usage in D1</text>
+  <text x="394" y="814">Per attempt: model, status, tokens, latency</text>
+  <text x="394" y="836" font-size="13" fill="#4b5563">Streaming metered from a copy of the stream</text>
+
+  <rect x="32" y="432" width="260" height="92" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="52" y="462" font-size="16" font-weight="600">Owner console</text>
+  <text x="52" y="488">React · served at /</text>
+  <text x="52" y="510" font-size="13" fill="#4b5563">Systems, providers, usage, settings</text>
+  <rect x="32" y="574" width="260" height="76" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="52" y="605" font-size="16" font-weight="600">Admin API</text>
+  <text x="52" y="631">Worker · /admin/*</text>
+  <rect x="32" y="740" width="260" height="140" rx="12" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="52" y="768" font-size="16" font-weight="600">D1</text>
+  <text x="52" y="793">Systems + token hashes</text>
+  <text x="52" y="817">Connections + sealed keys</text>
+  <text x="52" y="841">Usage + routing settings</text>
+  <text x="52" y="865" font-size="13" fill="#4b5563">Reads: auth, cap checks, routing</text>
+
+  <rect x="880" y="164" width="288" height="164" rx="12" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="900" y="194" font-size="16" font-weight="600">Why a Codex relay?</text>
+  <text x="900" y="224">chatgpt.com refuses requests</text>
+  <text x="900" y="248">sent from a Cloudflare Worker:</text>
+  <text x="900" y="272">its Cf-Worker header triggers</text>
+  <text x="900" y="296">a 403 HTML block page.</text>
+  <rect x="880" y="398" width="288" height="140" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="900" y="429" font-size="16" font-weight="600">Upstream providers</text>
+  <text x="900" y="462">Anthropic</text>
+  <text x="900" y="488">OpenAI-compatible providers</text>
+  <text x="900" y="518" font-size="13" fill="#4b5563">Provider API key / account credentials</text>
+  <rect x="880" y="623" width="288" height="126" rx="12" fill="#ffffff" stroke="#2563eb"/>
+  <text x="900" y="652" font-size="16" font-weight="600">Codex → codex-relay</text>
+  <text x="900" y="679">Node · outside Cloudflare Workers</text>
+  <text x="900" y="704">POST /codex/responses</text>
+  <text x="900" y="730" font-size="13" fill="#4b5563">Shared secret checked: x-relay-secret</text>
+  <rect x="880" y="818" width="288" height="74" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="900" y="847" font-size="16" font-weight="600">chatgpt.com</text>
+  <text x="900" y="873" font-size="13">/backend-api/codex/responses</text>
+
+  <text x="32" y="921" font-size="13" fill="#4b5563">Replies return along the same network route. Retries / combo attempts are metered separately.</text>
+  <text x="32" y="943" font-size="13" fill="#4b5563">The cap is checked before forwarding; one request can exceed it. Anthropic count_tokens skips the cap check and usage record.</text>
+</svg>

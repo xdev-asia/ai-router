@@ -7,6 +7,7 @@
 //
 // No dependencies: Node 20+ (global fetch). It never logs a header or a body.
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
@@ -108,10 +109,24 @@ async function readBody(req, max) {
   return Buffer.concat(chunks);
 }
 
+/**
+ * The shared secret: RELAY_SECRET, else the contents of the file RELAY_SECRET_FILE names (Docker: generated on the
+ * first run, see compose.yaml). Undefined when neither is set; createRelay then refuses to start.
+ */
+export function relaySecret(env, read = (path) => readFileSync(path, "utf8")) {
+  if (env.RELAY_SECRET) return env.RELAY_SECRET;
+  if (!env.RELAY_SECRET_FILE) return undefined;
+  try {
+    return read(env.RELAY_SECRET_FILE).trim();
+  } catch {
+    throw new Error("RELAY_SECRET_FILE cannot be read");
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT ?? 8790);
   const host = process.env.HOST ?? "0.0.0.0";
-  const relay = createRelay({ secret: process.env.RELAY_SECRET, upstream: process.env.RELAY_UPSTREAM || CODEX_UPSTREAM });
+  const relay = createRelay({ secret: relaySecret(process.env), upstream: process.env.RELAY_UPSTREAM || CODEX_UPSTREAM });
   relay.listen(port, host, () => console.log(`codex relay on ${host}:${port}`));
   for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => relay.close(() => process.exit(0)));
 }

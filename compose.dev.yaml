@@ -1,0 +1,27 @@
+# Build the images from this checkout instead of pulling them from ghcr.io:
+#
+#   corepack pnpm run build                                        # dist/, on the host (needs the token)
+#   docker compose -f compose.yaml -f compose.dev.yaml up --build
+#
+# The console comes from the host's dist/ (Dockerfile: `console` build context). Watchtower stays off here: it
+# would swap the local build for the ghcr.io image.
+x-gateway-build: &gateway-build
+  context: .
+  additional_contexts:
+    console: ./dist
+
+services:
+  init:
+    build: *gateway-build
+    image: ai-router:dev
+    pull_policy: build
+  ai-router:
+    build: *gateway-build
+    image: ai-router:dev
+    pull_policy: build
+  codex-relay:
+    build: ./relay
+    image: ai-router-relay:dev
+    pull_policy: build
+  watchtower:
+    profiles: [watchtower]

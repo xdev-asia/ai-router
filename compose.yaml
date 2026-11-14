@@ -1,22 +1,71 @@
-# Local run of the gateway: `docker compose up --build`, then http://localhost:8787
+# The gateway on this machine: `docker compose up -d`, then http://localhost:8787
+#
+# Images come from ghcr.io, built by CI on every push to main. `up` pulls the latest ones, and watchtower
+# checks every 5 minutes and restarts a service on a new image. Data (local D1, first-run secrets) is in volumes.
+# Your own settings, both optional: .dev.vars for the gateway, .codex-relay.env for the relay (README, In Docker).
+# Build from source instead: compose.dev.yaml.
+name: ai-router
+
+x-updated: &updated
+  pull_policy: always
+  restart: unless-stopped
+  labels:
+    com.centurylinklabs.watchtower.enable: "true"
+
 services:
+  # First run only: makes CONNECTIONS_KEY, the relay secret and the admin token in the `secrets` volume.
+  init:
+    image: ghcr.io/xdev-asia/ai-router:latest
+    pull_policy: always
+    command: ["node", "docker/secrets.mjs", "/secrets"]
+    volumes:
+      - secrets:/secrets
+
   ai-router:
-    build: .
+    <<: *updated
+    image: ghcr.io/xdev-asia/ai-router:latest
     ports:
       - "127.0.0.1:8787:8787"
       # Codex sign-in: auth.openai.com sends the browser back to http://localhost:1455/auth/callback.
       - "127.0.0.1:1455:8787"
+    env_file:
+      - path: .dev.vars
+        required: false
     volumes:
-      - ./.dev.vars:/app/.dev.vars:ro
-      # Local D1 (systems, usage, console sessions) survives restarts.
+      - secrets:/secrets:ro
       - state:/app/.wrangler/state
     depends_on:
-      - codex-relay
+      init:
+        condition: service_completed_successfully
+
   # chatgpt.com refuses requests from a Worker (Cf-Worker header), so Codex goes through this relay.
   # Reached as http://codex-relay:8790 from ai-router only: no port on the host.
   codex-relay:
-    build: ./relay
-    env_file: .codex-relay.env
+    <<: *updated
+    image: ghcr.io/xdev-asia/ai-router-relay:latest
+    environment:
+      RELAY_SECRET_FILE: /secrets/relay-secret
+    env_file:
+      - path: .codex-relay.env
+        required: false
+    volumes:
+      - secrets:/secrets:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  # Pulls new images of the services labelled above and restarts them. The original containrrr/watchtower is
+  # no longer maintained; this is the maintained fork.
+  watchtower:
+    image: ghcr.io/nicholas-fedor/watchtower:latest
     restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   state:
+  secrets:

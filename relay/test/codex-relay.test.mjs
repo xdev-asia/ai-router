@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
-import { createRelay } from "../codex-relay.mjs";
+import { createRelay, relaySecret } from "../codex-relay.mjs";
 
 const SECRET = "test-relay-secret-0123456789abcdef";
 
@@ -169,6 +169,18 @@ describe("codex relay set-up", () => {
   it("refuses a secret shorter than 32 characters", () => {
     assert.throws(() => createRelay({ secret: "short" }), /RELAY_SECRET/);
     assert.throws(() => createRelay({ secret: undefined }), /RELAY_SECRET/);
+  });
+
+  it("takes RELAY_SECRET, else the file RELAY_SECRET_FILE names", () => {
+    const files = { "/secrets/relay-secret": SECRET + "\n" };
+    const read = (path) => {
+      if (!(path in files)) throw new Error("ENOENT");
+      return files[path];
+    };
+    assert.equal(relaySecret({ RELAY_SECRET: "from-env", RELAY_SECRET_FILE: "/secrets/relay-secret" }, read), "from-env");
+    assert.equal(relaySecret({ RELAY_SECRET_FILE: "/secrets/relay-secret" }, read), SECRET);
+    assert.equal(relaySecret({}, read), undefined);
+    assert.throws(() => relaySecret({ RELAY_SECRET_FILE: "/missing" }, read), /RELAY_SECRET_FILE/);
   });
 
   it("answers 502 when the upstream cannot be reached", async () => {

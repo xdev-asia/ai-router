@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1140" viewBox="0 0 1200 1140" role="img" aria-labelledby="title desc" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="14" fill="#1f2937">
+  <title id="title">Continuous delivery to a Mac mini</title>
+  <desc id="desc">A push to main runs GitHub Actions test, then image builds linux/amd64 and linux/arm64 images and pushes latest and sha-commit tags to GHCR. A Docker Compose stack on an Apple silicon Mac mini runs init, ai-router, codex-relay and Watchtower. Init creates secrets once. The gateway keeps local D1 in a volume. Watchtower makes outbound GHCR polls every 300 seconds, pulls new latest images and restarts only labelled gateway and relay services. Ports bind to localhost only. An optional cloudflared tunnel provides outside access. A separate deploy job depends on test, skips deployment while the D1 id is REPLACE_ME, otherwise builds, applies remote D1 migrations and deploys to Cloudflare Workers.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#2563eb"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="1140" fill="#ffffff"/>
+  <text x="32" y="43" font-size="24" font-weight="700">Continuous delivery to a Mac mini</text>
+  <text x="32" y="70" fill="#4b5563">GitHub publishes images; the home server pulls updates over outbound connections.</text>
+
+  <rect x="32" y="98" width="1136" height="248" rx="18" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="56" y="129" font-size="16" font-weight="700">GitHub Actions · ci.yml</text>
+  <path d="M 216 230 H 260" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 502 230 H 546" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 822 230 H 866" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="56" y="158" width="160" height="152" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="76" y="199" font-size="16" font-weight="600">Push to main</text>
+  <text x="76" y="228" font-size="13" fill="#4b5563">Also: manual run</text>
+  <text x="76" y="250" font-size="13" fill="#4b5563">from main</text>
+  <rect x="260" y="158" width="242" height="152" rx="12" fill="#ffffff" stroke="#2563eb"/>
+  <text x="280" y="187" font-size="16" font-weight="600">Job: test</text>
+  <text x="280" y="215">Typecheck</text>
+  <text x="280" y="239">Worker + console tests</text>
+  <text x="280" y="263">Relay + Docker helper tests</text>
+  <text x="280" y="287">Build</text>
+  <rect x="546" y="158" width="276" height="152" rx="12" fill="#ffffff" stroke="#2563eb"/>
+  <text x="566" y="187" font-size="16" font-weight="600">Job: image</text>
+  <text x="566" y="215">Needs test to pass</text>
+  <text x="566" y="239">Build + push both images</text>
+  <text x="566" y="263">linux/amd64 + linux/arm64</text>
+  <text x="566" y="287" font-size="13" fill="#4b5563">Buildx + QEMU</text>
+  <rect x="866" y="146" width="278" height="176" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="886" y="175" font-size="16" font-weight="600">GHCR</text>
+  <text x="886" y="203">ghcr.io/xdev-asia/</text>
+  <text x="886" y="228" font-weight="600">ai-router</text>
+  <text x="886" y="252" font-weight="600">ai-router-relay</text>
+  <text x="886" y="283">Tags: latest · sha-&lt;commit&gt;</text>
+  <text x="886" y="306" font-size="13" fill="#4b5563">Multi-architecture images</text>
+
+  <rect x="32" y="396" width="1136" height="480" rx="18" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="56" y="428" font-size="18" font-weight="700">Home server · Apple silicon Mac mini</text>
+  <text x="56" y="451" fill="#4b5563">Docker compose stack · linux/arm64 · outbound connections only; no public inbound port</text>
+
+  <!-- The poll/pull is initiated on the Mac, not by GitHub. -->
+  <path d="M 1042 486 V 322" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1028" y="376" text-anchor="end" font-size="13" fill="#4b5563">Outbound GHCR poll / pull · every 5 min</text>
+
+  <!-- Init dependencies, volume mounts and service calls. -->
+  <path d="M 266 530 H 310 V 474 H 788 V 486" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 474 474 V 486" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 161 606 V 658" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="175" y="639" font-size="13" fill="#4b5563">create once</text>
+  <path d="M 266 708 H 294 V 590 H 334" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 474 626 V 680" fill="none" stroke="#2563eb" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="488" y="657" font-size="13" fill="#4b5563">persist</text>
+  <path d="M 614 553 H 678" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="646" y="540" text-anchor="middle" font-size="13" fill="#4b5563">Codex</text>
+
+  <!-- Watchtower controls only the two labelled services. -->
+  <path d="M 938 560 H 920 V 648 H 806 V 626" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 938 580 H 928 V 668 H 590 V 626" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="56" y="486" width="210" height="120" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="76" y="514" font-size="16" font-weight="600">init</text>
+  <text x="76" y="540">Makes secrets once</text>
+  <text x="76" y="564" font-size="13" fill="#4b5563">Both services wait for</text>
+  <text x="76" y="585" font-size="13" fill="#4b5563">successful completion</text>
+  <rect x="56" y="658" width="210" height="112" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="76" y="686" font-size="16" font-weight="600">secrets volume</text>
+  <text x="76" y="712" font-size="13">Connection encryption key</text>
+  <text x="76" y="734" font-size="13">Admin token + relay secret</text>
+  <text x="76" y="756" font-size="13" fill="#4b5563">Services mount read-only</text>
+
+  <rect x="334" y="486" width="280" height="140" rx="12" fill="#ffffff" stroke="#2563eb"/>
+  <text x="354" y="515" font-size="16" font-weight="600">ai-router · :8787</text>
+  <text x="354" y="542">wrangler dev / workerd</text>
+  <text x="354" y="566">Applies local D1 migrations</text>
+  <text x="354" y="590" font-size="13" fill="#4b5563">Host ports: 8787 + 1455, loopback only</text>
+  <text x="354" y="612" font-size="13" fill="#4b5563">Watchtower label: enabled</text>
+  <rect x="334" y="680" width="280" height="90" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="354" y="709" font-size="16" font-weight="600">state volume · local D1</text>
+  <text x="354" y="736" font-size="13">/app/.wrangler/state</text>
+  <text x="354" y="757" font-size="13" fill="#4b5563">Survives container replacement</text>
+
+  <rect x="678" y="486" width="220" height="140" rx="12" fill="#ffffff" stroke="#2563eb"/>
+  <text x="698" y="515" font-size="16" font-weight="600">codex-relay</text>
+  <text x="698" y="542">Node · internal :8790</text>
+  <text x="698" y="566" font-size="13">Reads shared secrets volume</text>
+  <text x="698" y="590" font-size="13" fill="#4b5563">No host port exposed</text>
+  <text x="698" y="612" font-size="13" fill="#4b5563">Watchtower label: enabled</text>
+
+  <rect x="938" y="486" width="206" height="200" rx="12" fill="#ffffff" stroke="#2563eb"/>
+  <text x="956" y="515" font-size="16" font-weight="600">watchtower</text>
+  <text x="956" y="543">Poll interval: 300 s</text>
+  <text x="956" y="570">Pull new latest images</text>
+  <text x="956" y="594">Restart labelled services</text>
+  <text x="956" y="623" font-size="13" fill="#4b5563">Via Docker socket</text>
+  <text x="956" y="647" font-size="13" fill="#4b5563">Label selection enabled</text>
+  <text x="956" y="671" font-size="13" fill="#4b5563">Clean up old images</text>
+
+  <!-- Optional host-side access, not an invented Compose service. -->
+  <path d="M 678 750 H 646 V 596 H 614" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+  <rect x="678" y="720" width="466" height="88" rx="12" fill="#ffffff" stroke="#9ca3af" stroke-dasharray="5 5"/>
+  <text x="698" y="748" font-size="16" font-weight="600">Optional: cloudflared tunnel</text>
+  <text x="698" y="773">Outside access → http://localhost:8787</text>
+  <text x="698" y="795" font-size="13" fill="#4b5563">Outbound tunnel; configure separately from compose.yaml</text>
+  <text x="56" y="831" font-size="13" fill="#4b5563">docker compose up -d pulls latest initially. Later updates are pulled by Watchtower; GitHub does not connect to the Mac.</text>
+  <text x="56" y="854" font-size="13" fill="#4b5563">Watchtower replaces images. Changes to compose.yaml must be fetched and applied separately.</text>
+
+  <!-- Independent Cloudflare deployment lane. -->
+  <rect x="32" y="910" width="1136" height="206" rx="18" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="56" y="940" font-size="16" font-weight="700">Separate Cloudflare path</text>
+  <text x="358" y="940" font-size="13" fill="#4b5563">After test succeeds · runs independently of image · main pushes / manual runs</text>
+  <path d="M 306 1026 H 354" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 754 1026 H 800" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="56" y="960" width="250" height="132" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="76" y="989" font-size="16" font-weight="600">Job: deploy</text>
+  <text x="76" y="1016">Check wrangler.jsonc</text>
+  <text x="76" y="1041" font-size="13" fill="#4b5563">Deployment skipped until the</text>
+  <text x="76" y="1063" font-size="13" fill="#4b5563">D1 id replaces REPLACE_ME</text>
+  <rect x="354" y="960" width="400" height="132" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="374" y="989" font-size="16" font-weight="600">When the D1 id is configured</text>
+  <text x="374" y="1016">Build console</text>
+  <text x="374" y="1041">Apply remote D1 migrations</text>
+  <text x="374" y="1066">wrangler deploy</text>
+  <rect x="800" y="960" width="344" height="132" rx="12" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="820" y="998" font-size="16" font-weight="600">Cloudflare Workers + D1</text>
+  <text x="820" y="1026">Hosted Worker + remote database</text>
+  <text x="820" y="1053" font-size="13" fill="#4b5563">Independent of the Mac's local D1</text>
+</svg>
