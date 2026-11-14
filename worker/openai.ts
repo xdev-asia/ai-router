@@ -1,9 +1,11 @@
 import { Hono, type Context } from "hono";
 import type { AppEnv } from "./env";
-import { candidatesFor } from "./connections";
-import { allowedPatterns, allows } from "./providers";
+import { mediaRoutes } from "./media";
+import { listModels } from "./models";
 import { checkSystem, type GateFailure, type Upstream } from "./proxy";
-import { ANTHROPIC_VERSION, errorResponse, runChat } from "./route";
+import { runResponses } from "./responses";
+import { errorResponse, runChat } from "./route";
+import { webToolRoutes } from "./web-tools";
 
 const GATE_TYPE: Record<GateFailure["kind"], [string, string]> = {
   authentication: ["invalid_request_error", "invalid_api_key"],
@@ -35,53 +37,33 @@ export function openaiRoutes(upstream: Upstream): Hono<AppEnv> {
     return runChat(c, upstream, g.system, body as Record<string, unknown>);
   });
 
-  /** Claude models (from Anthropic), then the combos and exact provider/model entries this system may use. */
+  /** The Responses API, for Codex CLI and other clients that speak only it (responses.ts). */
+  r.post("/v1/responses", async (c) => {
+    const g = await checkSystem(c.env, c.req.raw, true);
+    if (!g.ok) return gateError(g);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return errorResponse(400, "body must be JSON", "invalid_request_error");
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return errorResponse(400, "body must be a JSON object", "invalid_request_error");
+    return runResponses(c, upstream, g.system, body as Record<string, unknown>);
+  });
+
+  /** What this system may call (models.ts listModels). */
   const models = async (c: Context<AppEnv>) => {
     const g = await checkSystem(c.env, c.req.raw, false);
     if (!g.ok) return gateError(g);
-    const patterns = allowedPatterns(g.system.allowed_models);
-    const data: { id: string; object: "model"; created: number; owned_by: string }[] = [];
-
-    let key: string | null = null;
-    if (allows(patterns, "anthropic/")) {
-      for (const cand of await candidatesFor(c.env, "anthropic", g.system.id, Math.floor(Date.now() / 1000))) {
-        const k = await cand.key();
-        if (typeof k === "string") {
-          key = k;
-          break;
-        }
-      }
-    }
-    if (key) {
-      const up = await upstream(
-        new Request(c.env.ANTHROPIC_BASE_URL.replace(/\/+$/, "") + "/v1/models?limit=1000", {
-          headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION },
-        }),
-      );
-      if (up.ok) {
-        const list = (await up.json()) as { data?: { id?: unknown; created_at?: unknown }[] };
-        for (const m of list.data ?? []) {
-          if (typeof m.id !== "string" || !allows(patterns, `anthropic/${m.id}`)) continue;
-          const created = typeof m.created_at === "string" ? Math.floor(Date.parse(m.created_at) / 1000) || 0 : 0;
-          data.push({ id: m.id, object: "model", created, owned_by: "anthropic" });
-        }
-      }
-    }
-    const combos = await c.env.DB.prepare("SELECT name, updated_at FROM combo ORDER BY name").all<{ name: string; updated_at: number }>();
-    for (const cb of combos.results) {
-      if (allows(patterns, `combo/${cb.name}`)) data.push({ id: `combo/${cb.name}`, object: "model", created: cb.updated_at, owned_by: "gateway" });
-    }
-    for (const p of patterns) {
-      if (!p.includes("*") && !p.startsWith("combo/") && !p.startsWith("anthropic/")) {
-        data.push({ id: p, object: "model", created: 0, owned_by: p.slice(0, p.indexOf("/")) });
-      }
-    }
-    return Response.json({ object: "list", data }, { headers: { "cache-control": "no-store" } });
+    return Response.json({ object: "list", data: await listModels(c.env, upstream, g.system) }, { headers: { "cache-control": "no-store" } });
   };
   r.get("/v1/models", models);
-  // 9router answers GET /v1 with the model list too.
+  // GET /v1 answers with the model list too.
   r.get("/v1", models);
 
-  r.all("*", () => errorResponse(404, "this gateway serves /v1/chat/completions and /v1/models here", "invalid_request_error", "not_found"));
+  mediaRoutes(r, upstream, gateError);
+  webToolRoutes(r, upstream, gateError);
+
+  r.all("*", () => errorResponse(404, "this gateway serves /v1/chat/completions, /v1/responses, /v1/models, media (/v1/embeddings, /v1/images/generations, /v1/videos, /v1/audio/*) and /v1/search, /v1/fetch here", "invalid_request_error", "not_found"));
   return r;
 }

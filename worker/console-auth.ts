@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { sha256hex } from "./auth";
+import { isAdmin, sha256hex } from "./auth";
 import type { AppEnv, Env } from "./env";
 
 /** Sends a request to the OpenID provider (xDev ID). `fetch` in production; a fake in tests. */
@@ -10,10 +10,8 @@ export const LOGIN_COOKIE = "__Host-xllm_login";
 const SESSION_TTL_S = 12 * 3600;
 const LOGIN_TTL_S = 10 * 60;
 
-export interface ConsoleUser {
-  email: string;
-  name: string;
-}
+/** Who holds a console session: an xDev ID user, or the owner who signed in with the admin token. */
+export type ConsoleUser = { email: string; name: string } | { admin: true };
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -48,11 +46,41 @@ const configured = (env: Env) => Boolean(env.OIDC_ISSUER && env.OIDC_CLIENT_ID &
 export async function consoleUser(env: Env, req: Request): Promise<ConsoleUser | null> {
   const token = cookie(req, SESSION_COOKIE);
   if (!token) return null;
-  const row = await env.DB.prepare("SELECT email, name FROM console_session WHERE token_sha256 = ? AND expires_at > ?")
+  const row = await env.DB.prepare("SELECT email, name, admin_key FROM console_session WHERE token_sha256 = ? AND expires_at > ?")
     .bind(await sha256hex(token), now())
-    .first<ConsoleUser>();
+    .first<{ email: string; name: string; admin_key: string | null }>();
+  if (!row) return null;
+  if (row.admin_key !== null) {
+    // Opened with the admin token: ends once that token is changed or removed.
+    const key = await adminKey(env);
+    return key !== null && key === row.admin_key ? { admin: true } : null;
+  }
   // Removed from CONSOLE_EMAILS since signing in: no longer allowed.
-  return row && consoleEmails(env).includes(row.email) ? row : null;
+  return consoleEmails(env).includes(row.email) ? { email: row.email, name: row.name } : null;
+}
+
+/** Fingerprint of the current admin token (a hash of its hash), or null while none is set. */
+async function adminKey(env: Env): Promise<string | null> {
+  const h = env.ADMIN_TOKEN_SHA256;
+  return h !== undefined && /^[0-9a-f]{64}$/.test(h) ? sha256hex(h) : null;
+}
+
+/** Stores a new console session (only its SHA-256) and sets its cookie. */
+async function openSession(c: Ctx, row: { email: string; name: string; adminKey: string | null }): Promise<void> {
+  const env = c.env;
+  const token = random();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM console_session WHERE expires_at <= ?").bind(now()),
+    env.DB.prepare("INSERT INTO console_session (token_sha256, email, name, created_at, expires_at, admin_key) VALUES (?, ?, ?, ?, ?, ?)").bind(
+      await sha256hex(token),
+      row.email,
+      row.name,
+      now(),
+      now() + SESSION_TTL_S,
+      row.adminKey,
+    ),
+  ]);
+  c.header("set-cookie", setCookie(SESSION_COOKIE, token, SESSION_TTL_S), { append: true });
 }
 
 /** A browser request from this site's own pages (cookie-authenticated writes must be). */
@@ -184,20 +212,21 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     const email = info.email.toLowerCase();
     if (info.email_verified !== true || !consoleEmails(env).includes(email)) return back(c, "not_allowed");
 
-    const token = random();
     const name = typeof info.name === "string" && info.name.trim() ? info.name.trim().slice(0, 100) : email;
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM console_session WHERE expires_at <= ?").bind(now()),
-      env.DB.prepare("INSERT INTO console_session (token_sha256, email, name, created_at, expires_at) VALUES (?, ?, ?, ?, ?)").bind(
-        await sha256hex(token),
-        email,
-        name,
-        now(),
-        now() + SESSION_TTL_S,
-      ),
-    ]);
-    c.header("set-cookie", setCookie(SESSION_COOKIE, token, SESSION_TTL_S), { append: true });
+    await openSession(c, { email, name, adminKey: null });
     return back(c);
+  });
+
+  /**
+   * The admin token sign-in: `Authorization: Bearer <admin token>` from the console's own page buys a
+   * session cookie, so the page never keeps the token and a reload stays signed in.
+   */
+  a.post("/token", async (c) => {
+    if (!sameOrigin(c.req.raw)) return c.json({ error: "forbidden" }, 403);
+    const key = await adminKey(c.env);
+    if (key === null || !(await isAdmin(c.env, c.req.raw))) return c.json({ error: "unauthorized" }, 401);
+    await openSession(c, { email: "", name: "", adminKey: key });
+    return c.json({ admin: true });
   });
 
   /** Who is signed in (with xDev ID), for the console; 401 otherwise. Also says whether sign-in is set up. */

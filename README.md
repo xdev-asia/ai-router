@@ -1,4 +1,4 @@
-# xDev LLM gateway
+# xDev AI Router
 
 One place that holds the provider keys for every xDev system (chat, `xdevd`, ...). A Cloudflare Worker (Hono)
 backed by D1, with an owner console built from `@xdev-asia/ui`.
@@ -11,15 +11,11 @@ import Anthropic from "@anthropic-ai/sdk";
 const client = new Anthropic({ apiKey: process.env.LLM_GATEWAY_TOKEN, baseURL: "https://<gateway host>/anthropic" });
 ```
 
-## Where the ideas come from
+## Credits
 
-The feature set and the console's layout follow [9router](https://github.com/decolua/9router) (MIT): provider
-connections with fallback between accounts, round robin, combos, token savers, usage, and the Providers pages.
-The code here is written anew for a Cloudflare Worker, D1 and `@xdev-asia/ui`, with two exceptions that are
-9router's own files or data: the token-saver filters under `worker/savers/vendor/` (see
-`worker/savers/THIRD_PARTY_NOTICES.md`); the names, colours, base URLs and key pages of the providers in
-`worker/providers.ts`; and the provider logos in `web/public/providers/` (128 px PNG). The logos are trademarks of
-their owners and are used only to name each provider. `docs/9router/` holds screenshots of its dashboard and a page-by-page comparison.
+Some files and data come from other open-source projects, among them [9router](https://github.com/decolua/9router)
+(MIT): the token-saver filters, the model catalog, default prices, provider data and logo files.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists each one with its license.
 
 ## What it does
 
@@ -80,7 +76,10 @@ Two ways in:
   `CONSOLE_EMAILS` gets a session: a random token in a `__Host-xllm_session` cookie (Secure, HttpOnly,
   SameSite=Lax, 12 hours), stored as its SHA-256 in `console_session`. The state is bound to the browser by
   a `__Host-xllm_login` cookie and is single use. Writes with the cookie must be same-origin.
-- **The admin token**, kept in page memory only, never in storage or a cookie, so a reload signs out.
+- **The admin token**, sent once from the sign-in page to `POST /auth/token` (same-origin only), which opens
+  the same kind of session cookie (12 hours). The row keeps a hash of `ADMIN_TOKEN_SHA256` in
+  `console_session.admin_key`, so a new or removed admin token ends these sessions. The page never stores
+  the token, and a reload stays signed in.
 
 ## OpenAI-compatible endpoint, providers and combos
 
@@ -91,15 +90,15 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 
 | `model` | Goes to |
 |---|---|
-| `claude-*` or `anthropic/<model>` | Anthropic, translated to the Messages API (idea from 9router's translator, MIT; written anew) |
-| `<provider>/<model>`: `openai`, `gemini`, `openrouter`, `deepseek`, `groq`, and 41 more OpenAI-compatible providers (`mistral`, `cerebras`, `together`, `fireworks`, ...; `GET /admin/providers` lists them) | that provider's API with a key from its connections or from `PROVIDER_KEYS`; the body is passed on with the bare model name. The 41 added ones take their base URLs from 9router's registry and have not been called against the live services here |
+| `claude-*` or `anthropic/<model>` | Anthropic, translated to the Messages API |
+| `<provider>/<model>`: `openai`, `gemini`, `openrouter`, `deepseek`, `groq`, and 41 more OpenAI-compatible providers (`mistral`, `cerebras`, `together`, `fireworks`, ...; `GET /admin/providers` lists them) | that provider's API with a key from its connections or from `PROVIDER_KEYS`; the body is passed on with the bare model name. The 41 added ones take their base URLs from a third-party registry ([notices](THIRD_PARTY_NOTICES.md)) and have not been called against the live services here |
 | `combo/<name>` | the combo's targets in order (below) |
+| `<custom id>/<model>` | a custom provider the owner added (`/admin/custom-providers`): an OpenAI-compatible base URL (with its version path, e.g. `https://host/v1`) or an Anthropic-compatible host. Reached through the chat paths; `/anthropic/v1/messages` still goes to Anthropic only |
 
 ## Subscription logins
 
-So far one: **Codex**, a ChatGPT account used the way the Codex CLI uses it (the idea of 9router's Codex provider,
-written anew; the CLI's instructions text is vendored in `worker/vendor/`). Call it as `codex/<model>` on
-`/openai/v1`.
+**Codex**, a ChatGPT account used the way the Codex CLI uses it (the CLI's instructions text is vendored in
+`worker/vendor/`). Call it as `codex/<model>` on `/openai/v1`.
 
 - **Sign in** from the console (Providers, OpenAI Codex, Add connection): the provider's sign-in page opens in a
   new tab (authorization code with PKCE at auth.openai.com, the Codex CLI's public client id). The browser comes
@@ -116,9 +115,12 @@ written anew; the CLI's instructions text is vendored in `worker/vendor/`). Call
   closed. The console says so on the provider's page.
 - Tried against the real service on 2026-11-12, through the relay, plain and `stream: true`, with `codex/gpt-5.6-luna`
   and `codex/gpt-6.1-sol`. The backend refuses older ids for a ChatGPT account (`gpt-5.2-codex`: 400
-  `model_not_found`); the list changes, and 9router's Codex provider tracks it. The tests use a fake upstream.
+  `model_not_found`); the list changes. The tests use a fake upstream.
 
-Other subscription logins (Claude Pro/Max, Gemini CLI, Copilot...) are not built yet.
+Other subscription logins are on the Providers page too (Claude, Gemini CLI, Antigravity, Kilo Code, Kimi, Muse
+Code, Nous, MiniMax Code). They are tested against fake upstreams only, not against the real services; Gemini CLI
+and Antigravity need Google OAuth client values in the environment. Each provider's terms may not allow its
+subscription to be used outside its own tools.
 
 ### Codex relay
 
@@ -149,7 +151,7 @@ Tried so far in Docker (below) only. Deno, Vercel and other hosts are not tried.
 
 ## Connections: several accounts per provider
 
-The idea of 9router's provider connections (MIT), written anew. A connection is one account at a provider, added
+A connection is one account at a provider, added
 from the console or with `POST /admin/connections`. Its key is sealed with AES-256-GCM under `CONNECTIONS_KEY`
 before it reaches D1, and no API answer returns it: only its last 4 characters (`hint`, for keys of 12 characters
 or more).
@@ -189,20 +191,30 @@ usage (to meter) and drops that chunk when the client did not ask for it.
 | Call | |
 |---|---|
 | `POST /openai/v1/chat/completions` | as above |
+| `POST /openai/v1/responses` | the Responses API (Codex CLI, `wire_api = "responses"`), translated to chat and routed as above; text, images, function tools and results, streaming `response.*` events. Nothing is stored: `previous_response_id` is refused with `400` |
 | `GET /openai/v1/models`, `GET /openai/v1` | allowed Claude models, allowed combos, and exact `provider/model` entries of the allow-list |
 
-**9router's paths.** The same calls also answer at `/v1` with no provider prefix, as in 9router:
+**Paths with no provider prefix.** The same calls also answer at `/v1`:
 `baseURL: "https://<host>/v1"` works for both SDKs.
 
 | Path | Same as |
 |---|---|
-| `POST /v1/chat/completions`, `GET /v1/models`, `GET /v1` | `/openai/v1/...` |
-| `POST /v1/messages`, `POST /v1/messages/count_tokens` | `/anthropic/v1/...` (Anthropic only; 9router also translates these to other providers) |
+| `POST /v1/chat/completions`, `POST /v1/responses`, `GET /v1/models`, `GET /v1` | `/openai/v1/...` |
+| `POST /v1/messages`, `POST /v1/messages/count_tokens` | `/anthropic/v1/...` (Anthropic only) |
 | `/v1/v1/*` | `/v1/*` |
 | `GET /api/health` | `GET /health` |
 
-Any origin may call `/v1/*` from a browser (CORS `*`, as in 9router); the gateway token is still required. The admin
+Any origin may call `/v1/*` from a browser (CORS `*`); the gateway token is still required. The admin
 API and `/openai`, `/anthropic` send no CORS headers.
+
+**Gemini API.** `POST /v1beta/models/{model}:generateContent` and `:streamGenerateContent` (Gemini CLI, Google GenAI
+SDKs), with the gateway token in `x-goog-api-key` or `?key=`. `{model}` is any model name above (`/` may be `%2F`); the
+request is translated to chat and routed as above. Only images are accepted as media; `countTokens` and
+`embedContent` are not implemented. A `?key=` is never passed on to a provider.
+
+**Vision adapter.** When on (Combos page, `/admin/vision-adapter`), a request with images to a model matching its `applies_to` patterns
+first has each image described by the adapter models, and the text replaces the image. If none can describe
+it the answer is `502 vision_adapter_failed`. Only the OpenAI-shaped paths use it.
 
 Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of the gateway's own refusals:
 `invalid_api_key`, `system_disabled`, `monthly_token_cap`, `model_not_found`, `model_not_allowed`, `not_configured`.
@@ -220,8 +232,8 @@ has it on. The gateway-wide setting also has two things a system cannot set:
 
 Per system:
 
-Ported from 9router (MIT), which ports RTK (Apache-2.0) and adapts Caveman (Apache-2.0) and Ponytail (MIT); see
-`worker/savers/THIRD_PARTY_NOTICES.md`. Set with `PATCH /admin/systems/:id`:
+Built on RTK (Apache-2.0), Caveman (Apache-2.0) and Ponytail (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Set with `PATCH /admin/systems/:id`:
 
 | Field | Effect |
 |---|---|
@@ -230,8 +242,8 @@ Ported from 9router (MIT), which ports RTK (Apache-2.0) and adapts Caveman (Apac
 | `ponytail: "lite" \| "full" \| "ultra"` | Appends a "minimal code, YAGNI first" instruction to the system prompt |
 
 With all off the request bytes go upstream unchanged. One request can opt out with `x-gateway-token-saver: off`.
-Each usage row records `rtk_saved_bytes`, so the effect can be measured against the token counts. The savings that
-9router's README claims are not measured by its tests; measure them here before relying on them. [Inference] Caveman
+Each usage row records `rtk_saved_bytes`, so the effect can be measured against the token counts. The savings are not
+measured here; measure them before relying on them. [Inference] Caveman
 and Ponytail change how the model answers: fit for coding agents, not for systems that need full prose.
 
 ## Admin API
@@ -266,6 +278,17 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `GET /pricing` | | `[{target, input, output, cache_read, cache_write}]`, US dollars per million tokens |
 | `PUT /pricing` | `{target: "provider/model", input, output, cache_read?, cache_write?}` | the price. A target also prices every model whose name starts with it; the longest match wins |
 | `DELETE /pricing?target=` | | `204`; `404` |
+| `GET /custom-providers` | | `[{id, name, format, base_url, created_at, updated_at}]` |
+| `POST /custom-providers` | `{id, name, format: "openai" \| "anthropic", base_url}` (https, no credentials or query) | `201`; `400`; `409 taken` for a built-in id or prefix |
+| `PATCH /custom-providers/:id` | `{name?, format?, base_url?}` | the provider; `404` |
+| `DELETE /custom-providers/:id` | | `204`; `409 in_use` while it has connections; `404` |
+| `POST /translate` | `{from: "openai" \| "responses" \| "gemini", to: "openai" \| "anthropic", body, model?}` (`model` for gemini) | `{result}`: the request the gateway would send; nothing is sent upstream; `400 invalid_input`, `400 translate_failed` |
+| `GET`/`PUT /vision-adapter` | `{enabled, models, ...}` | the setting |
+
+Proxy pools take `https://` relays, `http://` proxies (CONNECT, Basic auth) and `socks5://` or `socks5h://` proxies
+(no auth or user and password), opened with `cloudflare:sockets` and TLS. Proxy credentials are sealed and never sent
+back. Cloudflare's own limits apply: no port 25 and no Cloudflare IP ranges. Web fetch can use Cloudflare Browser
+Rendering (`/accounts/{id}/browser-rendering/markdown`) with an account id and an API token.
 
 ## Local development and tests
 

@@ -1,0 +1,331 @@
+import { useEffect, useState } from "react";
+import { Banner, Button, Card, Dialog, Field, FileDrop, Grid, Segmented, Select, SettingRow, Skeleton, Stack, StatusDot, Switch } from "@xdev-asia/ui";
+import type { ThemePreference } from "@xdev-asia/ui";
+import { ApiError, COMBO_STRATEGIES, api, useLoad, type ComboStrategy } from "../api";
+import { t, useLang, type Lang, type StringKey } from "../i18n";
+import { useNotify } from "../notify";
+import { useTheme } from "../theme";
+import { useTranslatorShown } from "../translator-pref";
+import { ui } from "../ui-labels";
+
+/** What GET /admin/settings/info says: whether each Worker secret is set, never its value. */
+export interface SettingsInfo {
+  admin_token: boolean;
+  oidc: boolean;
+  console_emails: number;
+  connections_key: boolean;
+  codex_relay: boolean;
+}
+
+interface ComboSettings {
+  strategy: ComboStrategy;
+  sticky_limit: number;
+}
+
+/** The tables a backup holds (worker/backup.ts BACKUP_TABLES). */
+export const BACKUP_TABLES = ["combo", "model_alias", "model_disabled", "model_custom", "price", "setting", "provider_setting"] as const;
+
+const STRATEGY_LABEL: Record<ComboStrategy, StringKey> = {
+  fallback: "combos.strategy.fallback",
+  "round-robin": "combos.strategy.roundRobin",
+  smart: "combos.strategy.smart",
+  fusion: "combos.strategy.fusion",
+};
+const STRATEGY_HINT: Record<ComboStrategy, StringKey> = {
+  fallback: "combos.strategyHint.fallback",
+  "round-robin": "combos.strategyHint.roundRobin",
+  smart: "combos.strategyHint.smart",
+  fusion: "combos.strategyHint.fusion",
+};
+
+const MAX_BACKUP = 5 * 1024 * 1024;
+
+/** The tables of a backup file and their rows, or null when the file is not one. */
+export function readBackup(text: string): Record<string, unknown[]> | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== "object") return null;
+  const b = v as { version?: unknown; tables?: unknown };
+  if (b.version !== 1 || !b.tables || typeof b.tables !== "object" || Array.isArray(b.tables)) return null;
+  const tables = b.tables as Record<string, unknown>;
+  const names = Object.keys(tables);
+  if (names.length === 0 || !names.every((n) => (BACKUP_TABLES as readonly string[]).includes(n) && Array.isArray(tables[n]))) return null;
+  return tables as Record<string, unknown[]>;
+}
+
+function fileText(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsText(file);
+  });
+}
+
+/** Set or not set, never the value. */
+function SecretState({ set, label }: { set: boolean; label?: string }) {
+  return <StatusDot tone={set ? "ok" : "neutral"} label={set ? (label ?? t("prefs.set")) : t("prefs.notSet")} />;
+}
+
+/**
+ * The console's own settings page (without what a Worker has no use for: a database file,
+ * shutting down, a login password). Appearance stays in this browser; the rest is the gateway's.
+ */
+export function Settings() {
+  const [lang, setLang] = useLang();
+  const [theme, setTheme] = useTheme();
+  const [translatorShown, setTranslatorShown] = useTranslatorShown();
+  const labels = ui(lang);
+  const notify = useNotify();
+  const [info, reloadInfo] = useLoad<SettingsInfo>("/settings/info");
+  const [combo, reloadCombo] = useLoad<ComboSettings>("/combo-settings");
+  const [routing, setRouting] = useState<ComboSettings | null>(null);
+  const [sticky, setSticky] = useState("");
+  const [stickyBad, setStickyBad] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [backup, setBackup] = useState<Record<string, unknown[]> | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (combo.status !== "ready") return;
+    setRouting(combo.data);
+    setSticky(String(combo.data.sticky_limit));
+  }, [combo]);
+
+  async function run(action: () => Promise<void>, onError?: (e: unknown) => boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      if (!onError?.(e)) setError(t("error.generic"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const saveRouting = (body: Partial<ComboSettings>) =>
+    run(async () => {
+      const next = await api<ComboSettings>("/combo-settings", { method: "PUT", body });
+      setRouting(next);
+      setSticky(String(next.sticky_limit));
+      notify(t("prefs.saved"));
+    });
+
+  function saveSticky() {
+    const n = Number(sticky.trim());
+    if (!/^\d+$/.test(sticky.trim()) || n < 1 || n > 1000) {
+      setStickyBad(true);
+      return;
+    }
+    setStickyBad(false);
+    void saveRouting({ sticky_limit: n });
+  }
+
+  const exportBackup = () =>
+    run(async () => {
+      const data = await api<unknown>("/backup");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      if (typeof URL.createObjectURL === "function") {
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = "ai-router-backup.json";
+        a.click();
+        URL.revokeObjectURL(href);
+      }
+      notify(t("prefs.exported"));
+    });
+
+  async function pick(files: File[]) {
+    const file = files[0];
+    if (!file) return;
+    setImportError(null);
+    const tables = readBackup(await fileText(file).catch(() => ""));
+    if (!tables) {
+      setImportError(t("prefs.importBad"));
+      return;
+    }
+    setBackup(tables);
+  }
+
+  const importBackup = (tables: Record<string, unknown[]>) =>
+    run(
+      async () => {
+        const r = await api<{ ok: true; rows: number }>("/backup", { body: { version: 1, tables } });
+        setBackup(null);
+        notify(t("prefs.imported", { n: String(r.rows) }));
+        reloadCombo();
+      },
+      (e) => {
+        if (!(e instanceof ApiError && e.detail)) return false;
+        setBackup(null);
+        setImportError(t("prefs.importFailed", { message: e.detail }));
+        return true;
+      },
+    );
+
+  const themes: { value: ThemePreference; label: string }[] = [
+    { value: "light", label: t("theme.light") },
+    { value: "dark", label: t("theme.dark") },
+    { value: "system", label: t("theme.system") },
+  ];
+  const langs: { value: Lang; label: string }[] = [
+    { value: "en", label: "English" },
+    { value: "vi", label: "Tiếng Việt" },
+  ];
+
+  return (
+    <Stack gap={4}>
+      {error && <Banner tone="danger" title={error} />}
+      <Grid columns={{ base: 1, lg: 2 }} gap={4}>
+        <Card title={t("prefs.appearance")} headingLevel={2}>
+          <Stack gap={3}>
+            <SettingRow
+              label={t("prefs.theme")}
+              description={t("prefs.themeHint")}
+              control={<Segmented label={t("prefs.theme")} options={themes} value={theme} onChange={(v) => setTheme(v as ThemePreference)} />}
+            />
+            <SettingRow
+              label={t("prefs.language")}
+              description={t("prefs.languageHint")}
+              control={<Segmented label={t("prefs.language")} options={langs} value={lang} onChange={(v) => setLang(v as Lang)} />}
+            />
+            <SettingRow
+              label={t("prefs.translator")}
+              description={t("prefs.translatorHint")}
+              controlId="prefs-translator"
+              control={<Switch id="prefs-translator" checked={translatorShown} onChange={(e) => setTranslatorShown(e.target.checked)} />}
+            />
+          </Stack>
+        </Card>
+
+        <Card title={t("prefs.routing")} subtitle={t("prefs.routingHint")} headingLevel={2}>
+          {combo.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
+          {combo.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reloadCombo}>{t("common.retry")}</Button>} />}
+          {routing && (
+            <Stack gap={3}>
+              <SettingRow
+                label={t("prefs.strategy")}
+                description={t(STRATEGY_HINT[routing.strategy])}
+                controlId="prefs-strategy"
+                control={
+                  <Select
+                    id="prefs-strategy"
+                    aria-describedby="prefs-strategy-hint"
+                    value={routing.strategy}
+                    disabled={busy}
+                    options={COMBO_STRATEGIES.map((s) => ({ value: s, label: t(STRATEGY_LABEL[s]) }))}
+                    onChange={(e) => void saveRouting({ strategy: e.target.value as ComboStrategy })}
+                  />
+                }
+              />
+              {routing.strategy === "round-robin" && (
+                <SettingRow
+                  label={t("prefs.sticky")}
+                  description={t("prefs.stickyHint")}
+                  control={
+                    <div className="prefs-inline">
+                      <Field
+                        label={t("prefs.sticky")}
+                        hideLabel
+                        inputMode="numeric"
+                        value={sticky}
+                        autoComplete="off"
+                        onChange={(e) => setSticky(e.target.value)}
+                        error={stickyBad ? t("prefs.stickyBad") : undefined}
+                      />
+                      <Button disabled={busy} onClick={saveSticky}>
+                        {t("common.save")}
+                      </Button>
+                    </div>
+                  }
+                />
+              )}
+            </Stack>
+          )}
+        </Card>
+
+        <Card title={t("prefs.signIn")} subtitle={t("prefs.signInHint")} headingLevel={2}>
+          {info.status === "loading" && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}
+          {info.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reloadInfo}>{t("common.retry")}</Button>} />}
+          {info.status === "ready" && (
+            <Stack gap={3}>
+              <SettingRow label={t("prefs.adminToken")} description={t("prefs.adminTokenHint")} control={<SecretState set={info.data.admin_token} />} />
+              <SettingRow label={t("prefs.oidc")} description={t("prefs.oidcHint")} control={<SecretState set={info.data.oidc} />} />
+              <SettingRow
+                label={t("prefs.emails")}
+                description={t("prefs.emailsHint")}
+                control={<SecretState set={info.data.console_emails > 0} label={t("prefs.emailsCount", { n: String(info.data.console_emails) })} />}
+              />
+            </Stack>
+          )}
+        </Card>
+
+        <Card title={t("prefs.gateway")} headingLevel={2}>
+          {info.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
+          {info.status === "ready" && (
+            <Stack gap={3}>
+              <SettingRow label={t("prefs.connectionsKey")} description={t("prefs.connectionsKeyHint")} control={<SecretState set={info.data.connections_key} />} />
+              <SettingRow label={t("prefs.codexRelay")} description={t("prefs.codexRelayHint")} control={<SecretState set={info.data.codex_relay} />} />
+            </Stack>
+          )}
+        </Card>
+
+        <Card title={t("prefs.backup")} subtitle={t("prefs.backupHint")} headingLevel={2}>
+          <Stack gap={3}>
+            <SettingRow
+              label={t("prefs.export")}
+              description={t("prefs.exportHint")}
+              control={
+                <Button icon="download" disabled={busy} onClick={() => void exportBackup()}>
+                  {t("prefs.export")}
+                </Button>
+              }
+            />
+            <SettingRow label={t("prefs.import")} description={t("prefs.importHint")} />
+            <FileDrop
+              label={t("prefs.import")}
+              accept=".json,application/json"
+              maxSize={MAX_BACKUP}
+              disabled={busy}
+              onFiles={(files) => void pick(files)}
+              labels={{
+                drop: t("prefs.drop"),
+                browse: t("prefs.browse"),
+                limits: () => t("prefs.limits"),
+                rejected: (name) => t("prefs.rejected", { name }),
+              }}
+            />
+            {importError && <Banner tone="danger" title={importError} />}
+          </Stack>
+        </Card>
+      </Grid>
+      {backup && (
+        <Dialog
+          modal
+          title={t("prefs.importTitle")}
+          labels={labels.dialog}
+          confirmLabel={t("prefs.importConfirm")}
+          busy={busy}
+          onCancel={() => setBackup(null)}
+          onConfirm={() => void importBackup(backup)}
+        >
+          <p>{t("prefs.importBody")}</p>
+          <ul className="prefs-tables">
+            {Object.entries(backup).map(([table, rows]) => (
+              <li key={table}>{t("prefs.importRows", { table, n: String(rows.length) })}</li>
+            ))}
+          </ul>
+        </Dialog>
+      )}
+    </Stack>
+  );
+}

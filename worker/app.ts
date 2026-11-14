@@ -2,11 +2,15 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { adminRoutes } from "./admin";
 import { consoleAuthRoutes, type Idp } from "./console-auth";
+import { withCustomProviders } from "./custom-providers";
 import type { AppEnv } from "./env";
 import { anthropicError } from "./errors";
+import { geminiRoutes } from "./gemini";
 import { finishLogin, isPendingState } from "./oauth";
 import { openaiRoutes } from "./openai";
+import { logRequest } from "./logs";
 import { anthropicRoutes, type Upstream } from "./proxy";
+import { skillRoutes } from "./skills";
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
@@ -34,6 +38,11 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
     c.set("startedAt", Date.now());
     await next();
   });
+  // One log line per gateway request (logs.ts): never a body, a key or a token.
+  // The logged path is the pathname only, so a Gemini `?key=<token>` never reaches the log.
+  for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*"]) app.use(path, logRequest);
+  // The owner's providers (custom-providers.ts), read once per request so routing and the console see them.
+  for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*", "/admin/*"]) app.use(path, withCustomProviders);
   app.get("/health", (c) => c.json({ ok: true }));
   app.get("/api/health", (c) => c.json({ ok: true }));
   // A provider's sign-in page sends the browser back here (Codex: http://localhost:1455/auth/callback, so only
@@ -50,17 +59,21 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   });
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
   app.route("/admin", adminRoutes(deps.upstream));
+  app.route("/skills", skillRoutes());
   const anthropic = anthropicRoutes(deps.upstream);
   const openai = openaiRoutes(deps.upstream);
   app.route("/anthropic", anthropic);
   app.route("/openai", openai);
 
-  // 9router's paths: /v1/* with no provider prefix. Same handlers, same gateway token, same metering.
-  // Any origin may call them (9router: CORS *); the gateway token is still required.
+  // /v1/* with no provider prefix. Same handlers, same gateway token, same metering.
+  // Any origin may call them (CORS *); the gateway token is still required.
   // Allowed headers mirror the preflight's: a "*" there would not cover Authorization.
   const v1Cors = cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], maxAge: 86400 });
   app.use("/v1", v1Cors);
   app.use("/v1/*", v1Cors);
+  // Gemini API (Gemini CLI: GOOGLE_GEMINI_BASE_URL=https://<host>, the gateway token as GEMINI_API_KEY).
+  app.use("/v1beta/*", v1Cors);
+  app.route("/v1beta", geminiRoutes(deps.upstream));
   app.all("/v1/v1/*", (c) => {
     const url = new URL(c.req.url);
     url.pathname = url.pathname.replace(/^(\/v1)+\/v1\//, "/v1/");

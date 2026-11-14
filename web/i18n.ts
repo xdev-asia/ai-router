@@ -5,7 +5,7 @@ import { vi } from "./strings/vi";
 export type Lang = "en" | "vi";
 export type StringKey = keyof typeof en;
 
-const STORAGE_KEY = "xdev-llm.lang";
+const STORAGE_KEY = "ai-router.lang";
 const dictionaries: Record<Lang, Record<StringKey, string>> = { en, vi };
 
 export function detectLang(): Lang {

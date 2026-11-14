@@ -1,5 +1,5 @@
-// The Codex CLI's system prompt, as 9router (MIT) ships it in open-sse/config/codexInstructions.js at commit
-// 54a88d04. The text is OpenAI's, from the open-source Codex CLI. Sent as `instructions` when a request to the
+// The Codex CLI's system prompt. Copied from 9router (MIT) at commit 54a88d04; see THIRD_PARTY_NOTICES.md.
+// The text is OpenAI's, from the open-source Codex CLI. Sent as `instructions` when a request to the
 // Codex backend has no system message of its own. Not edited here.
 // Default instructions for Codex models
 

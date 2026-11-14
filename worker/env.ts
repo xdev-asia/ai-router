@@ -25,7 +25,19 @@ export interface Env {
   CODEX_RELAY_URL?: string;
   /** Secret: the shared secret the Codex relay checks (its RELAY_SECRET). Required when CODEX_RELAY_URL is set. */
   CODEX_RELAY_SECRET?: string;
+  /**
+   * Public and secret: the Google OAuth client Gemini CLI signs in with (oauth.ts). Either unset: the Gemini CLI
+   * provider shows as unavailable. Never kept in the code.
+   */
+  GOOGLE_GEMINI_CLI_CLIENT_ID?: string;
+  GOOGLE_GEMINI_CLI_CLIENT_SECRET?: string;
+  /** Public and secret: the Google OAuth client Antigravity signs in with. Either unset: the Antigravity provider shows as unavailable. */
+  GOOGLE_ANTIGRAVITY_CLIENT_ID?: string;
+  GOOGLE_ANTIGRAVITY_CLIENT_SECRET?: string;
 }
 
-/** `startedAt`: when the request reached the gateway (ms), for the latency of its usage rows. */
-export type AppEnv = { Bindings: Env; Variables: { startedAt: number } };
+/**
+ * `startedAt`: when the request reached the gateway (ms), for the latency of its usage rows.
+ * `connection`: the provider account being tried (its id only), for the usage row's account; unset for a secret-file key.
+ */
+export type AppEnv = { Bindings: Env; Variables: { startedAt: number; connection?: string | null } };

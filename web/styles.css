@@ -63,12 +63,42 @@ body {
   font: var(--type-heading);
 }
 
+/* Form on the left; from lg the logo's route drawn on the right (signin-hero.svg). */
 .signin {
   display: grid;
-  place-items: center;
   min-height: 100vh;
+}
+
+.signin-pane {
+  display: grid;
+  place-items: center;
   padding: var(--x-space-4);
   box-sizing: border-box;
+}
+
+.signin-art {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .signin {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .signin-art {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .signin-art img {
+    display: block;
+    width: 100%;
+    max-width: 45rem;
+    height: auto;
+  }
 }
 
 .signin-box {
@@ -85,12 +115,6 @@ body {
   align-self: flex-end;
 }
 
-.combo-targets {
-  margin: 0;
-  padding-left: var(--x-space-4);
-  font: var(--type-mono);
-  overflow-wrap: anywhere;
-}
 
 .settings-label {
   font: var(--type-control);
@@ -118,8 +142,25 @@ body {
 
 .providers-section-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--x-space-2);
+}
+
+/* Providers: Test all, and the custom section's add buttons, at the end of the section heading. */
+.providers-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--x-space-2);
+  margin-inline-start: auto;
+}
+
+/* Provider page: a custom provider's base URL. */
+.provider-endpoint {
+  font: var(--type-mono);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
 }
 
 .providers-section-title {
@@ -131,6 +172,59 @@ body {
 .providers-section-count {
   font: var(--type-status);
   color: var(--text-2);
+}
+
+.providers-section-sub {
+  margin: 0;
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+/* Add-account dialog: the tab's panel, the Check button with its outcome, and the bulk outcome per line. */
+.account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x-space-3);
+}
+
+.account-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--x-space-2) var(--x-space-3);
+}
+
+.bulk-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Custom headers: name, value and a remove button on one line. */
+.header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: end;
+  gap: var(--x-space-2);
+}
+
+/* Settings: a field and its button on one line, and the tables a backup replaces. */
+.prefs-inline {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--x-space-2);
+}
+
+.prefs-inline > :first-child {
+  width: 7rem;
+}
+
+.prefs-tables {
+  margin: var(--x-space-2) 0 0;
+  padding-left: var(--x-space-4);
 }
 
 .provider-status {
@@ -160,10 +254,67 @@ body {
   gap: var(--x-space-3);
 }
 
-/* The name takes the rest of the row; without this the header shrinks to one letter per line. */
-.provider-head > :last-child {
-  flex: 1;
+.provider-head {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.provider-count {
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+/* A page's own actions (such as "Create Combo"), right-aligned above its content; an intro takes the left. */
+.page-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--x-space-3);
+}
+
+/* Total and active pills above the proxy pool list. */
+.pool-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--x-space-2);
+}
+
+.page-intro {
+  flex: 1 1 20rem;
+  margin: 0;
+  font: var(--type-body);
+  color: var(--text-2);
+}
+
+/* Name over version, beside the tile, in the sidebar. */
+.console-brand-text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+
+.console-brand-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.console-brand-tagline {
+  font: var(--type-status);
+  color: var(--text-3);
+}
+
+/* The header search. */
+.console-search {
+  width: 16rem;
+}
+
+@media (max-width: 767.98px) {
+  .console-search {
+    width: 10rem;
+  }
 }
 
 /* Usage details: a select with its label above it, like a Field. */
@@ -185,4 +336,323 @@ body {
 .saver-inline > :first-child {
   flex: 1;
   min-width: 0;
+}
+
+/* Usage overview: the topology on two thirds and the latest requests beside it, stacked on narrow screens. */
+.usage-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--x-space-3);
+}
+
+@media (max-width: 1023.98px) {
+  .usage-flow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Pricing: search, provider and Add in a right column, as on Combos; row actions side by side; four prices two by two. */
+.pricing-tools {
+  display: flex;
+  flex: 0 1 16rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--x-space-2);
+  min-width: min(16rem, 100%);
+}
+
+@media (max-width: 767.98px) {
+  .pricing-tools {
+    flex-basis: 100%;
+  }
+}
+
+.pricing-actions {
+  display: inline-flex;
+  gap: var(--x-space-1);
+}
+
+.pricing-count,
+.pricing-hint {
+  margin: 0;
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+.pricing-rates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--x-space-3);
+}
+
+/* Combos: a row's models as mono chips, "+N more" after three; the dialog's ordered model list. */
+/* Search over the Create button, in a right column as wide as the button row. */
+.combo-tools {
+  display: flex;
+  flex: 0 1 16rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--x-space-2);
+  min-width: min(16rem, 100%);
+}
+
+/* Phones: once the intro wraps above it, search and Create span the row. */
+@media (max-width: 767.98px) {
+  .combo-tools {
+    flex-basis: 100%;
+  }
+}
+
+/* Combos intro: one line, then the four strategies, bold name then its note. */
+.combo-intro {
+  margin: 0 0 var(--x-space-2);
+}
+
+.combo-strategies {
+  display: grid;
+  gap: var(--x-space-1);
+  margin: 0;
+}
+
+.combo-strategies dt {
+  display: inline;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.combo-strategies dt::after {
+  content: " — ";
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.combo-strategies dd {
+  display: inline;
+  margin: 0;
+}
+
+.combo-count {
+  margin: 0;
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+.combo-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--x-space-1) var(--x-space-2);
+}
+
+.combo-model {
+  font: var(--type-mono);
+  overflow-wrap: anywhere;
+}
+
+.combo-more,
+.combo-none {
+  margin: 0;
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+.combo-actions {
+  display: inline-flex;
+  gap: var(--x-space-1);
+}
+
+.combo-models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x-space-2);
+}
+
+.combo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-2);
+  min-width: 0;
+}
+
+.combo-index {
+  min-width: 1.5em;
+  font: var(--type-status);
+  color: var(--text-2);
+  text-align: right;
+}
+
+.combo-row-id {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.combo-add {
+  align-self: flex-start;
+}
+
+/* Quota: filters on the left, bulk actions and refresh on the right; both wrap on narrow screens. */
+.quota-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--x-space-3);
+}
+
+.quota-filters,
+.quota-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--x-space-2) var(--x-space-3);
+  min-width: 0;
+}
+
+.quota-hidden {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--x-space-2);
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+.quota-account {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--x-space-2);
+  min-width: 0;
+}
+
+.quota-account-name {
+  overflow-wrap: anywhere;
+}
+
+.quota-account-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--x-space-2);
+}
+
+/* One limit per line: bar, reset time, hide; the reset time drops under the bar on phones. */
+.quota-windows {
+  display: grid;
+  gap: var(--x-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quota-window {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7rem, auto) auto;
+  align-items: center;
+  gap: var(--x-space-1) var(--x-space-3);
+}
+
+.quota-reset,
+.quota-credits {
+  margin: 0;
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+@media (max-width: 479.98px) {
+  .quota-window {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .quota-window > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Available Models card on a provider's page: chips wrap in rows. */
+.models-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--x-space-2);
+  min-width: 0;
+}
+
+.models-item {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The palette trigger sits on the nav's own inset, above the first list. */
+.console-palette { width: auto; margin: var(--x-space-3) var(--x-space-2) 0; }
+
+/* Translator: the example and translate buttons, at the end of the request card. */
+.translator-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--x-space-2);
+}
+
+/* Basic chat: the chat list beside the conversation; one column on narrow screens. */
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  gap: var(--x-space-4);
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.chat-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--x-space-1);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.chat-thread {
+  display: grid;
+  gap: var(--x-space-3);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.chat-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.details-part h3 {
+  margin: 0 0 var(--x-space-2);
+  font: var(--type-label);
+  color: var(--text-2);
+}
+.details-text {
+  margin: 0;
+  padding: var(--x-space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-1);
+  font: var(--type-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+}
+.chat-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--x-space-2);
+  margin-top: var(--x-space-2);
+}
+.chat-images img {
+  max-width: 10rem;
+  max-height: 10rem;
+  border-radius: var(--x-radius-md);
+  border: 1px solid var(--line);
+}
+.chat-attached {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--x-space-1);
 }

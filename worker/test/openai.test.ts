@@ -195,7 +195,7 @@ describe("GET /openai/v1/models", () => {
     const { res, text } = await call(up, "/openai/v1/models", { headers: { authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
     expect(up.calls[0]!.url).toBe("https://upstream.test/v1/models?limit=1000");
-    expect(JSON.parse(text)).toEqual({ object: "list", data: [{ id: "claude-opus-5-5", object: "model", created: 1788220800, owned_by: "anthropic" }] });
+    expect(JSON.parse(text)).toEqual({ object: "list", data: [{ id: "anthropic/claude-opus-5-5", object: "model", created: 1788220800, owned_by: "anthropic" }] });
     expect(await usageRows("chat")).toHaveLength(0);
   });
 });

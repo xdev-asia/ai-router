@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Banner, Button, Card, Field, PageHeader, Select, SettingRow, Skeleton, Stack, Switch, Textarea } from "@xdev-asia/ui";
+import { useState } from "react";
+import { Banner, Button, Card, Field, Select, SettingRow, Skeleton, Stack, Switch, Textarea } from "@xdev-asia/ui";
 import { ApiError, api, useLoad, type SaverLevel, type TokenSaverSettings } from "../api";
 import { t, useLang } from "../i18n";
 import { useNotify } from "../notify";
@@ -14,7 +14,7 @@ const isWebAddress = (v: string): boolean => {
 };
 
 /**
- * Token saver, laid out as 9router's page: one row per saver. Switches and levels save at once; the Headroom
+ * Token saver: one row per saver. Switches and levels save at once; the Headroom
  * address and the custom prompt are typed first and saved with their own button.
  */
 export function TokenSaver() {
@@ -28,12 +28,17 @@ export function TokenSaver() {
   const [prompt, setPrompt] = useState("");
 
   const data = settings.status === "ready" ? settings.data : null;
-  // The saved values fill the two text fields when they arrive, and again after each save.
-  useEffect(() => {
-    if (!data) return;
-    setUrl(data.headroom.url ?? "");
-    setPrompt(data.custom_prompt ?? "");
-  }, [data]);
+  // The saved values fill the two text fields when they arrive and when a save changes them. Keyed on the
+  // values, not the object: a reload that brings the same values back must not wipe what is being typed.
+  const savedUrl = data ? (data.headroom.url ?? "") : null;
+  const savedPrompt = data ? (data.custom_prompt ?? "") : null;
+  // Copied during render, not in an effect: an effect can land after the first keystroke and wipe it.
+  const [seen, setSeen] = useState<{ url: string | null; prompt: string | null }>({ url: null, prompt: null });
+  if (savedUrl !== seen.url || savedPrompt !== seen.prompt) {
+    setSeen({ url: savedUrl, prompt: savedPrompt });
+    if (savedUrl !== null && savedUrl !== seen.url) setUrl(savedUrl);
+    if (savedPrompt !== null && savedPrompt !== seen.prompt) setPrompt(savedPrompt);
+  }
 
   async function save(patch: Partial<TokenSaverSettings>) {
     setBusy(true);
@@ -70,7 +75,7 @@ export function TokenSaver() {
 
   return (
     <Stack gap={4}>
-      <PageHeader title={t("saver.title")} description={t("saver.description")} />
+      <p className="page-intro">{t("saver.intro")}</p>
       {error && <Banner tone="danger" title={error} />}
       {settings.status === "loading" && <Skeleton lines={4} announce labels={{ loading: t("loading") }} />}
       {settings.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}

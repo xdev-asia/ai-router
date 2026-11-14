@@ -1,4 +1,4 @@
-// 9router serves its API at /v1/* with no provider prefix (SRS FR-API-01, 02, 05, 06, 16, 17, 18).
+// The API at /v1/* with no provider prefix (SRS FR-API-01, 02, 05, 06, 16, 17, 18).
 // ai-router keeps /openai/v1 and /anthropic/v1 and answers the same requests at /v1 too.
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -34,7 +34,7 @@ const allow = (id: string, patterns: string[]) =>
 
 beforeEach(reset);
 
-describe("/v1 aliases (9router paths)", () => {
+describe("/v1 aliases (paths with no provider prefix)", () => {
   it("POST /v1/chat/completions works like /openai/v1/chat/completions, with a usage row", async () => {
     const token = await addSystem("app");
     await allow("app", ["openai/*"]);

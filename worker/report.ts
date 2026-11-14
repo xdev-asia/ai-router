@@ -1,21 +1,40 @@
 import type { Hono } from "hono";
 import type { AppEnv } from "./env";
+import { DEFAULT_PRICES } from "./pricing-defaults";
 
 /**
- * The Usage page's data (the idea of 9router's Usage & Analytics, written anew): totals for a period, by provider,
- * model and system, the latest requests, one row per request, and a cost estimate from prices the owner enters.
- * The cost is an estimate: it is not what a provider bills.
+ * The Usage page's data: totals for a period, by provider,
+ * model, account and system, a series over time for the charts, the latest requests, one row per request, and a
+ * cost estimate from default prices (pricing-defaults.ts) the owner may override. The cost is an estimate: it is not
+ * what a provider bills. Accounts and systems are named by their name and key hint only, never their key.
  */
 
 const PERIODS = { today: 0, "24h": 86_400, "7d": 7 * 86_400, "30d": 30 * 86_400, "60d": 60 * 86_400, all: -1 } as const;
 type Period = keyof typeof PERIODS;
 const isPeriod = (v: string): v is Period => Object.hasOwn(PERIODS, v);
 
-/** Unix seconds the period starts at: UTC midnight for "today", 0 for "all". */
-function periodStart(period: Period, nowMs: number): number {
+const HOUR = 3600;
+const DAY = 86_400;
+/** At most this many daily buckets for "all"; older requests still count in the totals. */
+const MAX_DAYS = 366;
+
+/** Unix seconds of the caller's midnight on the day of `nowSec`; `tzMin` is minutes east of UTC. */
+const midnight = (nowSec: number, tzMin: number) => Math.floor((nowSec + tzMin * 60) / DAY) * DAY - tzMin * 60;
+
+/** Unix seconds the period starts at: the caller's midnight for "today", 0 for "all". */
+function periodStart(period: Period, nowMs: number, tzMin = 0): number {
+  const nowSec = Math.floor(nowMs / 1000);
   if (period === "all") return 0;
-  if (period === "today") return Math.floor(nowMs / 86_400_000) * 86_400;
-  return Math.floor(nowMs / 1000) - PERIODS[period];
+  if (period === "today") return midnight(nowSec, tzMin);
+  return nowSec - PERIODS[period];
+}
+
+/** `?tz=` minutes east of UTC (UTC+7 is 420), -840..840; 0 when absent, null when bad. */
+function tzParam(raw: string | undefined): number | null {
+  if (raw === undefined || raw === "") return 0;
+  if (!/^-?\d{1,3}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n >= -840 && n <= 840 ? n : null;
 }
 
 const TARGET = /^[a-z][a-z0-9-]*\/[A-Za-z0-9._:\/@+-]{1,200}$/;
@@ -27,6 +46,9 @@ interface Price {
   cache_read: number;
   cache_write: number;
 }
+type Rates = Omit<Price, "target">;
+
+const DEFAULTS = new Map<string, Rates>(DEFAULT_PRICES.map(([target, input, output, cache_read, cache_write]) => [target, { input, output, cache_read, cache_write }]));
 
 interface Tokens {
   requests: number;
@@ -35,8 +57,8 @@ interface Tokens {
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
 }
-type Group = Tokens & { system_id: string; provider: string; model: string | null };
-type Costed = Tokens & { cost: number | null };
+type Group = Tokens & { system_id: string; provider: string; model: string | null; connection_id: string | null; last_at: number };
+type Costed = Tokens & { cost: number | null; last_at: number | null };
 
 /** The price of `provider/model`: its exact target, else the longest target the name starts with. */
 function priceOf(prices: Price[], provider: string, model: string | null): Price | null {
@@ -49,12 +71,12 @@ function priceOf(prices: Price[], provider: string, model: string | null): Price
 }
 
 /** US dollars for these tokens at prices per million tokens. */
-const costOf = (t: Tokens, p: Price) =>
+const costOf = (t: Tokens, p: Rates) =>
   (t.input_tokens * p.input + t.output_tokens * p.output + t.cache_read_input_tokens * p.cache_read + t.cache_creation_input_tokens * p.cache_write) / 1_000_000;
 
-const ZERO: Costed = { requests: 0, input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cost: null };
+const ZERO: Costed = { requests: 0, input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cost: null, last_at: null };
 
-function add(into: Costed, g: Tokens, cost: number | null): Costed {
+function add(into: Costed, g: Tokens & { last_at?: number }, cost: number | null): Costed {
   return {
     requests: into.requests + g.requests,
     input_tokens: into.input_tokens + g.input_tokens,
@@ -62,6 +84,7 @@ function add(into: Costed, g: Tokens, cost: number | null): Costed {
     cache_creation_input_tokens: into.cache_creation_input_tokens + g.cache_creation_input_tokens,
     cache_read_input_tokens: into.cache_read_input_tokens + g.cache_read_input_tokens,
     cost: cost === null ? into.cost : (into.cost ?? 0) + cost,
+    last_at: g.last_at === undefined ? into.last_at : Math.max(into.last_at ?? 0, g.last_at),
   };
 }
 
@@ -85,29 +108,59 @@ const intParam = (raw: string | undefined, min: number): number | null | undefin
 
 const REQUEST_COLUMNS =
   "id, at, system_id, provider, model, status, streamed, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, latency_ms";
-type RequestRow = Omit<Group, "requests"> & { id: number; at: number; status: number; streamed: number; latency_ms: number | null };
+type RequestRow = Omit<Group, "requests" | "connection_id" | "last_at"> & { id: number; at: number; status: number; streamed: number; latency_ms: number | null };
+
+const SUMS = `COUNT(*) AS requests,
+  COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
+  COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
+  COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens`;
+
+/** The prices in effect: the defaults, with what the owner entered on top. */
+async function loadPrices(db: D1Database): Promise<Price[]> {
+  const entered = (await db.prepare("SELECT target, input, output, cache_read, cache_write FROM price").all<Price>()).results;
+  const out = new Map<string, Price>([...DEFAULTS].map(([target, r]) => [target, { target, ...r }]));
+  for (const p of entered) out.set(p.target, p);
+  return [...out.values()];
+}
+
+/** The chart's buckets for a period: their start (unix seconds) and width. */
+async function bucketsOf(db: D1Database, period: Period, nowSec: number, tzMin: number): Promise<{ start: number; step: number; count: number }> {
+  if (period === "today") return { start: midnight(nowSec, tzMin), step: HOUR, count: 24 };
+  if (period === "24h") return { start: Math.floor(nowSec / HOUR) * HOUR - 23 * HOUR, step: HOUR, count: 24 };
+  const today = midnight(nowSec, tzMin);
+  if (period !== "all") {
+    const days = PERIODS[period] / DAY;
+    return { start: today - (days - 1) * DAY, step: DAY, count: days };
+  }
+  const first = await db.prepare("SELECT MIN(at) AS at FROM usage").first<{ at: number | null }>();
+  const days = first?.at == null ? 1 : Math.min(MAX_DAYS, Math.floor((today - midnight(first.at, tzMin)) / DAY) + 1);
+  return { start: today - (days - 1) * DAY, step: DAY, count: Math.max(1, days) };
+}
 
 export function reportRoutes(a: Hono<AppEnv>): void {
-  const loadPrices = async (db: D1Database) => (await db.prepare("SELECT target, input, output, cache_read, cache_write FROM price").all<Price>()).results;
-
-  /** `?period=today|24h|7d|30d|60d|all` (default 24h). */
+  /** `?period=today|24h|7d|30d|60d|all` (default 24h), `tz` (minutes east of UTC, for "today"). */
   a.get("/usage/summary", async (c) => {
     const period = c.req.query("period") ?? "24h";
     if (!isPeriod(period)) return c.json({ error: "invalid_period", hint: Object.keys(PERIODS).join(", ") }, 400);
-    const from = periodStart(period, Date.now());
-    const [grouped, recent, prices] = await Promise.all([
+    const tz = tzParam(c.req.query("tz"));
+    if (tz === null) return c.json({ error: "invalid_input", hint: "tz: minutes east of UTC, -840..840" }, 400);
+    const from = periodStart(period, Date.now(), tz);
+    const [grouped, recent, prices, systems, accounts] = await Promise.all([
       c.env.DB.prepare(
-        `SELECT system_id, provider, model, COUNT(*) AS requests,
-                SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-                SUM(cache_creation_input_tokens) AS cache_creation_input_tokens,
-                SUM(cache_read_input_tokens) AS cache_read_input_tokens
-         FROM usage WHERE at >= ? GROUP BY system_id, provider, model`,
+        `SELECT system_id, provider, model, connection_id, ${SUMS}, MAX(at) AS last_at
+         FROM usage WHERE at >= ? GROUP BY system_id, provider, model, connection_id`,
       )
         .bind(from)
         .all<Group>(),
       c.env.DB.prepare(`SELECT ${REQUEST_COLUMNS} FROM usage WHERE at >= ? ORDER BY id DESC LIMIT 10`).bind(from).all<RequestRow>(),
       loadPrices(c.env.DB),
+      // Names only: never the token's hash.
+      c.env.DB.prepare("SELECT id, name FROM system").all<{ id: string; name: string }>(),
+      // Name and the key's last 4 characters only: never the sealed secret.
+      c.env.DB.prepare("SELECT id, name, hint FROM connection").all<{ id: string; name: string; hint: string | null }>(),
     ]);
+    const systemName = new Map(systems.results.map((s) => [s.id, s.name]));
+    const account = new Map(accounts.results.map((a) => [a.id, a]));
     const groups = grouped.results.map((g) => {
       const price = priceOf(prices, g.provider, g.model);
       return { ...g, cost: price ? costOf(g, price) : null };
@@ -119,8 +172,53 @@ export function reportRoutes(a: Hono<AppEnv>): void {
       totals: { ...totals, unpriced_requests: groups.filter((g) => g.cost === null).reduce((n, g) => n + g.requests, 0) },
       by_provider: rollup(groups, (g) => ({ provider: g.provider })),
       by_model: rollup(groups, (g) => ({ provider: g.provider, model: g.model })),
-      by_system: rollup(groups, (g) => ({ system_id: g.system_id })),
+      // A secret-file key has no account: those rows group by provider, with no name.
+      by_connection: rollup(groups, (g) => {
+        const acc = g.connection_id ? account.get(g.connection_id) : undefined;
+        return { connection_id: g.connection_id, provider: g.provider, name: acc?.name ?? null, hint: acc?.hint ?? null };
+      }),
+      by_system: rollup(groups, (g) => ({ system_id: g.system_id, name: systemName.get(g.system_id) ?? null })),
       recent: recent.results.map((r) => ({ ...r, streamed: r.streamed === 1 })),
+    });
+  });
+
+  /**
+   * The charts' series: `?period=` as for the summary, `tz` (minutes east of UTC). Today and 24h: 24 hourly
+   * buckets; the others: one per day of the caller's calendar, ending today. Each bucket: its start `t` (unix
+   * seconds), requests, tokens (all four kinds) and cost (null when none of its requests has a price).
+   */
+  a.get("/usage/chart", async (c) => {
+    const period = c.req.query("period") ?? "24h";
+    if (!isPeriod(period)) return c.json({ error: "invalid_period", hint: Object.keys(PERIODS).join(", ") }, 400);
+    const tz = tzParam(c.req.query("tz"));
+    if (tz === null) return c.json({ error: "invalid_input", hint: "tz: minutes east of UTC, -840..840" }, 400);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const { start, step, count } = await bucketsOf(c.env.DB, period, nowSec, tz);
+    const [grouped, prices] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT CAST((at - ?1) / ?2 AS INTEGER) AS b, provider, model, ${SUMS}
+         FROM usage WHERE at >= ?1 AND at < ?1 + ?2 * ?3 GROUP BY b, provider, model`,
+      )
+        .bind(start, step, count)
+        .all<Tokens & { b: number; provider: string; model: string | null }>(),
+      loadPrices(c.env.DB),
+    ]);
+    const buckets = Array.from({ length: count }, (_, i) => ({ t: start + i * step, requests: 0, tokens: 0, cost: 0 as number | null, priced: false }));
+    for (const g of grouped.results) {
+      const b = buckets[Math.floor(g.b)];
+      if (!b) continue;
+      const price = priceOf(prices, g.provider, g.model);
+      b.requests += g.requests;
+      b.tokens += allTokens(g);
+      if (price) {
+        b.cost = (b.cost ?? 0) + costOf(g, price);
+        b.priced = true;
+      }
+    }
+    return c.json({
+      period,
+      step,
+      buckets: buckets.map(({ priced, ...b }) => ({ ...b, cost: b.requests > 0 && !priced ? null : b.cost })),
     });
   });
 
@@ -151,8 +249,15 @@ export function reportRoutes(a: Hono<AppEnv>): void {
     return c.json({ rows: r.results.map((x) => ({ ...x, streamed: x.streamed === 1 })) });
   });
 
-  /** Prices for the cost estimate, in US dollars per million tokens. */
-  a.get("/pricing", async (c) => c.json((await loadPrices(c.env.DB)).sort((x, y) => x.target.localeCompare(y.target))));
+  /**
+   * Prices in effect, in US dollars per million tokens, sorted by target: each with `custom` (the owner entered
+   * it) and `default` (its price in pricing-defaults.ts, or null when it has none).
+   */
+  a.get("/pricing", async (c) => {
+    const entered = new Set((await c.env.DB.prepare("SELECT target FROM price").all<{ target: string }>()).results.map((r) => r.target));
+    const list = (await loadPrices(c.env.DB)).map((p) => ({ ...p, custom: entered.has(p.target), default: DEFAULTS.get(p.target) ?? null }));
+    return c.json(list.sort((x, y) => x.target.localeCompare(y.target)));
+  });
 
   a.put("/pricing", async (c) => {
     const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -172,6 +277,7 @@ export function reportRoutes(a: Hono<AppEnv>): void {
     return c.json(row);
   });
 
+  /** Removes the price the owner entered: the default, if there is one, applies again. 404 when nothing was entered. */
   a.delete("/pricing", async (c) => {
     const r = await c.env.DB.prepare("DELETE FROM price WHERE target = ?").bind(c.req.query("target") ?? "").run();
     if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);

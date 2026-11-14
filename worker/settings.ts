@@ -3,7 +3,7 @@ import { isLevel, type Level } from "./savers";
 /**
  * Gateway-wide settings, one JSON value per key in the `setting` table.
  *
- * "token_saver" (the idea of 9router's Token Saver page): the savers every system gets. A system's own Caveman or
+ * "token_saver": the savers every system gets. A system's own Caveman or
  * Ponytail level wins over the gateway's; RTK is on when either has it on. The custom prompt and Headroom exist
  * only here. One request can opt out of all of it with `x-gateway-token-saver: off`.
  */

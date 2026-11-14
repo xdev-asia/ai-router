@@ -33,12 +33,16 @@ export function newToken(): string {
   return "xllm_" + btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** The token a caller sent: `x-api-key` (what the Anthropic SDK sends) or `Authorization: Bearer`. */
+/**
+ * The token a caller sent: `x-api-key` (what the Anthropic SDK sends), `x-goog-api-key` (Google GenAI SDK, Gemini
+ * CLI), `Authorization: Bearer`, or `?key=` (Gemini API style). The log keeps the path only, never the query.
+ */
 export function presentedToken(req: Request): string | null {
-  const key = req.headers.get("x-api-key");
+  const key = req.headers.get("x-api-key") || req.headers.get("x-goog-api-key");
   if (key) return key;
   const m = /^Bearer (.+)$/.exec(req.headers.get("authorization") ?? "");
-  return m?.[1] ?? null;
+  if (m?.[1]) return m[1];
+  return new URL(req.url).searchParams.get("key") || null;
 }
 
 type SystemRow = Omit<System, "disabled" | "rtk"> & { disabled: number; rtk: number };

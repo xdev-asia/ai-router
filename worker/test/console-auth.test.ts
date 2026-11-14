@@ -232,3 +232,58 @@ describe("console session", () => {
     expect(await (await send(null, "/auth/me", {}, { OIDC_CLIENT_ID: "" })).json()).toEqual({ error: "unauthorized", sso: false });
   });
 });
+
+describe("admin token session", () => {
+  const tokenSignIn = (token: string, headers: Record<string, string> = { origin: BASE }, bindings: Partial<Env> = {}) =>
+    send(null, "/auth/token", { method: "POST", headers: { authorization: `Bearer ${token}`, ...headers } }, bindings);
+
+  it("trades the admin token for a session cookie that survives a reload", async () => {
+    const res = await tokenSignIn(ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ admin: true });
+    const set = res.headers.getSetCookie()[0]!;
+    expect(set).toMatch(/^__Host-xllm_session=[^;]+; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=43200$/);
+    const cookie = `${SESSION_COOKIE}=${cookieValue(res, SESSION_COOKIE)}`;
+    // A reload: the page has only the cookie, not the token.
+    expect(await (await send(null, "/auth/me", { headers: { cookie } })).json()).toEqual({ admin: true });
+    expect((await send(null, "/admin/systems", { headers: { cookie } })).status).toBe(200);
+    // Works without xDev ID set up.
+    expect((await send(null, "/admin/systems", { headers: { cookie } }, { CONSOLE_EMAILS: "", OIDC_CLIENT_ID: "" })).status).toBe(200);
+  });
+
+  it("stores neither the admin token nor the session token", async () => {
+    const res = await tokenSignIn(ADMIN_TOKEN);
+    const session = cookieValue(res, SESSION_COOKIE)!;
+    const rows = JSON.stringify((await env.DB.prepare("SELECT * FROM console_session").all()).results);
+    expect(rows).not.toContain(ADMIN_TOKEN);
+    expect(rows).not.toContain(session);
+    expect(rows).not.toContain(env.ADMIN_TOKEN_SHA256!);
+    expect(rows).toContain(await sha256hex(session));
+  });
+
+  it("refuses a wrong token, a missing token and a cross-site request", async () => {
+    const wrong = await tokenSignIn("nope");
+    expect(wrong.status).toBe(401);
+    expect(wrong.headers.getSetCookie()).toEqual([]);
+    expect((await send(null, "/auth/token", { method: "POST", headers: { origin: BASE } })).status).toBe(401);
+    expect((await tokenSignIn(ADMIN_TOKEN, {})).status).toBe(403);
+    expect((await tokenSignIn(ADMIN_TOKEN, { origin: "https://evil.test" })).status).toBe(403);
+    expect((await tokenSignIn(ADMIN_TOKEN, { origin: BASE }, { ADMIN_TOKEN_SHA256: undefined })).status).toBe(401);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM console_session").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("ends when the admin token changes or is removed, or the session expires", async () => {
+    const cookie = `${SESSION_COOKIE}=${cookieValue(await tokenSignIn(ADMIN_TOKEN), SESSION_COOKIE)}`;
+    const other = await sha256hex("another-admin-token");
+    expect((await send(null, "/admin/systems", { headers: { cookie } }, { ADMIN_TOKEN_SHA256: other })).status).toBe(401);
+    expect((await send(null, "/auth/me", { headers: { cookie } }, { ADMIN_TOKEN_SHA256: undefined })).status).toBe(401);
+    await env.DB.prepare("UPDATE console_session SET expires_at = 1").run();
+    expect((await send(null, "/admin/systems", { headers: { cookie } })).status).toBe(401);
+  });
+
+  it("sign-out ends it like an xDev ID session", async () => {
+    const cookie = `${SESSION_COOKIE}=${cookieValue(await tokenSignIn(ADMIN_TOKEN), SESSION_COOKIE)}`;
+    expect((await send(null, "/auth/logout", { method: "POST", headers: { cookie, origin: BASE } })).status).toBe(204);
+    expect((await send(null, "/admin/systems", { headers: { cookie } })).status).toBe(401);
+  });
+});

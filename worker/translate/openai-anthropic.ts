@@ -1,6 +1,5 @@
 /**
  * OpenAI Chat Completions <-> Anthropic Messages, for clients that only speak the OpenAI format.
- * Idea from 9router's open-sse/translator (MIT, decolua and contributors); written anew for this gateway.
  */
 
 type Json = Record<string, unknown>;

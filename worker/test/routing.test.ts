@@ -57,7 +57,7 @@ describe("model names and allow-list", () => {
   it("an unknown model name is a 404 model_not_found", async () => {
     const token = await addSystem("chat");
     await allow("chat", ["*"]);
-    const { res, text } = await call(fakeUpstream(() => json({})), "/openai/v1/chat/completions", chat(token, hi("gpt-5")));
+    const { res, text } = await call(fakeUpstream(() => json({})), "/openai/v1/chat/completions", chat(token, hi("nope/x")));
     expect(res.status).toBe(404);
     expect(JSON.parse(text).error.code).toBe("model_not_found");
   });
@@ -188,6 +188,42 @@ describe("combos", () => {
     expect(up.calls).toHaveLength(2);
     expect((await call(up, "/openai/v1/chat/completions", chat(token, hi("combo/missing")))).res.status).toBe(404);
   });
+
+  it("routes a bare combo name as the combo, before a Claude model of the same name", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["combo/claude-fast", "combo/my.combo_1"]);
+    await combo("claude-fast", ["openai/gpt-5"]);
+    await combo("my.combo_1", ["openai/gpt-5"]);
+    const up = fakeUpstream(() => json(COMPLETION));
+    for (const name of ["claude-fast", "my.combo_1"]) {
+      const r = await call(up, "/openai/v1/chat/completions", chat(token, hi(name)));
+      expect(r.res.status, name).toBe(200);
+      expect(r.res.headers.get("x-gateway-target")).toBe("openai/gpt-5");
+    }
+    expect(up.calls.map((r) => new URL(r.url).host)).toEqual(["api.openai.com", "api.openai.com"]);
+  });
+
+  it("expands a nested combo in place and stops at a loop", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["combo/outer"]);
+    await combo("outer", ["inner", "openai/gpt-5"]);
+    await combo("inner", ["combo/outer", "groq/llama", "outer"]);
+    const up = fakeUpstream((req) => (req.url.startsWith("https://api.groq.com") ? json({ error: { message: "busy" } }, 503) : json(COMPLETION)));
+    const r = await call(up, "/openai/v1/chat/completions", chat(token, hi("combo/outer")));
+    expect(r.res.status).toBe(200);
+    expect(up.calls.map((x) => new URL(x.url).host)).toEqual(["api.groq.com", "api.openai.com"]);
+  });
+
+  it("answers 400 Invalid model format for a combo with no models", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["*"]);
+    await combo("empty", []);
+    const up = fakeUpstream(() => json(COMPLETION));
+    const r = await call(up, "/openai/v1/chat/completions", chat(token, hi("empty")));
+    expect(r.res.status).toBe(400);
+    expect(JSON.parse(r.text).error.message).toBe("Invalid model format");
+    expect(up.calls).toHaveLength(0);
+  });
 });
 
 describe("admin allow-list and model list", () => {
@@ -212,11 +248,33 @@ describe("admin allow-list and model list", () => {
     expect((await admin("PUT", "/combos/fast", { targets: ["groq/llama", "claude-haiku-5-5"] })).res.status).toBe(200);
     expect((await admin("PUT", "/combos/fast", { targets: ["openai/gpt-5"] })).res.status).toBe(200);
     expect(JSON.parse((await admin("GET", "/combos")).text)).toEqual([expect.objectContaining({ name: "fast", targets: ["openai/gpt-5"] })]);
-    for (const [name, body] of [["Bad", { targets: ["openai/x"] }], ["ok", { targets: [] }], ["ok", { targets: ["combo/other"] }], ["ok", { targets: ["gpt-5"] }]] as const) {
-      expect((await admin("PUT", `/combos/${name}`, body)).res.status, JSON.stringify(body)).toBe(400);
+    for (const [name, body] of [
+      ["bad%20name", { targets: ["openai/x"] }],
+      ["x".repeat(65), { targets: ["openai/x"] }],
+      ["ok", { targets: ["nope-combo"] }],
+      ["ok", { targets: ["ok"] }],
+      ["ok", { targets: ["combo/ok"] }],
+      ["ok", { targets: "openai/x" }],
+    ] as const) {
+      expect((await admin("PUT", `/combos/${name}`, body)).res.status, `${name} ${JSON.stringify(body)}`).toBe(400);
     }
+    expect((await admin("PUT", "/combos/My.Combo_2", { targets: [] })).res.status).toBe(200);
+    expect((await admin("PUT", "/combos/nest", { targets: ["fast", "combo/My.Combo_2"] })).res.status).toBe(200);
     expect((await admin("DELETE", "/combos/fast")).res.status).toBe(204);
     expect((await admin("DELETE", "/combos/fast")).res.status).toBe(404);
+  });
+
+  it("POST creates a combo and refuses a name already taken; PUT can rename", async () => {
+    const created = await admin("POST", "/combos", { name: "fast", targets: ["openai/gpt-5"] });
+    expect(created.res.status).toBe(201);
+    const dup = await admin("POST", "/combos", { name: "fast", targets: [] });
+    expect(dup.res.status).toBe(400);
+    expect(JSON.parse(dup.text).error).toBe("Combo name already exists");
+    await admin("POST", "/combos", { name: "slow", targets: [] });
+    expect(JSON.parse((await admin("PUT", "/combos/fast", { name: "slow", targets: [] })).text).error).toBe("Combo name already exists");
+    const renamed = await admin("PUT", "/combos/fast", { name: "quick", targets: ["groq/llama"] });
+    expect(renamed.res.status).toBe(200);
+    expect(JSON.parse((await admin("GET", "/combos")).text).map((c: { name: string }) => c.name)).toEqual(["quick", "slow"]);
   });
 
   it("/openai/v1/models lists allowed Claude models, combos and exact entries", async () => {
@@ -226,6 +284,9 @@ describe("admin allow-list and model list", () => {
     await combo("hidden", ["openai/gpt-5"]);
     const up = fakeUpstream(() => json({ data: [{ id: "claude-opus-5-5", created_at: "2026-09-01T00:00:00Z" }] }));
     const ids = JSON.parse((await call(up, "/openai/v1/models", { headers: { authorization: `Bearer ${token}` } })).text).data.map((m: { id: string }) => m.id);
-    expect(ids).toEqual(["claude-opus-5-5", "combo/fast", "openai/gpt-5"]);
+    // Order: combos, then each provider's models with its prefix (models.ts listModels).
+    expect(ids.slice(0, 3)).toEqual(["combo/fast", "anthropic/claude-opus-5-5", "openai/gpt-5"]);
+    expect(ids.slice(3).length).toBeGreaterThan(0);
+    expect(ids.slice(3).every((id: string) => id.startsWith("groq/"))).toBe(true);
   });
 });

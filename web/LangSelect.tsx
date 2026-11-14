@@ -1,13 +1,21 @@
-import { Select } from "@xdev-asia/ui";
+import { MenuButton } from "@xdev-asia/ui";
 import { t, useLang, type Lang } from "./i18n";
 
-/** Native names: each language is labelled in itself, whatever the active language. */
-const LANGS = [
+const LANGS: { value: Lang; label: string }[] = [
   { value: "en", label: "English" },
   { value: "vi", label: "Tiếng Việt" },
 ];
 
+/** The language control: an icon button in the top bar, the languages in its menu. */
 export function LangSelect() {
   const [lang, setLang] = useLang();
-  return <Select icon="globe" options={LANGS} value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label={t("shell.lang")} />;
+  return (
+    <MenuButton
+      variant="icon"
+      icon="globe"
+      align="end"
+      label={t("shell.lang")}
+      items={LANGS.map((l) => ({ label: l.label, checked: lang === l.value, onSelect: () => setLang(l.value) }))}
+    />
+  );
 }

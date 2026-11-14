@@ -2,7 +2,7 @@ import { parseModel } from "./providers";
 import type { Upstream } from "./proxy";
 
 /**
- * Headroom (https://github.com/chopratejas/headroom), the way 9router calls it: POST `{messages, model}` in
+ * Headroom (https://github.com/chopratejas/headroom): POST `{messages, model}` in
  * OpenAI shape to `<url>/v1/compress`, get `{messages}` back, shorter. Fail-open: on any failure, or an answer
  * that is not the same messages in the same roles, the request goes on unchanged. The endpoint takes no key,
  * and it receives the conversation: point it only at a Headroom you run.

@@ -2,7 +2,8 @@
 //
 // Why: chatgpt.com answers 403 to any request that carries the `Cf-Worker` header, and a Worker cannot
 // leave that header out. The gateway sends Codex requests here instead (CODEX_RELAY_URL), with a shared
-// secret; this relay checks it and sends the request on to one fixed upstream. It is not an open proxy.
+// secret; this relay checks it and sends the request on to one fixed upstream. It is not an open proxy: it
+// serves a fixed list of paths, each with one method (ROUTES), all under the upstream's /backend-api.
 //
 // No dependencies: Node 20+ (global fetch). It never logs a header or a body.
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -11,10 +12,16 @@ import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 export const CODEX_UPSTREAM = "https://chatgpt.com/backend-api/codex/responses";
-const PATH = "/codex/responses";
+/** Relay path → method. The same path under the upstream's /backend-api. The `wham` ones feed the quota page. */
+const ROUTES = {
+  "/codex/responses": "POST",
+  "/wham/usage": "GET",
+  "/wham/rate-limit-reset-credits": "GET",
+  "/wham/rate-limit-reset-credits/consume": "POST",
+};
 const SECRET_HEADER = "x-relay-secret";
 /** Request headers sent on: the ones the gateway's codexHeaders sets. Everything else stays here. */
-const REQUEST_HEADERS = ["authorization", "content-type", "accept", "originator", "user-agent", "version", "session_id", "chatgpt-account-id"];
+const REQUEST_HEADERS = ["authorization", "content-type", "accept", "originator", "user-agent", "version", "session_id", "chatgpt-account-id", "openai-beta"];
 /** Response headers passed back: the gateway reads these. `x-codex-*` (usage windows) too. */
 const RESPONSE_HEADERS = ["content-type", "retry-after"];
 
@@ -32,6 +39,8 @@ export function createRelay({ secret, upstream = CODEX_UPSTREAM, log = (line) =>
   if (typeof secret !== "string" || secret.length < 32) throw new Error("RELAY_SECRET must be set, at least 32 characters");
   const expected = digest(secret);
   const allowed = (given) => typeof given === "string" && timingSafeEqual(digest(given), expected);
+  // `upstream` names the responses endpoint; the other routes sit beside it under /backend-api.
+  const base = upstream.replace(/\/codex\/responses$/, "");
 
   return createServer(async (req, res) => {
     const path = (req.url ?? "/").split("?")[0];
@@ -42,12 +51,16 @@ export function createRelay({ secret, upstream = CODEX_UPSTREAM, log = (line) =>
       res.writeHead(200, { "content-type": "text/plain" });
       return res.end("ok");
     }
-    if (path !== PATH) return drain(req), json(res, 404, { error: "not_found" });
-    if (req.method !== "POST") return drain(req), json(res, 405, { error: "method_not_allowed" });
+    const method = Object.hasOwn(ROUTES, path) ? ROUTES[path] : null;
+    if (!method) return drain(req), json(res, 404, { error: "not_found" });
+    if (req.method !== method) return drain(req), json(res, 405, { error: "method_not_allowed" });
     if (!allowed(req.headers[SECRET_HEADER])) return drain(req), json(res, 403, { error: "relay_unauthorized" }, { "x-relay-error": "relay_unauthorized" });
 
-    const body = await readBody(req, maxBody);
-    if (!body) return json(res, 413, { error: "body_too_large" });
+    let body;
+    if (method === "POST") {
+      body = await readBody(req, maxBody);
+      if (!body) return json(res, 413, { error: "body_too_large" });
+    } else drain(req);
 
     const headers = new Headers();
     for (const name of REQUEST_HEADERS) {
@@ -59,7 +72,7 @@ export function createRelay({ secret, upstream = CODEX_UPSTREAM, log = (line) =>
 
     let up;
     try {
-      up = await fetch(upstream, { method: "POST", headers, body, signal: abort.signal });
+      up = await fetch(base + path, { method, headers, body, signal: abort.signal });
     } catch {
       if (!res.headersSent) json(res, 502, { error: "upstream_unreachable" });
       return;

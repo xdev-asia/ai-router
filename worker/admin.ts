@@ -2,14 +2,30 @@ import { Hono } from "hono";
 import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { isLevel } from "./savers";
 import { consoleUser, sameOrigin } from "./console-auth";
-import { createApiKeyConnection, getConnection, isStrategy, listConnections, sealApiKey, testConnection } from "./connections";
-import { COMBO_NAME, PATTERN, PROVIDERS, hasEnvKey, isProvider, parseModel, providerDef, type ProviderId } from "./providers";
+import { checkKey, createApiKeyConnection, getConnection, isStrategy, listConnections, sealApiKey, storedSecret, testConnection } from "./connections";
+import { keyShapeOk, mergeSettings, settingsOf } from "./wire";
+import { COMBO_NAME, FREE_TIER, PATTERN, hasEnvKey, isCustomProvider, isProvider, memberCombo, parseModel, providerDef, providerIds } from "./providers";
+import { customProviderRoutes } from "./custom-providers";
+import { loadCombos } from "./route";
 import type { AppEnv } from "./env";
-import { finishLogin, oauthDef, startLogin } from "./oauth";
+import { finishLogin, oauthDef, oauthMissingEnv, pollLogin, startLogin } from "./oauth";
 import type { Upstream } from "./proxy";
 import { reportRoutes } from "./report";
+import { basicChatRoutes } from "./basic-chat";
+import { requestDetailRoutes } from "./request-details";
+import { backupRoutes } from "./backup";
+import { logRoutes } from "./logs";
+import { mediaAdminRoutes } from "./media";
+import { providerHeaderRoutes } from "./provider-headers";
+import { poolExists, proxyPoolRoutes } from "./proxy-pools";
+import { webToolAdminRoutes } from "./web-tools";
+import { modelRoutes } from "./models-admin";
+import { visionAdapterRoutes } from "./vision";
+import { translatorRoutes } from "./translator";
 import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
+import { STRATEGIES, configError, getComboSettings, isStrategy as isComboStrategy, mergeComboSettings, readConfig, resetCombo, saveComboSettings } from "./combo-strategy";
 import { currentMonth, monthRange } from "./usage";
+import { QUOTA_PROVIDERS, consumeResetCredit, codexResetCredits, fetchQuota, getHiddenRows, isQuotaProvider, quotaConnection, setHiddenRows } from "./quota";
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
@@ -19,7 +35,27 @@ type SystemRow = Parameters<typeof toSystem>[0];
 const isCap = (v: unknown): v is number | null => v === null || (typeof v === "number" && Number.isSafeInteger(v) && v >= 0);
 const isName = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.length <= 100;
 const isApiKey = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.length <= 4096;
+const isPriority = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 1 && v <= 1000;
 const NO_BOX = { error: "not_configured", hint: "set the CONNECTIONS_KEY secret: 32 random bytes, base64" } as const;
+
+const TAKEN = "Combo name already exists";
+
+/**
+ * Why a combo's name or members are refused, or null. Members: up to 50 strings, each `provider/model`, `claude-*`,
+ * or another existing combo (`combo/<name>` or its bare name); never the combo itself (`self` is its current name).
+ */
+function comboInputError(name: string, targets: unknown, combos: ReadonlyMap<string, unknown>, self: string | null): string | null {
+  if (!COMBO_NAME.test(name)) return "name: letters, numbers, -, _ and . (at most 64)";
+  if (!Array.isArray(targets) || targets.length > 50 || !targets.every((t) => typeof t === "string")) return "targets: a list of at most 50 models";
+  for (const t of targets as string[]) {
+    const nested = memberCombo(t, combos);
+    if (nested !== null) {
+      if (nested === name || nested === self) return `targets: ${t} is this combo`;
+      if (!combos.has(nested)) return `targets: no combo named ${nested}`;
+    } else if (parseModel(t)?.kind !== "target") return `targets: ${t} is not provider/model, claude-* or a combo`;
+  }
+  return null;
+}
 
 async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   try {
@@ -56,6 +92,9 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req)) return c.json({ error: "forbidden" }, 403);
     await next();
   });
+
+  basicChatRoutes(a, upstream);
+  requestDetailRoutes(a);
 
   a.get("/systems", async (c) => {
     const r = await c.env.DB.prepare(`SELECT ${SYSTEM_COLUMNS} FROM system ORDER BY id`).all<SystemRow>();
@@ -125,33 +164,90 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     return c.json(next);
   });
 
-  /** Combos: `combo/<name>` tries `targets` ("provider/model" or "claude-*") in order. */
+  /**
+   * Combos: `combo/<name>` (or the bare name) tries `targets` in order. A member is `provider/model`, `claude-*`,
+   * `combo/<name>` or the bare name of another combo; a combo may be empty (calling it is a 400, FR-CMB-31).
+   */
   a.get("/combos", async (c) => {
-    const r = await c.env.DB.prepare("SELECT name, targets, updated_at FROM combo ORDER BY name").all<{ name: string; targets: string; updated_at: number }>();
-    return c.json(r.results.map((x) => ({ name: x.name, targets: JSON.parse(x.targets) as string[], updated_at: x.updated_at })));
+    const r = await c.env.DB.prepare("SELECT name, targets, updated_at, strategy, config FROM combo ORDER BY name").all<{ name: string; targets: string; updated_at: number; strategy: string | null; config: string | null }>();
+    return c.json(
+      r.results.map((x) => ({
+        name: x.name,
+        targets: JSON.parse(x.targets) as string[],
+        updated_at: x.updated_at,
+        strategy: isComboStrategy(x.strategy) ? x.strategy : null,
+        config: x.config ? readConfig(x.config) : null,
+      })),
+    );
   });
 
-  a.put("/combos/:name", async (c) => {
-    const name = c.req.param("name");
+  /**
+   * A combo's strategy and its settings from a POST/PUT body. `strategy` absent keeps the stored one; null follows
+   * the gateway-wide setting; "fallback" drops the combo's settings (FR-CMB-26).
+   */
+  const strategyInput = (b: Record<string, unknown>, current: { strategy: string | null; config: string | null }) => {
+    if ("strategy" in b && b.strategy !== null && !isComboStrategy(b.strategy)) return { error: `strategy: one of ${STRATEGIES.join(", ")}, or null` };
+    const bad = "config" in b ? configError(b.config) : null;
+    if (bad) return { error: bad };
+    const strategy = "strategy" in b ? ((b.strategy as string | null) ?? null) : current.strategy;
+    let config = "config" in b ? (b.config === null || b.config === undefined ? null : JSON.stringify(b.config)) : current.config;
+    if (strategy === "fallback") config = null;
+    return { strategy, config };
+  };
+
+  /** Creates a combo; a name already taken is `400 "Combo name already exists"` (FR-CMB-02). */
+  a.post("/combos", async (c) => {
     const b = await readJson(c.req.raw);
-    const targets = b?.targets;
-    const valid =
-      COMBO_NAME.test(name) &&
-      Array.isArray(targets) &&
-      targets.length >= 1 &&
-      targets.length <= 10 &&
-      targets.every((t) => parseModel(t)?.kind === "target");
-    if (!valid) return c.json({ error: "invalid_input", hint: "name: ^[a-z][a-z0-9-]{0,31}$, targets: 1-10 of provider/model or claude-*" }, 400);
+    const name = typeof b?.name === "string" ? b.name : "";
+    const combos = await loadCombos(c.env.DB);
+    if (combos.has(name)) return c.json({ error: TAKEN }, 400);
+    const bad = comboInputError(name, b?.targets, combos, null);
+    if (bad) return c.json({ error: "invalid_input", hint: bad }, 400);
+    const st = strategyInput(b!, { strategy: null, config: null });
+    if ("error" in st) return c.json({ error: "invalid_input", hint: st.error }, 400);
     const now = Math.floor(Date.now() / 1000);
-    await c.env.DB.prepare("INSERT INTO combo (name, targets, updated_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET targets = excluded.targets, updated_at = excluded.updated_at")
-      .bind(name, JSON.stringify(targets), now)
-      .run();
-    return c.json({ name, targets, updated_at: now });
+    await c.env.DB.prepare("INSERT INTO combo (name, targets, updated_at, strategy, config) VALUES (?, ?, ?, ?, ?)").bind(name, JSON.stringify(b!.targets), now, st.strategy, st.config).run();
+    return c.json({ name, targets: b!.targets, updated_at: now, strategy: st.strategy, config: st.config ? readConfig(st.config) : null }, 201);
+  });
+
+  /** Replaces a combo's members (creating it when missing). `name` in the body renames it; members of other combos follow. */
+  a.put("/combos/:name", async (c) => {
+    const old = c.req.param("name");
+    const b = await readJson(c.req.raw);
+    const name = typeof b?.name === "string" ? b.name : old;
+    const combos = await loadCombos(c.env.DB);
+    if (name !== old && combos.has(name)) return c.json({ error: TAKEN }, 400);
+    const bad = comboInputError(name, b?.targets, combos, old);
+    if (bad) return c.json({ error: "invalid_input", hint: bad }, 400);
+    const targets = b!.targets as string[];
+    const current = (await c.env.DB.prepare("SELECT strategy, config FROM combo WHERE name = ?").bind(old).first<{ strategy: string | null; config: string | null }>()) ?? { strategy: null, config: null };
+    const st = strategyInput(b!, current);
+    if ("error" in st) return c.json({ error: "invalid_input", hint: st.error }, 400);
+    const now = Math.floor(Date.now() / 1000);
+    // An edited combo starts its rotation and its sessions afresh (FR-CMB-11).
+    resetCombo(old);
+    resetCombo(name);
+    if (name === old || !combos.has(old)) {
+      await c.env.DB.prepare(
+        "INSERT INTO combo (name, targets, updated_at, strategy, config) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET targets = excluded.targets, updated_at = excluded.updated_at, strategy = excluded.strategy, config = excluded.config",
+      )
+        .bind(name, JSON.stringify(targets), now, st.strategy, st.config)
+        .run();
+    } else {
+      const renames = [...combos]
+        .filter(([n, ms]) => n !== old && ms.some((m) => memberCombo(m, combos) === old))
+        .map(([n, ms]) =>
+          c.env.DB.prepare("UPDATE combo SET targets = ? WHERE name = ?").bind(JSON.stringify(ms.map((m) => (memberCombo(m, combos) === old ? (m.startsWith("combo/") ? `combo/${name}` : name) : m))), n),
+        );
+      await c.env.DB.batch([c.env.DB.prepare("UPDATE combo SET name = ?, targets = ?, updated_at = ?, strategy = ?, config = ? WHERE name = ?").bind(name, JSON.stringify(targets), now, st.strategy, st.config, old), ...renames]);
+    }
+    return c.json({ name, targets, updated_at: now, strategy: st.strategy, config: st.config ? readConfig(st.config) : null });
   });
 
   a.delete("/combos/:name", async (c) => {
     const r = await c.env.DB.prepare("DELETE FROM combo WHERE name = ?").bind(c.req.param("name")).run();
     if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);
+    resetCombo(c.req.param("name"));
     return c.body(null, 204);
   });
 
@@ -169,9 +265,17 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     const set = await c.env.DB.prepare("SELECT provider, strategy FROM provider_setting").all<{ provider: string; strategy: string }>();
     const strategy = new Map(set.results.map((x) => [x.provider, x.strategy]));
     return c.json(
-      (Object.keys(PROVIDERS) as ProviderId[]).map((id) => {
+      providerIds().map((id) => {
         const def = providerDef(id);
-        return { id, name: def.name, format: def.format, auth: [def.auth ?? "api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first", color: def.color, mark: def.mark };
+        const base = { id, name: def.name, format: def.format, auth: [def.auth ?? "api_key"], env_key: hasEnvKey(c.env, id), key_url: def.keyUrl ?? null, strategy: strategy.get(id) ?? "fill-first", color: def.color, mark: def.mark, free_tier: FREE_TIER.has(id) };
+        // A provider whose connections carry settings (wire.ts) lists their names and rules, never values.
+        const settings = settingsOf(id);
+        const row = settings ? { ...base, settings } : base;
+        // A subscription login whose client comes from variables (Google) names the unset ones, never values.
+        const missing = oauthMissingEnv(c.env, id);
+        if (missing.length) Object.assign(row, { missing_env: missing });
+        // The owner's providers (custom-providers.ts) also say where they point.
+        return isCustomProvider(id) ? { ...row, custom: true, base_url: def.baseUrl ?? null } : row;
       }),
     );
   });
@@ -190,18 +294,37 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
   });
 
   /**
-   * Subscription login (oauth.ts). `start` answers the provider's sign-in page to open. `finish` takes what the
-   * provider sent the browser back with: the whole address (`callback_url`) or its `code` and `state`.
+   * Subscription login (oauth.ts). `start` answers, by the provider's flow, the sign-in page to open (`pkce`) or
+   * the code for the user to enter (`device`). `finish` (pkce) takes what the provider sent the browser back with:
+   * the whole address (`callback_url`), its `code` and `state`, or the `code#state` the provider's page shows.
+   * `poll` (device) answers 202 while the user has not entered the code yet, 201 with the connection once done.
    */
   a.post("/oauth/:provider/start", async (c) => {
-    const r = await startLogin(c.env, c.req.param("provider"));
-    if (r.ok) return c.json({ authorize_url: r.url });
+    const r = await startLogin(c.env, upstream, c.req.param("provider"));
+    if (r.ok) {
+      if (r.flow === "pkce") return c.json({ flow: "pkce", authorize_url: r.url });
+      const { ok: _ok, ...device } = r;
+      return c.json(device);
+    }
+    if (r.error === "provider_refused") return c.json({ error: r.error, message: r.message }, 502);
+    if (r.error === "unavailable") return c.json({ error: r.error, message: r.message }, 503);
     return r.error === "not_configured" ? c.json(NO_BOX, 500) : c.json({ error: "not_found" }, 404);
+  });
+
+  a.post("/oauth/:provider/poll", async (c) => {
+    const provider = c.req.param("provider");
+    if (oauthDef(provider)?.flow !== "device") return c.json({ error: "not_found" }, 404);
+    const b = await readJson(c.req.raw);
+    if (typeof b?.id !== "string" || b.id === "") return c.json({ error: "invalid_input", hint: "id: the sign-in's id from start" }, 400);
+    const r = await pollLogin(c.env, upstream, provider, b.id);
+    if (r.ok === "pending") return c.json({ status: "pending", interval: r.interval }, 202);
+    if (!r.ok) return c.json({ error: r.error, message: r.message }, r.status);
+    return c.json(await getConnection(c.env.DB, r.id), 201);
   });
 
   a.post("/oauth/:provider/finish", async (c) => {
     const provider = c.req.param("provider");
-    if (!oauthDef(provider)) return c.json({ error: "not_found" }, 404);
+    if (oauthDef(provider)?.flow !== "pkce") return c.json({ error: "not_found" }, 404);
     const b = await readJson(c.req.raw);
     let code: unknown = b?.code;
     let state: unknown = b?.state;
@@ -211,8 +334,13 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
         code = u.searchParams.get("code");
         state = u.searchParams.get("state");
       } catch {
-        // falls through to invalid_input
+        // Not an address: the `code#state` some providers' pages show (Claude) is read below.
+        code = b.callback_url.trim();
       }
+    }
+    // Claude's page shows the code as `code#state`.
+    if (typeof code === "string" && code.includes("#") && (typeof state !== "string" || state === "")) {
+      [code, state] = [code.slice(0, code.indexOf("#")), code.slice(code.indexOf("#") + 1)];
     }
     if (typeof code !== "string" || code === "" || typeof state !== "string" || state === "") {
       return c.json({ error: "invalid_input", hint: "callback_url: the address the browser ended on, or code and state" }, 400);
@@ -226,6 +354,44 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
   a.post("/connections/:id/test", async (c) => {
     const result = await testConnection(c.env, upstream, c.req.param("id"));
     return result ? c.json(result) : c.json({ error: "not_found" }, 404);
+  });
+
+  /**
+   * Quota (FR-QUO): the connections whose provider reports what is left, then one report per connection. The
+   * console turns accounts off and on with PATCH /connections/:id; nothing here changes a connection.
+   */
+  a.get("/quota", async (c) => {
+    const connections = (await listConnections(c.env.DB)).filter((x) => isQuotaProvider(x.provider));
+    return c.json({ providers: QUOTA_PROVIDERS, connections, hidden: await getHiddenRows(c.env.DB) });
+  });
+
+  /** Rows the owner hid, per provider: `{provider, names}`; an empty list shows them all again. */
+  a.put("/quota/hidden", async (c) => {
+    const b = await readJson(c.req.raw);
+    const next = await setHiddenRows(c.env.DB, b?.provider, b?.names);
+    return next ? c.json(next) : c.json({ error: "invalid_input", hint: "provider: codex, groq or deepseek; names: up to 50 row names" }, 400);
+  });
+
+  a.get("/quota/:id", async (c) => {
+    const conn = await quotaConnection(c.env, upstream, c.req.param("id"));
+    return conn ? c.json(await fetchQuota(c.env, upstream, conn)) : c.json({ error: "not_found" }, 404);
+  });
+
+  a.get("/quota/:id/reset-credits", async (c) => {
+    const conn = await quotaConnection(c.env, upstream, c.req.param("id"));
+    if (!conn || conn.provider !== "codex") return c.json({ error: "not_found" }, 404);
+    const r = await codexResetCredits(c.env, upstream, conn);
+    return "credits" in r ? c.json(r) : c.json({ error: "upstream_error", message: r.message }, 502);
+  });
+
+  /** Spends one Codex reset credit: the account's windows start again. 409 when none is left. */
+  a.post("/quota/:id/reset-credit", async (c) => {
+    const conn = await quotaConnection(c.env, upstream, c.req.param("id"));
+    if (!conn || conn.provider !== "codex") return c.json({ error: "not_found" }, 404);
+    const r = await consumeResetCredit(c.env, upstream, conn);
+    if ("windows_reset" in r) return c.json(r);
+    if ("error" in r) return c.json(r, 409);
+    return c.json({ error: "upstream_error", message: r.message }, 502);
   });
 
   /** Sets the order accounts are tried in: `ids` is every connection of the provider, first to last. */
@@ -258,9 +424,31 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     if (providerDef(b.provider).auth === "oauth") {
       return c.json({ error: "invalid_input", hint: "this provider takes a sign-in, not an API key: POST /admin/oauth/:provider/start" }, 400);
     }
-    const created = await createApiKeyConnection(c.env, b.provider, b.name.trim(), b.api_key.trim());
+    if ("priority" in b && b.priority !== null && !isPriority(b.priority)) return c.json({ error: "invalid_input", field: "priority" }, 400);
+    if ("proxy_pool" in b && b.proxy_pool !== null && (typeof b.proxy_pool !== "string" || !(await poolExists(c.env.DB, b.proxy_pool)))) {
+      return c.json({ error: "invalid_input", field: "proxy_pool" }, 400);
+    }
+    if (!keyShapeOk(b.provider, b.api_key.trim())) return c.json({ error: "invalid_input", field: "api_key" }, 400);
+    const merged = mergeSettings(b.provider, b.settings);
+    if (!merged.ok) return c.json({ error: "invalid_input", field: merged.field }, 400);
+    const created = await createApiKeyConnection(c.env, b.provider, b.name.trim(), b.api_key.trim(), {
+      priority: (b.priority as number | null | undefined) ?? null,
+      proxyPool: (b.proxy_pool as string | null | undefined) ?? null,
+      settings: merged.settings,
+    });
     if (!created) return c.json(NO_BOX, 500);
     return c.json(created, 201);
+  });
+  /** The console's Check button: asks the provider with a key that is not stored. The answer never has the key. */
+  a.post("/connections/check", async (c) => {
+    const b = await readJson(c.req.raw);
+    if (!b || typeof b.provider !== "string" || !isProvider(b.provider) || !isApiKey(b.api_key) || providerDef(b.provider).auth === "oauth") {
+      return c.json({ error: "invalid_input", hint: "provider: a known API-key provider id, api_key: the provider's key" }, 400);
+    }
+    if (!keyShapeOk(b.provider, b.api_key.trim())) return c.json({ error: "invalid_input", field: "api_key" }, 400);
+    const merged = mergeSettings(b.provider, b.settings);
+    if (!merged.ok) return c.json({ error: "invalid_input", field: merged.field }, 400);
+    return c.json(await checkKey(c.env, upstream, b.provider, b.api_key.trim(), merged.settings));
   });
 
   a.patch("/connections/:id", async (c) => {
@@ -282,17 +470,29 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
       args.push(b.disabled ? 1 : 0);
     }
     if ("priority" in b) {
-      if (typeof b.priority !== "number" || !Number.isSafeInteger(b.priority) || b.priority < 1) return c.json({ error: "invalid_input", field: "priority" }, 400);
+      if (!isPriority(b.priority)) return c.json({ error: "invalid_input", field: "priority" }, 400);
       sets.push("priority = ?");
       args.push(b.priority);
     }
-    if ("api_key" in b) {
-      if (cur.auth_type !== "api_key" || !isApiKey(b.api_key)) return c.json({ error: "invalid_input", field: "api_key" }, 400);
-      const sealed = await sealApiKey(c.env, b.api_key.trim());
+    if ("proxy_pool" in b) {
+      if (b.proxy_pool !== null && (typeof b.proxy_pool !== "string" || !(await poolExists(c.env.DB, b.proxy_pool)))) return c.json({ error: "invalid_input", field: "proxy_pool" }, 400);
+      sets.push("proxy_pool = ?");
+      args.push(b.proxy_pool);
+    }
+    if ("api_key" in b || "settings" in b) {
+      if (cur.auth_type !== "api_key") return c.json({ error: "invalid_input", field: "api_key" in b ? "api_key" : "settings" }, 400);
+      if ("api_key" in b && (!isApiKey(b.api_key) || !keyShapeOk(cur.provider, b.api_key.trim()))) return c.json({ error: "invalid_input", field: "api_key" }, 400);
+      // The key and the settings are sealed together: a new key keeps the settings, new settings keep the key.
+      const stored = await storedSecret(c.env, id);
+      if (!stored) return c.json(NO_BOX, 500);
+      const merged = mergeSettings(cur.provider, b.settings, stored.settings);
+      if (!merged.ok) return c.json({ error: "invalid_input", field: merged.field }, 400);
+      const sealed = await sealApiKey(c.env, "api_key" in b ? (b.api_key as string).trim() : stored.apiKey, merged.settings);
       if (!sealed) return c.json(NO_BOX, 500);
-      // A new key starts clean: what the old key was refused or limited for no longer holds.
-      sets.push("secret = ?", "hint = ?", "cooldown_until = 0", "backoff_level = 0", "last_error = NULL", "last_error_at = NULL");
+      sets.push("secret = ?", "hint = ?");
       args.push(sealed.secret, sealed.hint);
+      // A new key starts clean: what the old key was refused or limited for no longer holds.
+      if ("api_key" in b) sets.push("cooldown_until = 0", "backoff_level = 0", "last_error = NULL", "last_error_at = NULL");
     }
     if (sets.length > 0) {
       await c.env.DB.prepare(`UPDATE connection SET ${sets.join(", ")}, updated_at = ? WHERE id = ?`)
@@ -336,6 +536,38 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
   });
 
   reportRoutes(a);
+  logRoutes(a);
+  proxyPoolRoutes(a, upstream);
+  backupRoutes(a);
+  providerHeaderRoutes(a);
+  webToolAdminRoutes(a, upstream);
+  mediaAdminRoutes(a);
+  a.get("/settings/info", (c) => {
+    const e = c.env;
+    const set = (v: string | undefined) => typeof v === "string" && v.trim() !== "";
+    return c.json({
+      admin_token: set(e.ADMIN_TOKEN_SHA256),
+      oidc: set(e.OIDC_ISSUER) && set(e.OIDC_CLIENT_ID) && set(e.OIDC_CLIENT_SECRET),
+      console_emails: (e.CONSOLE_EMAILS ?? "").split(",").filter((x) => x.trim() !== "").length,
+      connections_key: set(e.CONNECTIONS_KEY),
+      codex_relay: set(e.CODEX_RELAY_URL) && set(e.CODEX_RELAY_SECRET),
+    });
+  });
+  modelRoutes(a, upstream);
+  customProviderRoutes(a);
+  visionAdapterRoutes(a);
+  translatorRoutes(a);
+
+  /** The strategy of a combo without its own, and how many requests round robin keeps a model (combo-strategy.ts). */
+  a.get("/combo-settings", async (c) => c.json(await getComboSettings(c.env.DB)));
+
+  a.put("/combo-settings", async (c) => {
+    const b = await readJson(c.req.raw);
+    const next = b ? mergeComboSettings(await getComboSettings(c.env.DB), b) : null;
+    if (!next) return c.json({ error: "invalid_input", hint: `strategy: one of ${STRATEGIES.join(", ")}; sticky_limit: 1 to 1000` }, 400);
+    await saveComboSettings(c.env.DB, next);
+    return c.json(next);
+  });
 
   /** The savers every system gets (settings.ts). PUT takes any of the fields and keeps the others. */
   a.get("/token-saver", async (c) => c.json(await getTokenSaver(c.env.DB)));

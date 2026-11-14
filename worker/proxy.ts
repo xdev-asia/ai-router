@@ -3,17 +3,18 @@ import { presentedToken, systemForToken, type System } from "./auth";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess, type Candidate } from "./connections";
 import type { AppEnv, Env } from "./env";
 import { anthropicError } from "./errors";
-import { allowedPatterns, allows, parseModel, targetName } from "./providers";
+import { allowedPatterns, allows, anthropicBase, isCustomProvider, parseModel, providerDef, targetName, type ProviderId } from "./providers";
 import { anyOn, applySavers, saversFor } from "./savers";
 import { getTokenSaver } from "./settings";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
 export type Upstream = (req: Request) => Promise<Response>;
 
-const PROVIDER = "anthropic";
+const PROVIDER: ProviderId = "anthropic";
 
 /** Request headers passed on to Anthropic. Everything else (cookies, the gateway token, client hints) stays here. */
 const FORWARD_REQUEST = ["anthropic-version", "anthropic-beta", "content-type", "accept"];
+const OAUTH_BETA = "oauth-2025-04-20";
 
 /** Response headers dropped: the body is re-streamed, so its length and encoding no longer hold. */
 const DROP_RESPONSE = ["content-length", "content-encoding", "transfer-encoding", "set-cookie"];
@@ -52,7 +53,8 @@ async function gate(c: Context<AppEnv>, metered: boolean): Promise<{ ok: true; s
   return { ok: false, res: anthropicError(c, g.status, ANTHROPIC_TYPE[g.kind], g.message, g.noRetry) };
 }
 
-const noKey = (c: Context<AppEnv>) => anthropicError(c, 500, "api_error", "not_configured: no Anthropic key for this system", true);
+const noKey = (c: Context<AppEnv>, provider: ProviderId) =>
+  anthropicError(c, 500, "api_error", provider === PROVIDER ? "not_configured: no Anthropic key for this system" : `not_configured: no connection for ${provider}`, true);
 
 /** "<message>" of an Anthropic error body, for the account's last error. Never request content. */
 async function errorMessage(up: Response): Promise<string> {
@@ -70,25 +72,39 @@ function retryAfterOf(up: Response): number | null {
  * not an account failure (429, 5xx, refused key), or the last account's answer as it came. An account that
  * failed is set aside, and its attempt gets a usage row when `metered`. Null: no account and no key.
  */
-async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: System, path: string, body: ArrayBuffer, metered: boolean, rtkSaved: number): Promise<Response | null> {
+async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: System, provider: ProviderId, path: string, body: ArrayBuffer, metered: boolean, rtkSaved: number): Promise<Response | null> {
   const now = Math.floor(Date.now() / 1000);
   let failed: { up: Response; cand: Candidate } | null = null;
-  for (const cand of await candidatesFor(c.env, "anthropic", system.id, now, upstream)) {
+  // A subscription login with no usable token: its answer, if no account does better.
+  let keyFailure: Response | null = null;
+  const oauth = providerDef(provider).auth === "oauth";
+  for (const cand of await candidatesFor(c.env, provider, system.id, now, upstream)) {
     const key = await cand.key();
+    if (key && typeof key !== "string") {
+      keyFailure ??= authFailure(key);
+      await noteFailure(c.env.DB, cand, key.status, key.error, null, now);
+      continue;
+    }
     if (typeof key !== "string") continue;
     if (failed) {
       // There is another account to try: this failure is not the client's answer.
-      if (metered) record(c, system, failed.up, false, Promise.resolve(EMPTY), PROVIDER, rtkSaved);
+      if (metered) record(c, system, failed.up, false, Promise.resolve(EMPTY), provider, rtkSaved);
       await noteFailure(c.env.DB, failed.cand, failed.up.status, await errorMessage(failed.up), retryAfterOf(failed.up), now);
     }
-    const up = await upstream(upstreamRequest(c, path, key, body));
+    c.set("connection", cand.connection);
+    let up = await upstream(upstreamRequest(c, provider, path, key, body, oauth));
+    // A subscription token refused before it expired (revoked, or renewed elsewhere): renew it once and send again.
+    if (up.status === 401 && oauth) {
+      const renewed = await cand.key(true);
+      if (typeof renewed === "string") up = await upstream(upstreamRequest(c, provider, path, renewed, body, oauth));
+    }
     if (!accountFailure(up.status)) {
       c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now).catch(() => undefined));
       return up;
     }
     failed = { up, cand };
   }
-  if (!failed) return null;
+  if (!failed) return keyFailure;
   // The last account's failure goes to the client untouched; a copy tells the console why the account is set aside.
   const { up, cand } = failed;
   if (cand.connection !== null) {
@@ -102,15 +118,30 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
   return up;
 }
 
-function upstreamRequest(c: Context<AppEnv>, path: string, key: string, body: ArrayBuffer): Request {
-  const base = c.env.ANTHROPIC_BASE_URL.replace(/\/+$/, "");
-  const search = new URL(c.req.url).search; // keeps `?beta=true`, which the SDK adds on beta endpoints
+/** 401: sign in again; 502: the sign-in service is down. The message never holds a token (oauth.ts). */
+const authFailure = (f: { error: string; status: number }) =>
+  Response.json({ type: "error", error: { type: f.status === 401 ? "authentication_error" : "api_error", message: f.error } }, { status: f.status, headers: { "x-should-retry": "false" } });
+
+function upstreamRequest(c: Context<AppEnv>, provider: ProviderId, path: string, key: string, body: ArrayBuffer, oauth = false): Request {
+  const base = anthropicBase(c.env, provider);
+  // Keeps `?beta=true`, which the SDK adds on beta endpoints; drops `key`, where a caller may put the gateway token.
+  const params = new URL(c.req.url).searchParams;
+  params.delete("key");
+  const query = params.toString();
+  const search = query ? `?${query}` : "";
   const headers = new Headers();
   for (const h of FORWARD_REQUEST) {
     const v = c.req.header(h);
     if (v !== undefined) headers.set(h, v);
   }
-  headers.set("x-api-key", key);
+  if (oauth) {
+    // A subscription login (Claude Code) sends its OAuth access token as a bearer, with the beta that accepts it.
+    const betas = (headers.get("anthropic-beta") ?? "").split(",").map((s) => s.trim()).filter((s) => s && s !== OAUTH_BETA);
+    headers.set("anthropic-beta", [OAUTH_BETA, ...betas].join(","));
+    headers.set("authorization", `Bearer ${key}`);
+  } else {
+    headers.set("x-api-key", key);
+  }
   return new Request(base + path + search, { method: "POST", headers, body });
 }
 
@@ -122,36 +153,51 @@ function responseHeaders(up: Response): Headers {
 }
 
 export function record(c: Context<AppEnv>, system: System, up: Response, streamed: boolean, usage: Promise<Usage>, provider: string = PROVIDER, rtkSaved = 0): void {
+  // The console's model test runs as no system and leaves no usage row.
+  if (system.id === "") return;
   const requestId = up.headers.get("request-id");
+  // Read now: the next account's attempt changes it.
+  const connection = c.get("connection") ?? null;
   c.executionCtx.waitUntil(
     usage
       .catch(() => EMPTY)
       .then((u) =>
         // Taken when the usage is known: for a stream, that is its last byte.
-        recordUsage(c.env.DB, { ...u, system_id: system.id, provider, request_id: requestId, status: up.status, streamed, rtk_saved_bytes: rtkSaved, latency_ms: Date.now() - c.get("startedAt") }),
+        recordUsage(c.env.DB, { ...u, system_id: system.id, provider, request_id: requestId, status: up.status, streamed, rtk_saved_bytes: rtkSaved, latency_ms: Date.now() - c.get("startedAt"), connection_id: connection }),
       )
       // Logs the system and status only: never keys, tokens or content.
       .catch((e: unknown) => console.error("usage record failed", system.id, up.status, e instanceof Error ? e.name : "error")),
   );
 }
 
-/** /anthropic forwards Claude models only, and only those the system may call. */
-function modelRefused(c: Context<AppEnv>, system: System, body: ArrayBuffer): Response | null {
-  let model: unknown;
+const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).buffer as ArrayBuffer;
+
+/**
+ * /anthropic forwards Claude models, and the models of the owner's Anthropic-compatible providers
+ * (`<id>/<model>`, sent upstream as `<model>`), only those the system may call. Anything else is refused.
+ * A body that is not JSON, or has no model, goes to Anthropic, which answers with its own 400.
+ */
+function routeOf(c: Context<AppEnv>, system: System, body: ArrayBuffer): { res: Response } | { provider: ProviderId; body: ArrayBuffer } {
+  let parsed: unknown;
   try {
-    model = (JSON.parse(new TextDecoder().decode(body)) as { model?: unknown }).model;
+    parsed = JSON.parse(new TextDecoder().decode(body));
   } catch {
-    return null; // not JSON: Anthropic answers with its own 400
+    return { provider: PROVIDER, body };
   }
-  if (typeof model !== "string") return null; // no model: Anthropic answers with its own 400
+  const model = (parsed as { model?: unknown } | null)?.model;
+  if (typeof model !== "string") return { provider: PROVIDER, body };
   const ref = parseModel(model);
-  if (!ref || ref.kind !== "target" || ref.target.provider !== "anthropic") {
-    return anthropicError(c, 404, "not_found_error", "this surface serves Claude models; use /openai/v1 for other providers and combos");
+  const t = ref?.kind === "target" ? ref.target : null;
+  // The owner's Anthropic-compatible providers, and the Claude subscription (`claude/`, a sign-in).
+  const custom = t !== null && providerDef(t.provider).format === "anthropic" && (isCustomProvider(t.provider) || providerDef(t.provider).auth === "oauth");
+  if (!t || (t.provider !== PROVIDER && !custom)) {
+    return { res: anthropicError(c, 404, "not_found_error", "this surface serves Claude models and Anthropic-compatible providers; use /openai/v1 for other providers and combos") };
   }
-  if (!allows(allowedPatterns(system.allowed_models), targetName(ref.target))) {
-    return anthropicError(c, 403, "permission_error", "this system may not use this model");
+  if (!allows(allowedPatterns(system.allowed_models), targetName(t))) {
+    return { res: anthropicError(c, 403, "permission_error", "this system may not use this model") };
   }
-  return null;
+  // Anthropic's own model goes as the client sent it; a custom provider's without its prefix.
+  return { provider: t.provider, body: custom ? encode({ ...(parsed as object), model: t.model }) : body };
 }
 
 export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
@@ -160,9 +206,10 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages", async (c) => {
     const g = await gate(c, true);
     if (!g.ok) return g.res;
-    let body = await c.req.arrayBuffer();
-    const refused = modelRefused(c, g.system, body);
-    if (refused) return refused;
+    const route = routeOf(c, g.system, await c.req.arrayBuffer());
+    if ("res" in route) return route.res;
+    const { provider } = route;
+    let body = route.body;
     // Token savers rewrite the body; with none on, the client's bytes go upstream untouched.
     // Headroom is not applied here: it only takes requests in OpenAI shape (see /openai/v1).
     const savers = saversFor(g.system, c.req.raw, await getTokenSaver(c.env.DB));
@@ -171,17 +218,17 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
       try {
         const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
         rtkSaved = applySavers(parsed, "anthropic", savers);
-        body = new TextEncoder().encode(JSON.stringify(parsed)).buffer as ArrayBuffer;
+        body = encode(parsed);
       } catch {
         // not JSON: forwarded as is, Anthropic answers 400
       }
     }
-    const up = await sendWithAccounts(c, upstream, g.system, "/v1/messages", body, true, rtkSaved);
-    if (!up) return noKey(c);
+    const up = await sendWithAccounts(c, upstream, g.system, provider, "/v1/messages", body, true, rtkSaved);
+    if (!up) return noKey(c, provider);
     const headers = responseHeaders(up);
 
     if (!up.body) {
-      record(c, g.system, up, false, Promise.resolve(EMPTY), PROVIDER, rtkSaved);
+      record(c, g.system, up, false, Promise.resolve(EMPTY), provider, rtkSaved);
       return new Response(null, { status: up.status, headers });
     }
     const streamed = (up.headers.get("content-type") ?? "").includes("text/event-stream");
@@ -192,7 +239,7 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
       up,
       streamed,
       streamed ? usageOfStream(toMeter) : new Response(toMeter).json().then(usageOfMessage),
-      PROVIDER,
+      provider,
       rtkSaved,
     );
     return new Response(toClient, { status: up.status, headers });
@@ -202,11 +249,10 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages/count_tokens", async (c) => {
     const g = await gate(c, false);
     if (!g.ok) return g.res;
-    const body = await c.req.arrayBuffer();
-    const refused = modelRefused(c, g.system, body);
-    if (refused) return refused;
-    const up = await sendWithAccounts(c, upstream, g.system, "/v1/messages/count_tokens", body, false, 0);
-    if (!up) return noKey(c);
+    const route = routeOf(c, g.system, await c.req.arrayBuffer());
+    if ("res" in route) return route.res;
+    const up = await sendWithAccounts(c, upstream, g.system, route.provider, "/v1/messages/count_tokens", route.body, false, 0);
+    if (!up) return noKey(c, route.provider);
     return new Response(up.body, { status: up.status, headers: responseHeaders(up) });
   });
 

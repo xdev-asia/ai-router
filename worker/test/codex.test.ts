@@ -304,7 +304,7 @@ describe("requests through a Codex account", () => {
     expect(JSON.parse(text).error.message).toBe("model overloaded");
   });
 
-  it("takes the effort from a model name that ends with one, as 9router does", async () => {
+  it("takes the effort from a model name that ends with one", async () => {
     const token = await system();
     await signIn();
     const up = fakeUpstream(() => sse(HELLO));

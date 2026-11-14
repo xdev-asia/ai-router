@@ -75,6 +75,20 @@ describe("authentication", () => {
 });
 
 describe("forwarding", () => {
+  it("never forwards a gateway token sent as ?key= to the provider", async () => {
+    const token = await addSystem("chat");
+    const up = fakeUpstream(jsonReply);
+    const body = { model: "claude-opus-5-5", max_tokens: 16, messages: [{ role: "user", content: "hi" }] };
+    const init = messagesInit(token, body);
+    const headers = new Headers(init.headers);
+    headers.delete("x-api-key");
+    headers.delete("authorization");
+    const { res } = await call(up, `/anthropic/v1/messages?beta=true&key=${token}`, { ...init, headers });
+    expect(res.status).toBe(200);
+    expect(up.calls[0]!.url).toBe("https://upstream.test/v1/messages?beta=true");
+    expect(up.calls[0]!.url).not.toContain(token);
+  });
+
   it("swaps the gateway token for the system's key and keeps the body, query, version and beta headers", async () => {
     const token = await addSystem("chat");
     const up = fakeUpstream(jsonReply);

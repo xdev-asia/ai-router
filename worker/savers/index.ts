@@ -1,6 +1,6 @@
 /**
  * Token savers, switched on per system (see migrations/0004_savers.sql). The filters and prompt texts are
- * vendored from 9router (see THIRD_PARTY_NOTICES.md); which parts of a request they touch is decided here.
+ * vendored from 9router (MIT; see THIRD_PARTY_NOTICES.md); which parts of a request they touch is decided here.
  *
  * - RTK: rewrites successful tool results (Claude `tool_result`, OpenAI `role: "tool"`) longer than 500 bytes
  *   with a filter picked from their first 1 KB (git diff/log/status, grep, find, ls, tree, build output,

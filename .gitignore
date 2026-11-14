@@ -6,3 +6,4 @@ dist
 .superpowers
 .local-system-token
 .codex-relay.env
+.claude/

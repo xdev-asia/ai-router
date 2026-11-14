@@ -1,10 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, pageFromHash, providerFromHash } from "../App";
-import { setToken } from "../api";
+import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
+import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
 import { providerLogo } from "../provider-logos";
+import { ui } from "../ui-labels";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -42,6 +44,14 @@ const SUMMARY = {
   by_system: [{ system_id: "chat", ...TOKENS, requests: 3, input_tokens: 4010, output_tokens: 620, cost: 3.6 }],
   recent: [{ id: 9, at: 1_790_000_500, system_id: "chat", provider: "openai", model: "gpt-5", status: 429, streamed: false, ...TOKENS, input_tokens: 77, latency_ms: 812 }],
 };
+const CHART = {
+  period: "24h",
+  step: 3600,
+  buckets: [
+    { t: 1_789_996_400, requests: 0, tokens: 0, cost: 0 },
+    { t: 1_790_000_000, requests: 3, tokens: 4900, cost: null },
+  ],
+};
 const REQUESTS = {
   rows: [
     { id: 9, at: 1_790_000_500, system_id: "chat", provider: "openai", model: "gpt-5", status: 429, streamed: false, ...TOKENS, input_tokens: 77, latency_ms: 812 },
@@ -50,28 +60,34 @@ const REQUESTS = {
 };
 
 let calls: { method: string; url: string; auth: string | null; body: unknown }[];
-let routes: Record<string, () => Response>;
+let routes: Record<string, (body?: unknown) => Response>;
 /** The xDev ID session the fake gateway sees (the cookie itself is invisible to the page). */
 let ssoUser: { email: string; name: string } | null;
 let ssoConfigured: boolean;
+/** Whether the fake gateway holds a session opened with the admin token (POST /auth/token). */
+let tokenSession: boolean;
 
 beforeEach(() => {
-  localStorage.setItem("xdev-llm.lang", "en");
+  localStorage.setItem("ai-router.lang", "en");
   resetLang();
   window.location.hash = "";
   calls = [];
   ssoUser = null;
   ssoConfigured = false;
+  tokenSession = false;
   window.history.replaceState({}, "", "/");
   routes = {
     "GET /admin/systems": () => json([SYSTEM]),
     "GET /admin/usage": () => json(USAGE),
     "GET /admin/usage/summary": () => json(SUMMARY),
+    "GET /admin/usage/chart": () => json(CHART),
     "GET /admin/usage/requests": () => json(REQUESTS),
     "POST /admin/systems": () => json({ id: "xdevd", token: "xllm_new_token" }, 201),
     "PATCH /admin/systems/chat": () => json(SYSTEM),
     "GET /admin/combos": () => json([{ name: "fast", targets: ["groq/llama", "claude-haiku-5-5"], updated_at: 1 }]),
-    "PUT /admin/combos/cheap": () => json({ name: "cheap", targets: ["groq/llama"], updated_at: 2 }),
+    "POST /admin/combos": (body) =>
+      (body as { name?: string }).name === "taken" ? json({ error: "Combo name already exists" }, 400) : json({ ...(body as object), updated_at: 2 }, 201),
+    "PUT /admin/combos/fast": () => json({ name: "quick", targets: [], updated_at: 2 }),
     "DELETE /admin/combos/fast": () => new Response(null, { status: 204 }),
   };
   vi.stubGlobal("fetch", async (input: string, init: RequestInit = {}) => {
@@ -79,21 +95,30 @@ beforeEach(() => {
     const url = String(input);
     const auth = new Headers(init.headers).get("authorization");
     calls.push({ method, url, auth, body: init.body ? JSON.parse(String(init.body)) : undefined });
-    if (url === "/auth/me") return ssoUser ? json(ssoUser) : json({ error: "unauthorized", sso: ssoConfigured }, 401);
+    if (url === "/auth/token") {
+      if (auth !== "Bearer good-admin-token") return json({ error: "unauthorized" }, 401);
+      tokenSession = true;
+      return json({ admin: true });
+    }
+    if (url === "/auth/me") {
+      if (tokenSession) return json({ admin: true });
+      return ssoUser ? json(ssoUser) : json({ error: "unauthorized", sso: ssoConfigured }, 401);
+    }
     if (url === "/auth/logout") {
       ssoUser = null;
+      tokenSession = false;
       return new Response(null, { status: 204 });
     }
-    const signedIn = auth === "Bearer good-admin-token" || (auth === null && ssoUser !== null);
+    const signedIn = auth === null && (ssoUser !== null || tokenSession);
     if (!signedIn) return json({ error: "unauthorized" }, 401);
     const route = routes[`${method} ${url.split("?")[0]}`];
-    return route ? route() : json({ error: "not_found" }, 404);
+    return route ? route(calls[calls.length - 1].body) : json({ error: "not_found" }, 404);
   });
 });
 
 afterEach(() => {
   cleanup();
-  act(() => setToken(null));
+  act(() => setAuth(null));
   vi.unstubAllGlobals();
 });
 
@@ -110,7 +135,7 @@ describe("sign in", () => {
     expect(screen.queryByText(t("systems.title"))).toBeNull();
   });
 
-  it("opens the systems page with a good token and sends it as a bearer", async () => {
+  it("opens the systems page with a good token, sent once to /auth/token", async () => {
     await signIn();
     expect(await screen.findByRole("heading", { name: t("systems.title") })).toBeTruthy();
     expect(await screen.findByText("Chat")).toBeTruthy();
@@ -118,7 +143,28 @@ describe("sign in", () => {
     expect(screen.getByText("chat")).toBeTruthy();
     const adminCalls = calls.filter((c) => c.url.startsWith("/admin/"));
     expect(adminCalls.length).toBeGreaterThan(0);
-    expect(adminCalls.every((c) => c.auth === "Bearer good-admin-token")).toBe(true);
+    // The gateway's session cookie carries the rest; the page never sends the token again.
+    expect(adminCalls.every((c) => c.auth === null)).toBe(true);
+    expect(calls.filter((c) => c.auth === "Bearer good-admin-token").map((c) => `${c.method} ${c.url}`)).toEqual(["POST /auth/token"]);
+  });
+
+  it("stays signed in after a reload", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    cleanup();
+    act(() => setAuth(null)); // a reload starts with an empty page
+    render(<App />);
+    expect(await screen.findByText("Chat")).toBeTruthy();
+    expect(screen.queryByLabelText(t("signin.token"))).toBeNull();
+  });
+
+  it("sign-out ends the admin token session on the gateway", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    fireEvent.click(screen.getByRole("button", { name: t("shell.account") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("shell.signOut") }));
+    expect(await screen.findByLabelText(t("signin.token"))).toBeTruthy();
+    expect(tokenSession).toBe(false);
   });
 
   it("does not keep the token in web storage", async () => {
@@ -131,7 +177,11 @@ describe("sign in", () => {
   it("signs out when the API answers 401", async () => {
     await signIn();
     await screen.findByText("Chat");
-    routes["GET /admin/usage/summary"] = () => json({ error: "unauthorized" }, 401);
+    // The session ended on the gateway (expired, or the admin token changed): /auth/me says so too.
+    routes["GET /admin/usage/summary"] = () => {
+      tokenSession = false;
+      return json({ error: "unauthorized" }, 401);
+    };
     window.location.hash = "#/usage";
     fireEvent(window, new HashChangeEvent("hashchange"));
     expect(await screen.findByLabelText(t("signin.token"))).toBeTruthy();
@@ -163,7 +213,8 @@ describe("sign in with xDev ID", () => {
     ssoConfigured = true;
     render(<App />);
     await screen.findByText("Chat");
-    fireEvent.click(screen.getByRole("button", { name: t("shell.signOut") }));
+    fireEvent.click(screen.getByRole("button", { name: t("shell.account") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("shell.signOut") }));
     expect(await screen.findByRole("button", { name: t("signin.sso") })).toBeTruthy();
     expect(calls.some((c) => c.method === "POST" && c.url === "/auth/logout")).toBe(true);
   });
@@ -181,6 +232,136 @@ describe("sign in with xDev ID", () => {
   });
 });
 
+describe("frame", () => {
+  const banner = () => screen.getByRole("banner");
+
+  it("the top bar holds the page's title and description; it is the page's only h1", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    const h1 = await within(banner()).findByRole("heading", { level: 1, name: t("systems.title") });
+    expect(h1).toBeTruthy();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(within(banner()).getByText(t("systems.description"))).toBeTruthy();
+  });
+
+  it("each page puts its own title in the top bar", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    for (const [hash, title] of [
+      ["#/usage", "usage.title"],
+      ["#/combos", "combos.title"],
+      ["#/token-saver", "saver.title"],
+    ] as const) {
+      window.location.hash = hash;
+      fireEvent(window, new HashChangeEvent("hashchange"));
+      expect(await within(banner()).findByRole("heading", { level: 1, name: t(title) })).toBeTruthy();
+      expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    }
+  });
+
+  it("the sidebar lists the pages in order, in three groups, and marks the open one", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    const gateway = screen.getByRole("navigation", { name: t("nav.title") });
+    const insight = screen.getByRole("navigation", { name: t("nav.insight") });
+    const system = screen.getByRole("navigation", { name: t("nav.system") });
+    const links = [...within(gateway).getAllByRole("link"), ...within(insight).getAllByRole("link"), ...within(system).getAllByRole("link")];
+    const name = (a: HTMLElement) => a.querySelector(".settings-nav-label")?.textContent;
+    expect(within(gateway).getAllByRole("link").map(name)).toEqual([t("nav.systems"), t("nav.providers"), t("nav.combos"), t("nav.cliTools")]);
+    expect(within(insight).getAllByRole("link").map(name)).toEqual([t("nav.usage"), t("nav.quota"), t("nav.tokenSaver")]);
+    expect(within(system).getAllByRole("link").map(name)).toEqual([t("nav.media"), t("nav.proxyPools"), t("nav.skills"), t("nav.logs"), t("nav.settings"), t("nav.pricing")]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "#/systems", "#/providers", "#/combos", "#/cli-tools",
+      "#/usage", "#/quota", "#/token-saver",
+      "#/media", "#/proxy-pools", "#/skills", "#/logs", "#/settings", "#/pricing",
+    ]);
+    expect(name(within(gateway).getByRole("link", { current: "page" }))).toBe(t("nav.systems"));
+    expect(within(insight).queryByRole("link", { current: "page" })).toBeNull();
+  });
+
+  it("the sidebar counts the combos and the accounts, and marks an account cooling down", async () => {
+    routes["GET /admin/connections"] = () =>
+      json([
+        { id: "a", provider: "openai", disabled: false, cooldown_until: 0 },
+        { id: "b", provider: "openai", disabled: false, cooldown_until: Date.now() / 1000 + 600 },
+      ]);
+    await signIn();
+    await screen.findByText("Chat");
+    const gateway = screen.getByRole("navigation", { name: t("nav.title") });
+    const link = (href: string) => within(gateway).getAllByRole("link").find((a) => a.getAttribute("href") === href)!;
+    await waitFor(() => expect(link("#/combos").querySelector(".settings-nav-count")?.textContent).toBe("1"));
+    expect(link("#/providers").querySelector(".settings-nav-count")?.textContent).toBe("2");
+    expect(within(link("#/providers")).getByText(t("nav.cooling", { n: "1" }))).toBeTruthy();
+  });
+
+  it("Ctrl K opens the palette, which goes to a page or a provider", async () => {
+    routes["GET /admin/providers"] = () => json([{ id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false, key_url: null, strategy: "fill-first", color: "#10a37f", mark: "OA" }]);
+    routes["GET /admin/connections"] = () => json([]);
+    await signIn();
+    await screen.findByText("Chat");
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.click(within(await screen.findByRole("dialog", { name: t("palette.dialog") })).getByText(t("nav.usage")));
+    expect(window.location.hash).toBe("#/usage");
+    expect(screen.queryByRole("dialog", { name: t("palette.dialog") })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("palette.trigger") }));
+    fireEvent.click(await within(await screen.findByRole("dialog", { name: t("palette.dialog") })).findByText("OpenAI"));
+    expect(window.location.hash).toBe("#/providers/openai");
+  });
+
+  it("the sidebar shows the product name, the gateway status and the version", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    const side = screen.getByRole("complementary");
+    expect(within(side).getByText(t("app.name"))).toBeTruthy();
+    expect(within(side).getByText(t("app.tagline"))).toBeTruthy();
+    expect(within(side).getByText(t("shell.online"))).toBeTruthy();
+    expect(within(side).getByText(`v${__APP_VERSION__}`)).toBeTruthy();
+  });
+
+  it("Endpoint & Key opens on the base URL of this origin and the /v1 paths", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    expect(screen.getByRole("heading", { level: 2, name: t("endpoint.title") })).toBeTruthy();
+    expect(screen.getAllByText(`${window.location.origin}/v1`).length).toBeGreaterThan(0);
+    const paths = screen.getByRole("list", { name: t("endpoint.paths") });
+    expect(within(paths).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["/v1/chat/completions", "/v1/messages", "/v1/models"]);
+  });
+
+  it("the provider search sits in the top bar on the providers page only", async () => {
+    routes["GET /admin/providers"] = () => json([]);
+    routes["GET /admin/connections"] = () => json([]);
+    await signIn();
+    await screen.findByText("Chat");
+    expect(screen.queryByRole("searchbox", { name: t("providers.search") })).toBeNull();
+    window.location.hash = "#/providers";
+    fireEvent(window, new HashChangeEvent("hashchange"));
+    const search = await within(banner()).findByRole("searchbox", { name: t("providers.search") });
+    expect(search.getAttribute("placeholder")).toBe(t("providers.searchPlaceholder"));
+  });
+
+  it("the account menu holds the theme and sign out", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    fireEvent.click(within(banner()).getByRole("button", { name: t("shell.account") }));
+    expect(await screen.findByRole("menuitem", { name: t("shell.signOut") })).toBeTruthy();
+    expect(screen.getByRole("menuitemcheckbox", { name: t("theme.dark") })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: t("shell.signOut") }));
+    expect(await screen.findByLabelText(t("signin.token"))).toBeTruthy();
+  });
+
+  it("choosing a page closes the drawer", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    const menu = within(banner()).getByRole("button", { name: ui("en").appShell.openNav });
+    fireEvent.click(menu);
+    expect(within(banner()).getByRole("button", { name: ui("en").appShell.closeNav }).getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(within(screen.getByRole("navigation", { name: t("nav.insight") })).getByRole("link", { name: t("nav.usage") }));
+    expect(within(banner()).getByRole("button", { name: ui("en").appShell.openNav }).getAttribute("aria-expanded")).toBe("false");
+    // Let the link's hash change land here, not in the next test.
+    expect(await within(banner()).findByRole("heading", { level: 1, name: t("usage.title") })).toBeTruthy();
+  });
+});
+
 describe("systems", () => {
   it("creates a system and shows its token once", async () => {
     await signIn();
@@ -193,7 +374,7 @@ describe("systems", () => {
 
     expect(await screen.findByText(t("token.title", { id: "xdevd" }))).toBeTruthy();
     expect(screen.getAllByText(/xllm_new_token/).length).toBeGreaterThan(0);
-    expect(calls.find((c) => c.method === "POST")?.body).toEqual({ id: "xdevd", name: "xDev daemon", monthly_token_cap: 5000 });
+    expect(calls.find((c) => c.method === "POST" && c.url.startsWith("/admin/"))?.body).toEqual({ id: "xdevd", name: "xDev daemon", monthly_token_cap: 5000 });
   });
 
   it("validates the id before calling the API", async () => {
@@ -204,7 +385,7 @@ describe("systems", () => {
     fireEvent.change(screen.getByLabelText(t("create.name")), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: t("create.submit") }));
     await waitFor(() => expect(screen.getByLabelText(t("create.id")).getAttribute("aria-invalid")).toBe("true"));
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(calls.some((c) => c.method === "POST" && c.url.startsWith("/admin/"))).toBe(false);
   });
 });
 
@@ -236,34 +417,56 @@ describe("models and savers", () => {
 });
 
 describe("combos", () => {
-  it("lists combos, adds one and deletes one", async () => {
+  it("lists combos, creates one and deletes one", async () => {
     window.location.hash = "#/combos";
     await signIn();
-    expect(await screen.findByText("combo/fast")).toBeTruthy();
+    expect(await screen.findByText("fast")).toBeTruthy();
     expect(screen.getByText("claude-haiku-5-5")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: t("combos.add") }));
+    fireEvent.click(screen.getAllByRole("button", { name: t("combos.add") })[0]);
     fireEvent.change(screen.getByLabelText(t("combos.name")), { target: { value: "cheap" } });
-    fireEvent.change(screen.getByLabelText(t("combos.targets")), { target: { value: "groq/llama" } });
-    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
-    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/combos/cheap", body: { targets: ["groq/llama"] } }));
+    fireEvent.click(screen.getByRole("button", { name: t("combos.addModel") }));
+    fireEvent.change(screen.getByRole("combobox", { name: t("combos.pickLabel") }), { target: { value: "groq/llama-4" } });
+    fireEvent.click(await screen.findByRole("option", { name: /groq\/llama-4/ }));
+    expect(screen.getByRole("button", { name: t("combos.remove", { name: "groq/llama-4" }) })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: t("combos.create") }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST" && c.url === "/admin/combos")).toMatchObject({ body: { name: "cheap", targets: ["groq/llama-4"] } }));
 
-    fireEvent.click(await screen.findByRole("button", { name: `${t("systems.col.actions")}: fast` }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: t("combos.delete") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("combos.deleteOne", { name: "fast" }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("combos.delete") }));
     expect(await screen.findByText(t("combos.deletedNotice", { name: "fast" }))).toBeTruthy();
   });
 
-  it("checks the name and the targets before saving", async () => {
+  it("checks the name before saving and shows a taken name on the field", async () => {
     window.location.hash = "#/combos";
     await signIn();
-    await screen.findByText("combo/fast");
-    fireEvent.click(screen.getByRole("button", { name: t("combos.add") }));
+    await screen.findByText("fast");
+    fireEvent.click(screen.getAllByRole("button", { name: t("combos.add") })[0]);
+    fireEvent.click(screen.getByRole("button", { name: t("combos.create") }));
+    expect(await screen.findByText(t("combos.nameRequired"))).toBeTruthy();
     fireEvent.change(screen.getByLabelText(t("combos.name")), { target: { value: "Bad Name" } });
-    fireEvent.change(screen.getByLabelText(t("combos.targets")), { target: { value: "gpt-5" } });
+    fireEvent.click(screen.getByRole("button", { name: t("combos.create") }));
+    expect(calls.some((c) => c.method === "POST" && c.url === "/admin/combos")).toBe(false);
+
+    fireEvent.change(screen.getByLabelText(t("combos.name")), { target: { value: "taken" } });
+    fireEvent.click(screen.getByRole("button", { name: t("combos.create") }));
+    expect(await screen.findByText(t("combos.taken"))).toBeTruthy();
+  });
+
+  it("renames a combo through PUT and filters by search", async () => {
+    window.location.hash = "#/combos";
+    await signIn();
+    await screen.findByText("fast");
+    fireEvent.change(screen.getByRole("searchbox", { name: t("combos.searchLabel") }), { target: { value: "zzz" } });
+    expect(await screen.findByText(t("combos.noMatch", { q: "zzz" }))).toBeTruthy();
+    fireEvent.click(screen.getByText(t("combos.clearSearch"), { selector: "button" }));
+    fireEvent.click(await screen.findByRole("button", { name: t("combos.editOne", { name: "fast" }) }));
+    fireEvent.change(screen.getByLabelText(t("combos.name")), { target: { value: "quick" } });
+    fireEvent.click(screen.getByRole("button", { name: t("combos.moveUp", { name: "claude-haiku-5-5" }) }));
     fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
-    expect(await screen.findByText(t("settings.modelsBad", { bad: "gpt-5" }))).toBeTruthy();
-    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/combos/fast", body: { name: "quick", targets: ["claude-haiku-5-5", "groq/llama"] } }),
+    );
   });
 });
 
@@ -370,7 +573,11 @@ describe("providers", () => {
 
   it("the provider page names the provider, counts its accounts and links back", async () => {
     await openProvider();
-    expect(screen.getByRole("heading", { name: "OpenAI" })).toBeTruthy();
+    const banner = screen.getByRole("banner");
+    expect(await within(banner).findByRole("heading", { level: 1, name: "OpenAI" })).toBeTruthy();
+    const trail = within(banner).getByRole("navigation", { name: `${t("providers.title")} / OpenAI` });
+    expect(within(trail).getByRole("link", { name: t("providers.title") }).getAttribute("href")).toBe("#/providers");
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByText(t("providers.connections", { n: "2" }))).toBeTruthy();
     expect(screen.getByRole("link", { name: t("providers.back") }).getAttribute("href")).toBe("#/providers");
   });
@@ -403,7 +610,7 @@ describe("providers", () => {
     fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
     expect(await screen.findByText(t("providers.nameRequired"))).toBeTruthy();
     expect(screen.getByText(t("providers.apiKeyRequired"))).toBeTruthy();
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(calls.some((c) => c.method === "POST" && c.url.startsWith("/admin/"))).toBe(false);
   });
 
   it("renames without touching the key when the key field is left empty", async () => {
@@ -507,9 +714,10 @@ describe("providers", () => {
       window.location.hash = "#/providers";
       await signIn();
       await screen.findByRole("link", { name: /OpenAI Codex/ });
-      // The section headings of the page, in page order (the sidebar has a heading of its own).
-      const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent).filter((h) => h !== t("nav.title"));
-      expect(headings).toEqual([t("providers.section.oauth"), t("providers.section.api_key")]);
+      // The section headings of the page, in page order (the sidebar has headings of its own).
+      const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent).filter((h) => h !== t("nav.title") && h !== t("nav.insight") && h !== t("nav.system"));
+      // The custom section comes first, shown empty with its add buttons while the owner has none.
+      expect(headings).toEqual([t("providers.section.custom"), t("providers.section.oauth"), t("providers.section.api_key")]);
     });
 
     it("warns that a subscription login may break the provider's terms", async () => {
@@ -543,6 +751,33 @@ describe("providers", () => {
       expect(screen.getByLabelText(t("providers.oauth.callback"))).toBeTruthy();
     });
 
+    it("a device sign-in shows the code, opens the provider's page and closes when the gateway says it is done", async () => {
+      const GITHUB = { ...CODEX, id: "github", name: "GitHub Copilot", format: "openai", key_url: "https://github.com/settings/copilot", color: "#333333", mark: "GH" };
+      const OCTO = account({ id: "o2", provider: "github", auth_type: "oauth", name: "octo@example.com", hint: null, account: "42", expires_at: 1_790_003_600 });
+      routes["GET /admin/providers"] = () => json([...PROVIDER_LIST, CODEX, GITHUB]);
+      routes["GET /admin/connections"] = () => json([WORK, OCTO]);
+      routes["POST /admin/oauth/github/start"] = () =>
+        json({ flow: "device", id: "dev-1", user_code: "WDJB-MJHT", verification_uri: "https://github.com/login/device", interval: 1, expires_in: 600 });
+      let polls = 0;
+      routes["POST /admin/oauth/github/poll"] = () => (++polls === 1 ? json({ status: "pending", interval: 1 }, 202) : json(OCTO, 201));
+      window.location.hash = "#/providers/github";
+      await signIn();
+      await screen.findByText("octo@example.com");
+      fireEvent.click(screen.getByRole("button", { name: t("providers.add") }));
+      await waitFor(() => expect(opened).toEqual(["https://github.com/login/device"]));
+      expect(await screen.findByRole("group", { name: t("providers.device.code") })).toBeTruthy();
+      expect(screen.getByText(t("providers.device.waiting"))).toBeTruthy();
+      expect(await screen.findByText(t("providers.signedIn", { name: "octo@example.com" }), undefined, { timeout: 4000 })).toBeTruthy();
+      expect(polls).toBe(2);
+      expect(calls.filter((c) => c.url === "/admin/oauth/github/poll").map((c) => c.body)).toEqual([{ id: "dev-1" }, { id: "dev-1" }]);
+    });
+
+    it("the paste hint names the address the provider sends the browser back to", async () => {
+      expect(redirectOrigin("https://claude.ai/oauth/authorize?client_id=x&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback")).toBe("http://localhost:54545");
+      expect(redirectOrigin("https://auth.openai.com/oauth/authorize?state=abc")).toBe("http://localhost");
+      expect(redirectOrigin("not a url")).toBe("http://localhost");
+    });
+
     it("a signed-in connection can be renamed but has no key to replace", async () => {
       await openCodex();
       fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: dev@example.com` }));
@@ -570,16 +805,18 @@ describe("providers", () => {
 });
 
 describe("theme", () => {
-  it("the theme switch paints the choice on the page and keeps it for the next visit", async () => {
+  it("the theme icon button flips the theme on the page and keeps it for the next visit", async () => {
     window.location.hash = "#/systems";
     await signIn();
     await screen.findByText("Chat");
-    fireEvent.click(screen.getByRole("button", { name: t("theme.light") }));
+    // No system preference in the test DOM, so the page starts dark and the one button offers light.
+    expect(screen.queryByRole("button", { name: t("theme.light") })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("theme.toLight") }));
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
-    expect(localStorage.getItem("xdev-llm.theme")).toBe("light");
-    fireEvent.click(screen.getByRole("button", { name: t("theme.dark") }));
+    expect(localStorage.getItem("ai-router.theme")).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: t("theme.toDark") }));
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    expect(localStorage.getItem("xdev-llm.theme")).toBe("dark");
+    expect(localStorage.getItem("ai-router.theme")).toBe("dark");
   });
 });
 
@@ -592,14 +829,14 @@ describe("usage", () => {
 
   it("shows the last 24 hours: totals, the cost estimate, and what is behind them", async () => {
     await openUsage();
-    // The total and the only system's row both read 4,010 input tokens.
-    expect(await screen.findAllByText("4,010")).toHaveLength(2);
+    // The total tile reads 4,010 input tokens; the breakdown opens by model, where gpt-5 has 4,000.
+    expect(await screen.findAllByText("4,010")).toHaveLength(1);
     expect(calls.some((c) => c.url === "/admin/usage/summary?period=24h")).toBe(true);
-    // The total, and the provider, system and model that make it up.
-    expect(screen.getAllByText("~$3.60")).toHaveLength(4);
+    // The total, and the model that makes it up.
+    expect(screen.getAllByText("~$3.60")).toHaveLength(2);
     expect(screen.getByText(t("usage.unpriced", { n: "1" }))).toBeTruthy();
     expect(screen.getAllByText("gpt-5").length).toBeGreaterThan(0);
-    expect(screen.getByText("llama-4")).toBeTruthy();
+    expect(screen.getAllByText("llama-4").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: t("usage.byProvider") })).toBeTruthy();
     expect(screen.getByRole("heading", { name: t("usage.topModels") })).toBeTruthy();
     expect(screen.getByRole("heading", { name: t("usage.recent") })).toBeTruthy();

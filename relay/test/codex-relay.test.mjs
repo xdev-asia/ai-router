@@ -107,12 +107,44 @@ describe("codex relay", () => {
     assert.deepEqual(await res.json(), { detail: "The usage limit has been reached" });
   });
 
-  it("serves only POST /codex/responses, and GET /health", async () => {
-    assert.equal((await send({ "x-relay-secret": SECRET }, "{}", "/other")).status, 404);
+  it("serves only its fixed paths, each with its own method, and GET /health", async () => {
+    for (const path of ["/other", "/wham/other", "/wham/usage/../../x", "/codex/responses/x"]) assert.equal((await send({ "x-relay-secret": SECRET }, "{}", path)).status, 404, path);
     assert.equal((await send({ "x-relay-secret": SECRET }, "{}", "/codex/responses", "PUT")).status, 405);
+    assert.equal((await send({ "x-relay-secret": SECRET }, "{}", "/wham/usage", "POST")).status, 405);
+    assert.equal((await send({ "x-relay-secret": SECRET }, "{}", "/wham/rate-limit-reset-credits/consume", "GET")).status, 405);
     const health = await send({}, undefined, "/health", "GET");
     assert.equal(health.status, 200);
     assert.equal(await health.text(), "ok");
+    assert.equal(up.calls.length, 0);
+  });
+
+  it("sends the quota reads on as GET under the upstream's /backend-api, without a body", async () => {
+    up.reply = (_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"plan_type":"plus"}');
+    };
+    for (const path of ["/wham/usage", "/wham/rate-limit-reset-credits"]) {
+      const res = await send({ "x-relay-secret": SECRET, authorization: "Bearer at-fake", "openai-beta": "codex-1", "chatgpt-account-id": "acc_1" }, undefined, path, "GET");
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { plan_type: "plus" });
+    }
+    assert.deepEqual(up.calls.map((c) => `${c.method} ${c.url}`), ["GET /backend-api/wham/usage", "GET /backend-api/wham/rate-limit-reset-credits"]);
+    assert.equal(up.calls[1].headers["openai-beta"], "codex-1");
+    assert.equal(up.calls[1].headers.authorization, "Bearer at-fake");
+    assert.equal(up.calls[1].body, "");
+  });
+
+  it("sends a reset-credit redeem on as POST with its body", async () => {
+    const res = await send({ "x-relay-secret": SECRET, authorization: "Bearer at-fake" }, '{"redeem_request_id":"r-1"}', "/wham/rate-limit-reset-credits/consume");
+    assert.equal(res.status, 200);
+    assert.equal(up.calls.length, 1);
+    assert.equal(up.calls[0].method, "POST");
+    assert.equal(up.calls[0].url, "/backend-api/wham/rate-limit-reset-credits/consume");
+    assert.equal(up.calls[0].body, '{"redeem_request_id":"r-1"}');
+  });
+
+  it("refuses the quota paths without the secret", async () => {
+    assert.equal((await send({}, undefined, "/wham/usage", "GET")).status, 403);
     assert.equal(up.calls.length, 0);
   });
 

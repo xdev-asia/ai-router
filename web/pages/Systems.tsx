@@ -10,7 +10,6 @@ import {
   FormDialog,
   MenuButton,
   Meter,
-  PageHeader,
   Skeleton,
   Stack,
   StatusDot,
@@ -20,6 +19,7 @@ import { ApiError, api, capTokens, useLoad, type System, type UsageReport } from
 import { formatNumber, t, useLang } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
+import { EndpointCard } from "./Endpoint";
 import { SystemSettings } from "./SystemSettings";
 import { TokenDialog } from "./TokenDialog";
 
@@ -146,15 +146,12 @@ export function Systems() {
 
   return (
     <Stack gap={4}>
-      <PageHeader
-        title={t("systems.title")}
-        description={t("systems.description")}
-        actions={
-          <Button variant="primary" icon="plus" onClick={() => setPending({ kind: "create" })}>
-            {t("systems.add")}
-          </Button>
-        }
-      />
+      <EndpointCard />
+      <div className="page-actions">
+        <Button variant="primary" icon="plus" onClick={() => setPending({ kind: "create" })}>
+          {t("systems.add")}
+        </Button>
+      </div>
       {error && <Banner tone="danger" title={error} />}
       <Card flush>
         {systems.status === "loading" && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}

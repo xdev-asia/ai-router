@@ -1,7 +1,7 @@
 /**
- * Providers that have a logo file in `public/providers/<id>.png` (128 px). The files are the provider logos that
- * ship with 9router (MIT); the logos themselves are trademarks of their owners and are used here only to name
- * the provider. A provider without a file shows its letters instead.
+ * Providers that have a logo file in `public/providers/<id>.png` (128 px). A provider without a file shows its
+ * letters instead.
+ * Logo files from 9router (MIT); the logos are trademarks of their owners, used only to name the provider. See THIRD_PARTY_NOTICES.md.
  */
 const WITH_LOGO: ReadonlySet<string> = new Set([
   "agnes",

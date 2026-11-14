@@ -3,8 +3,7 @@ import { EMPTY, type Usage } from "./usage";
 import { CODEX_DEFAULT_INSTRUCTIONS } from "./vendor/codexInstructions.js";
 
 /**
- * Codex: a ChatGPT account reached the way the Codex CLI reaches it (the idea of 9router's Codex executor,
- * written anew). The backend speaks the OpenAI Responses API, always as a stream. This module turns a chat
+ * Codex: a ChatGPT account reached the way the Codex CLI reaches it. The backend speaks the OpenAI Responses API, always as a stream. This module turns a chat
  * completions request into that request, and the stream of `response.*` events back into a chat completion.
  */
 export const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -43,7 +42,7 @@ function parts(content: unknown, type: "input_text" | "output_text"): Json[] {
  */
 
 /**
- * A model name that ends with an effort, as 9router reads it: `gpt-5.2-codex-high` is `gpt-5.2-codex` with effort
+ * A model name that ends with an effort: `gpt-5.2-codex-high` is `gpt-5.2-codex` with effort
  * high. `max` is sent as `xhigh`, except after a name ending in `codex`: `gpt-5.1-codex-max` is a model of its own.
  */
 export function codexModel(name: string): { model: string; effort: string | null } {
