@@ -1,14 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1140" viewBox="0 0 1200 1140" role="img" aria-labelledby="title desc" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="14" fill="#1f2937">
-  <title id="title">Continuous delivery to a Mac mini</title>
-  <desc id="desc">A push to main runs GitHub Actions test, then image builds linux/amd64 and linux/arm64 images and pushes latest and sha-commit tags to GHCR. A Docker Compose stack on an Apple silicon Mac mini runs init, ai-router, codex-relay and Watchtower. Init creates secrets once. The gateway keeps local D1 in a volume. Watchtower makes outbound GHCR polls every 300 seconds, pulls new latest images and restarts only labelled gateway and relay services. Ports bind to localhost only. An optional cloudflared tunnel provides outside access. A separate deploy job depends on test, skips deployment while the D1 id is REPLACE_ME, otherwise builds, applies remote D1 migrations and deploys to Cloudflare Workers.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="14" fill="#1f2937">
+  <title id="title">Continuous delivery to the Mac mini</title>
+  <desc id="desc">The Mac mini is the only deployment. A push to main runs GitHub Actions test, then image builds linux/amd64 and linux/arm64 images and pushes latest and sha-commit tags to GHCR. A Docker Compose stack on an Apple silicon Mac mini runs init, ai-router, codex-relay and Watchtower. Init creates secrets once. The gateway's only database is local D1 in the state volume. Watchtower makes outbound GHCR polls every 300 seconds, pulls new latest images and restarts only labelled gateway and relay services. Ports bind to localhost only. An optional cloudflared tunnel provides outside access.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 Z" fill="#2563eb"/>
     </marker>
   </defs>
-  <rect width="1200" height="1140" fill="#ffffff"/>
-  <text x="32" y="43" font-size="24" font-weight="700">Continuous delivery to a Mac mini</text>
-  <text x="32" y="70" fill="#4b5563">GitHub publishes images; the home server pulls updates over outbound connections.</text>
+  <rect width="1200" height="900" fill="#ffffff"/>
+  <text x="32" y="43" font-size="24" font-weight="700">Continuous delivery to the Mac mini</text>
+  <text x="32" y="70" fill="#4b5563">Only deployment: CI publishes images; the Mac mini pulls them over outbound connections.</text>
 
   <rect x="32" y="98" width="1136" height="248" rx="18" fill="#f9fafb" stroke="#d1d5db"/>
   <text x="56" y="129" font-size="16" font-weight="700">GitHub Actions · ci.yml</text>
@@ -80,9 +80,10 @@
   <text x="354" y="590" font-size="13" fill="#4b5563">Host ports: 8787 + 1455, loopback only</text>
   <text x="354" y="612" font-size="13" fill="#4b5563">Watchtower label: enabled</text>
   <rect x="334" y="680" width="280" height="90" rx="12" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="354" y="709" font-size="16" font-weight="600">state volume · local D1</text>
-  <text x="354" y="736" font-size="13">/app/.wrangler/state</text>
-  <text x="354" y="757" font-size="13" fill="#4b5563">Survives container replacement</text>
+  <text x="354" y="703" font-size="16" font-weight="600">state volume · local D1</text>
+  <text x="354" y="725" font-size="13">Gateway's only database</text>
+  <text x="354" y="743" font-size="13">/app/.wrangler/state</text>
+  <text x="354" y="761" font-size="13" fill="#4b5563">Survives container replacement</text>
 
   <rect x="678" y="486" width="220" height="140" rx="12" fill="#ffffff" stroke="#2563eb"/>
   <text x="698" y="515" font-size="16" font-weight="600">codex-relay</text>
@@ -109,24 +110,4 @@
   <text x="56" y="831" font-size="13" fill="#4b5563">docker compose up -d pulls latest initially. Later updates are pulled by Watchtower; GitHub does not connect to the Mac.</text>
   <text x="56" y="854" font-size="13" fill="#4b5563">Watchtower replaces images. Changes to compose.yaml must be fetched and applied separately.</text>
 
-  <!-- Independent Cloudflare deployment lane. -->
-  <rect x="32" y="910" width="1136" height="206" rx="18" fill="#f9fafb" stroke="#d1d5db"/>
-  <text x="56" y="940" font-size="16" font-weight="700">Separate Cloudflare path</text>
-  <text x="358" y="940" font-size="13" fill="#4b5563">After test succeeds · runs independently of image · main pushes / manual runs</text>
-  <path d="M 306 1026 H 354" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
-  <path d="M 754 1026 H 800" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)"/>
-  <rect x="56" y="960" width="250" height="132" rx="12" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="76" y="989" font-size="16" font-weight="600">Job: deploy</text>
-  <text x="76" y="1016">Check wrangler.jsonc</text>
-  <text x="76" y="1041" font-size="13" fill="#4b5563">Deployment skipped until the</text>
-  <text x="76" y="1063" font-size="13" fill="#4b5563">D1 id replaces REPLACE_ME</text>
-  <rect x="354" y="960" width="400" height="132" rx="12" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="374" y="989" font-size="16" font-weight="600">When the D1 id is configured</text>
-  <text x="374" y="1016">Build console</text>
-  <text x="374" y="1041">Apply remote D1 migrations</text>
-  <text x="374" y="1066">wrangler deploy</text>
-  <rect x="800" y="960" width="344" height="132" rx="12" fill="#ffffff" stroke="#9ca3af"/>
-  <text x="820" y="998" font-size="16" font-weight="600">Cloudflare Workers + D1</text>
-  <text x="820" y="1026">Hosted Worker + remote database</text>
-  <text x="820" y="1053" font-size="13" fill="#4b5563">Independent of the Mac's local D1</text>
 </svg>

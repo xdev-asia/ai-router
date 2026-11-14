@@ -1,7 +1,8 @@
 # xDev AI Router
 
-One place that holds the provider keys for every xDev system (chat, `xdevd`, ...). A Cloudflare Worker (Hono)
-backed by D1, with an owner console built from `@xdev-asia/ui`.
+One place that holds the provider keys for every xDev system (chat, `xdevd`, ...). A Worker (Hono) backed by D1,
+with an owner console built from `@xdev-asia/ui`. It runs in Docker on one machine, a Mac mini (workerd through
+`wrangler dev`, local D1), and updates itself from the images CI builds ([On a Mac mini](#on-a-mac-mini-apple-silicon-updated-on-every-push)).
 
 Each system keeps using the provider's official SDK and only changes the base URL and the key:
 
@@ -48,24 +49,17 @@ A provider is a path prefix: another one can be added beside `/anthropic` withou
 | `CODEX_RELAY_URL` | var | Base URL of the Codex relay (`https://relay.example.com`). Unset: Codex requests go straight to chatgpt.com, which refuses them from a Worker ([Codex relay](#codex-relay)) |
 | `CODEX_RELAY_SECRET` | secret | The relay's `RELAY_SECRET` (`openssl rand -base64 32`). Required when `CODEX_RELAY_URL` is set |
 
-```sh
-corepack pnpm exec wrangler d1 create xdev-llm        # put the id in wrangler.jsonc
-corepack pnpm exec wrangler d1 migrations apply xdev-llm --remote
-openssl rand -base64 32 | tee /dev/tty | tr -d '\n' | shasum -a 256 | cut -d' ' -f1 \
-  | corepack pnpm exec wrangler secret put ADMIN_TOKEN_SHA256   # keep the printed token
-corepack pnpm exec wrangler secret put ANTHROPIC_KEYS            # {"chat":"sk-ant-...","xdevd":"sk-ant-..."}
-```
+All of them go in `.dev.vars` next to `compose.yaml` on the server (git-ignored, one `NAME=value` per line), and
+all are optional. On the first `docker compose up`, the `init` service makes `CONNECTIONS_KEY`, the admin token
+(the gateway gets its SHA-256 as `ADMIN_TOKEN_SHA256`) and the Codex relay pair `CODEX_RELAY_URL` /
+`CODEX_RELAY_SECRET`; a value in `.dev.vars` wins over the generated one. After a change: `docker compose up -d`.
 
-Then pick a hostname (a route in `wrangler.jsonc`), deploy, open the console, sign in and add the systems.
-Each system's token is shown once.
+Then open the console, sign in with the admin token (`docker compose exec ai-router cat /secrets/admin-token`) and
+add the systems. Each system's token is shown once.
 
-xDev ID sign-in: register the gateway at xDev ID (a super admin, from `services/id` in the `cloud` repo), put the client id in
-`OIDC_CLIENT_ID` and the secret in `OIDC_CLIENT_SECRET`:
-
-```sh
-XDEV_ADMIN_TOKEN=... node ../cloud/services/id/scripts/admin.mjs oauth-client "AI router" https://<host>/auth/callback
-corepack pnpm exec wrangler secret put OIDC_CLIENT_SECRET
-```
+xDev ID sign-in: register the gateway at xDev ID (a super admin, from `services/id` in the `cloud` repo) with the
+callback `https://<host>/auth/callback`, `<host>` being the name the server is reached by (a Cloudflare Tunnel
+hostname, for one), then put the client id in `OIDC_CLIENT_ID` and the secret in `OIDC_CLIENT_SECRET` in `.dev.vars`.
 
 ## Console
 
@@ -141,15 +135,10 @@ Worker adds that header to every request it sends. So the gateway cannot call Co
 - When the relay is not set and chatgpt.com blocks the request, the gateway answers `502 codex_blocked`, naming
   the relay, instead of passing the HTML on.
 
-Production: run the relay on a host that is not a Cloudflare Worker and serves it over HTTPS (the access token
-and the secret travel in its headers), then set the gateway's `CODEX_RELAY_URL` and `CODEX_RELAY_SECRET`:
-
-```sh
-RELAY_SECRET=... PORT=8790 node relay/codex-relay.mjs   # or: docker build relay
-corepack pnpm exec wrangler secret put CODEX_RELAY_SECRET
-```
-
-Tried so far in Docker (below) only. Deno, Vercel and other hosts are not tried.
+`compose.yaml` runs the relay beside the gateway as `codex-relay` and gives both ends the same secret
+([In Docker](#in-docker)); nothing to set. On its own: `RELAY_SECRET=... PORT=8790 node relay/codex-relay.mjs`, behind
+HTTPS when it is on another host (the access token and the secret travel in its headers), with the gateway's
+`CODEX_RELAY_URL` and `CODEX_RELAY_SECRET` pointing at it.
 
 ## Connections: several accounts per provider
 
@@ -342,8 +331,6 @@ docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 Port `1455` of this machine is mapped to the same Worker. Signing in to a Codex (ChatGPT) account needs it:
 auth.openai.com sends the browser back to `http://localhost:1455/auth/callback`, the Codex CLI's fixed address.
 Stop the Codex CLI's own sign-in first if it is running, since it listens on the same port.
-
-Not the production runtime (that is Cloudflare Workers).
 
 ### On a Mac mini (Apple silicon), updated on every push
 
