@@ -20,6 +20,10 @@ export const vi: Record<keyof typeof en, string> = {
   "error.load": "Không tải được trang này.",
 
   "signin.title": "Đăng nhập trang quản trị cổng",
+  "signin.welcome": "Chào mừng trở lại",
+  "signin.headline": "Một cổng cho mọi mô hình",
+  "signin.tagline": "Định tuyến công cụ của bạn tới nhà cung cấp bạn chọn, khoá được giữ trên máy chủ và mọi yêu cầu đều được đếm.",
+  "signin.footer": "Bản quyền {year} xDev",
   "signin.body": "Dán mã quản trị. Bạn được giữ đăng nhập trên trình duyệt này trong 12 giờ; trang không lưu mã.",
   "signin.token": "Mã quản trị",
   "signin.submit": "Đăng nhập",

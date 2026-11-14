@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { AppShell, Banner, BrandMark, Button, Container, MenuButton, NavList, PaletteTrigger, SearchInput, ServiceStatus, ShellTitle, ThemeSwitch, type IconName } from "@xdev-asia/ui";
+import { AppShell, Banner, BrandMark, Button, Container, MenuButton, NavList, PaletteTrigger, SearchInput, ServiceStatus, ShellTitle, Spinner, ThemeSwitch, type IconName } from "@xdev-asia/ui";
 import { checkSession, setAuth, signOut, useAuth, useLoad, type Auth, type Combo, type Connection } from "./api";
 import { t, useLang, type StringKey } from "./i18n";
 import { LangSelect } from "./LangSelect";
@@ -90,6 +90,8 @@ export function App() {
   const [lang] = useLang();
   const auth = useAuth();
   const [sso, setSso] = useState(false);
+  // False until the first /auth/me answers: a reload waits for the session instead of drawing the sign-in page.
+  const [checked, setChecked] = useState(false);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -105,13 +107,22 @@ export function App() {
       if (!live) return;
       setSso(r.sso);
       if (r.user) setAuth(r.user);
+      setChecked(true);
     });
     return () => {
       live = false;
     };
   }, [auth]);
 
-  return auth ? <Console auth={auth} /> : <SignIn sso={sso} />;
+  if (auth) return <Console auth={auth} />;
+  if (!checked) {
+    return (
+      <div className="app-boot" aria-busy="true">
+        <Spinner size="md" labels={{ loading: t("loading") }} />
+      </div>
+    );
+  }
+  return <SignIn sso={sso} />;
 }
 
 /**

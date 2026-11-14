@@ -18,6 +18,10 @@ export const en = {
   "error.load": "Could not load this page.",
 
   "signin.title": "Sign in to the gateway console",
+  "signin.welcome": "Welcome back",
+  "signin.headline": "One gateway for every model",
+  "signin.tagline": "Route your tools to the providers you choose, with keys kept on the server and every request counted.",
+  "signin.footer": "Copyright {year} xDev",
   "signin.body": "Paste the admin token. You stay signed in on this browser for 12 hours; the page does not store the token.",
   "signin.token": "Admin token",
   "signin.submit": "Sign in",

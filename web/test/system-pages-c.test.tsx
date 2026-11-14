@@ -75,7 +75,7 @@ afterEach(() => {
 
 async function signIn() {
   render(<App />);
-  fireEvent.change(screen.getByLabelText(t("signin.token")), { target: { value: "good-admin-token" } });
+  fireEvent.change(await screen.findByLabelText(t("signin.token")), { target: { value: "good-admin-token" } });
   fireEvent.click(screen.getByRole("button", { name: t("signin.submit") }));
 }
 

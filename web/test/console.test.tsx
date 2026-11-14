@@ -125,7 +125,7 @@ afterEach(() => {
 
 async function signIn(token = "good-admin-token") {
   render(<App />);
-  fireEvent.change(screen.getByLabelText(t("signin.token")), { target: { value: token } });
+  fireEvent.change(await screen.findByLabelText(t("signin.token")), { target: { value: token } });
   fireEvent.click(screen.getByRole("button", { name: t("signin.submit") }));
 }
 
@@ -155,6 +155,8 @@ describe("sign in", () => {
     cleanup();
     act(() => setAuth(null)); // a reload starts with an empty page
     render(<App />);
+    // Until /auth/me answers, the sign-in page is not drawn, so a reload never flashes it.
+    expect(screen.queryByLabelText(t("signin.token"))).toBeNull();
     expect(await screen.findByText("Chat")).toBeTruthy();
     expect(screen.queryByLabelText(t("signin.token"))).toBeNull();
   });

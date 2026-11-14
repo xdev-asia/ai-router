@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Banner, BrandMark, Button, Card, Field, Stack } from "@xdev-asia/ui";
+import { AuthShell, Banner, BrandMark, Button, Field, Stack, ThemeSwitch } from "@xdev-asia/ui";
 import { ApiError, signInWithToken } from "../api";
 import { t } from "../i18n";
 import { LangSelect } from "../LangSelect";
+import { useTheme } from "../theme";
 
 const SIGNIN_ERRORS = ["not_allowed", "expired", "cancelled", "failed", "not_configured"] as const;
 type SigninError = (typeof SIGNIN_ERRORS)[number];
@@ -19,6 +20,7 @@ export function signinError(search: string): SigninError | null {
  */
 export function SignIn({ sso }: { sso: boolean }) {
   const ssoError = signinError(window.location.search);
+  const [theme, setTheme, shownTheme] = useTheme();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,57 +39,59 @@ export function SignIn({ sso }: { sso: boolean }) {
   }
 
   return (
-    <main className="signin">
-      <div className="signin-pane">
-        <Stack gap={4} className="signin-box">
-          <Stack direction="row" justify="between" align="center">
-            <span className="console-brand">
-              <BrandMark variant="tile" size={36} />
-              <span className="console-brand-name">{t("app.name")}</span>
-            </span>
-            <LangSelect />
-          </Stack>
-          <h1 className="x-sr-only">{t("app.name")}</h1>
-          {ssoError && <Banner tone="danger" title={t(`signin.error.${ssoError}`)} />}
-          {sso && (
-            <Card title={t("signin.title")} headingLevel={2}>
-              <Stack gap={3}>
-                <p className="muted">{t("signin.ssoBody")}</p>
-                <Button variant="primary" onClick={() => window.location.assign("/auth/login")}>
-                  {t("signin.sso")}
-                </Button>
-              </Stack>
-            </Card>
-          )}
-          <Card title={sso ? t("signin.tokenTitle") : t("signin.title")} headingLevel={2}>
-            <form
-              className="signin-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void submit();
-              }}
-            >
-              <p className="muted">{t("signin.body")}</p>
-              <Field
-                label={t("signin.token")}
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                error={error ?? undefined}
-              />
-              <Button type="submit" variant={sso ? "secondary" : "primary"} disabled={busy || value.trim() === ""}>
-                {t("signin.submit")}
-              </Button>
-            </form>
-          </Card>
+    <AuthShell
+      brand={
+        <>
+          <BrandMark variant="tile" size={32} />
+          <span>{t("app.name")}</span>
+        </>
+      }
+      actions={
+        <>
+          <LangSelect />
+          <ThemeSwitch variant="icon" value={theme} resolved={shownTheme} onChange={setTheme} labels={{ toDark: t("theme.toDark"), toLight: t("theme.toLight") }} />
+        </>
+      }
+      headline={t("signin.headline")}
+      tagline={t("signin.tagline")}
+      footer={t("signin.footer", { year: String(new Date().getFullYear()) })}
+    >
+      <Stack gap={4}>
+        <Stack gap={1}>
+          <h1>{t("signin.welcome")}</h1>
+          <p className="muted">{sso ? t("signin.ssoBody") : t("signin.title")}</p>
         </Stack>
-      </div>
-      {/* The route of the logo, drawn large; decoration only, hidden on narrow screens. */}
-      <div className="signin-art" aria-hidden="true">
-        <img src="/signin-hero.svg" alt="" />
-      </div>
-    </main>
+        {ssoError && <Banner tone="danger" title={t(`signin.error.${ssoError}`)} />}
+        {sso && (
+          <>
+            <Button variant="primary" onClick={() => window.location.assign("/auth/login")}>
+              {t("signin.sso")}
+            </Button>
+            <p className="signin-or">{t("signin.tokenTitle")}</p>
+          </>
+        )}
+        <form
+          className="signin-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <p className="muted">{t("signin.body")}</p>
+          <Field
+            label={t("signin.token")}
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            error={error ?? undefined}
+          />
+          <Button type="submit" variant={sso ? "secondary" : "primary"} disabled={busy || value.trim() === ""}>
+            {t("signin.submit")}
+          </Button>
+        </form>
+      </Stack>
+    </AuthShell>
   );
 }

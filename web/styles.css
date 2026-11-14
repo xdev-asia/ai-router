@@ -63,46 +63,28 @@ body {
   font: var(--type-heading);
 }
 
-/* Form on the left; from lg the logo's route drawn on the right (signin-hero.svg). */
-.signin {
-  display: grid;
-  min-height: 100vh;
-}
-
-.signin-pane {
+/* Sign-in (AuthShell): the line between xDev ID and the admin token. */
+/* While a reload asks the gateway for the session. */
+.app-boot {
   display: grid;
   place-items: center;
-  padding: var(--x-space-4);
-  box-sizing: border-box;
+  min-block-size: 100vh;
 }
 
-.signin-art {
-  display: none;
+.signin-or {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
+  margin: 0;
+  color: var(--x-color-muted);
+  font: var(--type-status);
 }
 
-@media (min-width: 1024px) {
-  .signin {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .signin-art {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .signin-art img {
-    display: block;
-    width: 100%;
-    max-width: 45rem;
-    height: auto;
-  }
-}
-
-.signin-box {
-  width: min(28rem, 100%);
+.signin-or::before,
+.signin-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--x-color-line);
 }
 
 .signin-form {
@@ -112,7 +94,8 @@ body {
 }
 
 .signin-form > button {
-  align-self: flex-end;
+  width: 100%;
+  justify-content: center;
 }
 
 
