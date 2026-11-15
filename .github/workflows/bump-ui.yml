@@ -1,0 +1,48 @@
+name: bump-ui
+
+# Moves the console to another @xdev-asia/ui release without a GitHub Packages token on anyone's machine:
+# updates package.json, pnpm-lock.yaml and the pnpm-workspace.yaml release-age exclude, then pushes
+# branch chore/ui-<version>. Run ci on that branch (workflow_dispatch) before merging it.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "@xdev-asia/ui version, for example 3.10.0"
+        required: true
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Bump
+        env:
+          GH_PACKAGES_TOKEN: ${{ secrets.NPM_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a version: $VERSION"; exit 1; }
+          corepack enable
+          printf '//npm.pkg.github.com/:_authToken=%s\n' "$GH_PACKAGES_TOKEN" >> ~/.npmrc
+          sed -i -E "s|\"@xdev-asia/ui@[0-9.]+\"|\"@xdev-asia/ui@$VERSION\"|" pnpm-workspace.yaml
+          grep -q "\"@xdev-asia/ui@$VERSION\"" pnpm-workspace.yaml || { echo "::error::no @xdev-asia/ui exclude in pnpm-workspace.yaml"; exit 1; }
+          corepack pnpm add --save-exact "@xdev-asia/ui@$VERSION"
+          git diff --stat
+
+      - name: Push branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "chore/ui-$VERSION"
+          git commit -am "chore(console): @xdev-asia/ui $VERSION"
+          git push origin "chore/ui-$VERSION"
