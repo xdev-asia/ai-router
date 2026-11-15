@@ -389,7 +389,8 @@ function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters
     <Stack gap={4}>
       <Segmented label={t("usage.period")} value={period} onChange={(v) => setPeriod(v as UsagePeriod)} options={PERIODS.map((p) => ({ value: p, label: t(`usage.period.${p}` as StringKey) }))} />
       {report.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
-      <Totals data={data} loading={loading} />
+      {/* A failed summary hides the totals and charts built from it: zeros there would read as a quiet period. */}
+      {report.status !== "error" && <Totals data={data} loading={loading} />}
       {totals && totals.unpriced_requests > 0 && (
         <Banner tone="info" title={t("usage.unpriced", { n: formatNumber(totals.unpriced_requests) })} action={<Button href="#/pricing">{t("usage.setPrices")}</Button>} />
       )}
@@ -402,24 +403,28 @@ function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters
         </Grid>
       )}
       <OverTime period={period} />
-      <Grid columns={{ base: 1, lg: 2 }} gap={3}>
-        <BarsCard
-          title={t("usage.byProvider")}
-          chartLabel={(m) => t("usage.bars.byProvider", { metric: t(`usage.metric.${m}` as StringKey) })}
-          rows={(data?.by_provider ?? []).map((r) => ({ key: r.provider, label: providerName.get(r.provider) ?? r.provider, row: r }))}
-          loading={loading}
-          empty={empty}
-        />
-        <BarsCard
-          title={t("usage.topModels")}
-          chartLabel={(m) => t("usage.bars.topModels", { metric: t(`usage.metric.${m}` as StringKey) })}
-          rows={(data?.by_model ?? []).map((r) => ({ key: `${r.provider}/${r.model ?? ""}`, label: r.model ?? "—", row: r }))}
-          limit={TOP_MODELS}
-          loading={loading}
-          empty={empty}
-        />
-      </Grid>
-      <BreakdownCard data={data} loading={loading} providerName={providerName} empty={empty} period={period} onOpenDetails={onOpenDetails} />
+      {report.status !== "error" && (
+        <>
+          <Grid columns={{ base: 1, lg: 2 }} gap={3}>
+            <BarsCard
+              title={t("usage.byProvider")}
+              chartLabel={(m) => t("usage.bars.byProvider", { metric: t(`usage.metric.${m}` as StringKey) })}
+              rows={(data?.by_provider ?? []).map((r) => ({ key: r.provider, label: providerName.get(r.provider) ?? r.provider, row: r }))}
+              loading={loading}
+              empty={empty}
+            />
+            <BarsCard
+              title={t("usage.topModels")}
+              chartLabel={(m) => t("usage.bars.topModels", { metric: t(`usage.metric.${m}` as StringKey) })}
+              rows={(data?.by_model ?? []).map((r) => ({ key: `${r.provider}/${r.model ?? ""}`, label: r.model ?? "—", row: r }))}
+              limit={TOP_MODELS}
+              loading={loading}
+              empty={empty}
+            />
+          </Grid>
+          <BreakdownCard data={data} loading={loading} providerName={providerName} empty={empty} period={period} onOpenDetails={onOpenDetails} />
+        </>
+      )}
     </Stack>
   );
 }

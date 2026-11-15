@@ -14,6 +14,7 @@ import { Pricing, formatPrice } from "../pages/Pricing";
 import { CreditsDialog } from "../pages/Quota";
 import { Logs } from "../pages/Logs";
 import { RequestDetails } from "../pages/RequestDetails";
+import { Usage } from "../pages/Usage";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -535,5 +536,37 @@ describe("logs and request details", () => {
     fireEvent.click(await screen.findByRole("switch", { name: t("details.record") }));
     const title = await screen.findByText(t("ux.details.toggleFailed"));
     expect(title.closest(".banner")!.textContent).toContain(t("ux.httpStatus", { status: "500" }));
+  });
+});
+
+describe("usage overview load failure", () => {
+  const CHART = { period: "24h", step: 3600, buckets: [{ t: 1_790_000_000, requests: 3, tokens: 450, cost: 0.5 }] };
+  const SUMMARY = {
+    period: "24h",
+    from: 1_790_000_000,
+    totals: { requests: 4, input_tokens: 500, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cost: 1.5, unpriced_requests: 0 },
+    by_provider: [],
+    by_model: [],
+    by_connection: [],
+    by_system: [],
+    recent: [],
+  };
+
+  it("shows an error with a retry instead of zero totals and empty charts, and draws them once the retry loads", async () => {
+    let fail = true;
+    routes["GET /admin/usage/summary"] = () => (fail ? json({ error: "internal" }, 500) : json(SUMMARY));
+    routes["GET /admin/usage/chart"] = () => json(CHART);
+    routes["GET /admin/providers"] = () => json([]);
+    routes["GET /admin/systems"] = () => json([]);
+    routes["GET /admin/connections"] = () => json([]);
+    render(<Usage />);
+    const banner = (await screen.findByText(t("error.load"))).closest(".banner") as HTMLElement;
+    expect(screen.queryByText(t("usage.successRate"))).toBeNull();
+    expect(screen.queryByText(t("usage.byProvider"))).toBeNull();
+    expect(screen.queryByText(t("usage.noRequests"))).toBeNull();
+    fail = false;
+    fireEvent.click(within(banner).getByRole("button", { name: t("common.retry") }));
+    await screen.findByText(t("usage.successRate"));
+    expect(screen.queryByText(t("error.load"))).toBeNull();
   });
 });
