@@ -211,8 +211,18 @@ export function Combos() {
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [query, setQueryState] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** A new search starts with nothing picked, so a bulk action never reaches rows the owner can no longer see. */
+  const setQuery = (q: string) => {
+    setQueryState(q);
+    setSelected(new Set());
+  };
+  const closeDialog = () => {
+    setPending(null);
+    setDialogError(null);
+  };
 
   const all = combos.status === "ready" ? combos.data : [];
   const shown = useMemo(() => filterCombos(all, query), [all, query]);
@@ -220,14 +230,15 @@ export function Combos() {
   async function remove(list: Combo[]) {
     setBusy(true);
     setError(null);
+    setDialogError(null);
     try {
       for (const c of list) await api(`/combos/${encodeURIComponent(c.name)}`, { method: "DELETE" });
       notify(list.length === 1 ? t("combos.deletedNotice", { name: list[0].name }) : t("combos.deletedMany", { n: String(list.length) }));
-      setPending(null);
+      closeDialog();
       setSelected(new Set());
       reload();
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError(t("error.generic"));
+      if (!(e instanceof ApiError && e.status === 401)) setDialogError(t("error.generic"));
       reload();
     } finally {
       setBusy(false);
@@ -329,7 +340,17 @@ export function Combos() {
       </BulkBar>
       {combos.status === "ready" && all.length === 0 ? (
         <Card>
-          <EmptyState size="center" icon="layers" title={t("combos.empty")} hint={t("combos.emptyHint")} actions={create} />
+          <EmptyState
+            size="center"
+            icon="layers"
+            title={t("combos.empty")}
+            hint={t("combos.emptyHint")}
+            actions={
+              <Button icon="plus" onClick={() => setPending({ kind: "edit", combo: null })}>
+                {t("combos.add")}
+              </Button>
+            }
+          />
         </Card>
       ) : (
       <Card flush>
@@ -384,10 +405,13 @@ export function Combos() {
           labels={labels.dialog}
           confirmLabel={t("combos.delete")}
           busy={busy}
-          onCancel={() => setPending(null)}
+          onCancel={closeDialog}
           onConfirm={() => void remove(pending.combos)}
         >
-          {t("combos.deleteBody")}
+          <Stack gap={2}>
+            <span>{t("combos.deleteBody")}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
         </Dialog>
       )}
     </Stack>

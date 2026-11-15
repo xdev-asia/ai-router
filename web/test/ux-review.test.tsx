@@ -8,6 +8,8 @@ import { ProviderModelsCard } from "../pages/ProviderModels";
 import { ProviderDetail, Providers } from "../pages/Providers";
 import { SignIn } from "../pages/SignIn";
 import { Systems } from "../pages/Systems";
+import { Combos } from "../pages/Combos";
+import { ProxyPools } from "../pages/ProxyPools";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -340,5 +342,75 @@ describe("providers", () => {
     await waitFor(() => expect(starts).toBe(2));
     expect(await screen.findByText(t("providers.device.waiting"))).toBeTruthy();
     open.mockRestore();
+  });
+});
+
+describe("combos", () => {
+  const COMBOS = [
+    { name: "fast", targets: ["groq/llama"], strategy: null },
+    { name: "smart", targets: ["openai/gpt-x"], strategy: null },
+  ];
+
+  beforeEach(() => {
+    routes["GET /admin/combos"] = () => json(COMBOS);
+    routes["GET /admin/vision-adapter"] = () => json({ enabled: false, models: [], applies_to: [] });
+    routes["GET /admin/audio-adapter"] = () => json({ enabled: false, models: [], applies_to: [] });
+  });
+
+  it("keeps the delete dialog open with the error when deleting fails", async () => {
+    routes["DELETE /admin/combos/fast"] = () => json({ error: "boom" }, 500);
+    render(<Combos />);
+    fireEvent.click(await screen.findByRole("button", { name: t("combos.deleteOne", { name: "fast" }) }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("combos.delete") }));
+    expect(await within(dialog).findByText(t("error.generic"))).toBeTruthy();
+    expect(screen.getByRole("alertdialog")).toBe(dialog);
+  });
+
+  it("drops the row selection when the search changes", async () => {
+    render(<Combos />);
+    const row = (await screen.findByText("fast")).closest("tr") as HTMLElement;
+    fireEvent.click(within(row).getByRole("checkbox"));
+    expect(screen.getByRole("button", { name: t("combos.deleteSelected", { n: "1" }) })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(t("combos.searchLabel")), { target: { value: "sm" } });
+    expect(screen.queryByRole("button", { name: t("combos.deleteSelected", { n: "1" }) })).toBeNull();
+  });
+
+  it("makes the add button of the empty state a secondary one", async () => {
+    routes["GET /admin/combos"] = () => json([]);
+    const { container } = render(<Combos />);
+    await screen.findByText(t("combos.empty"));
+    const add = within(container.querySelector(".x-empty") as HTMLElement).getByRole("button", { name: t("combos.add") });
+    expect(add.className).toContain("btn-secondary");
+  });
+});
+
+describe("proxy pools", () => {
+  const POOL = { id: "p1", name: "Tokyo", relays: ["https://relay-1.example.com"], hint: "abcd", last_check: null, checked_at: null, connections: 0, created_at: 1, updated_at: 1 };
+
+  beforeEach(() => {
+    routes["GET /admin/proxy-pools"] = () => json([POOL]);
+  });
+
+  it("keeps the delete dialog open with the error when deleting fails", async () => {
+    routes["DELETE /admin/proxy-pools/p1"] = () => json({ error: "boom" }, 500);
+    render(<ProxyPools />);
+    fireEvent.click(await screen.findByRole("button", { name: t("pools.deleteName", { name: "Tokyo" }) }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("pools.delete") }));
+    expect(await within(dialog).findByText(t("error.generic"))).toBeTruthy();
+    expect(screen.getByRole("alertdialog")).toBe(dialog);
+  });
+
+  it("says in plain words that the pool was not saved, with the gateway's reason under it", async () => {
+    routes["PATCH /admin/proxy-pools/p1"] = () => json({ error: "bad_request", message: "relay must use https" }, 400);
+    render(<ProxyPools />);
+    fireEvent.click(await screen.findByRole("button", { name: t("pools.editName", { name: "Tokyo" }) }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(t("pools.name")), { target: { value: "Osaka" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    const alert = await within(dialog).findByRole("alert");
+    expect(within(alert).getByText(t("ux.pools.saveFailed"))).toBeTruthy();
+    expect(alert.textContent).toContain("relay must use https");
   });
 });

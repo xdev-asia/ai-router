@@ -125,15 +125,23 @@ export function ProxyPools() {
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
 
-  async function run(action: () => Promise<void>) {
+  const closeDialog = () => {
+    setPending(null);
+    setDialogError(null);
+  };
+
+  /** Runs an action; its error shows in the open dialog when `inDialog`, else on the page. */
+  async function run(action: () => Promise<void>, inDialog = false) {
     setBusy(true);
     setError(null);
+    setDialogError(null);
     try {
       await action();
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError(t("error.generic"));
+      if (!(e instanceof ApiError && e.status === 401)) (inDialog ? setDialogError : setError)(t("error.generic"));
     } finally {
       setBusy(false);
     }
@@ -157,9 +165,9 @@ export function ProxyPools() {
     run(async () => {
       await api(`/proxy-pools/${encodeURIComponent(pool.id)}`, { method: "DELETE" });
       notify(t("pools.deleted", { name: pool.name }));
-      setPending(null);
+      closeDialog();
       reload();
-    });
+    }, true);
 
   const relayLine = (pool: ProxyPool, url: string) => {
     const check = pool.last_check?.find((c) => c.url === url);
@@ -288,10 +296,13 @@ export function ProxyPools() {
           labels={labels.dialog}
           confirmLabel={t("pools.delete")}
           busy={busy}
-          onCancel={() => setPending(null)}
+          onCancel={closeDialog}
           onConfirm={() => void remove(pending.pool)}
         >
-          {pending.pool.connections > 0 ? t("pools.deleteBodyUsed", { n: String(pending.pool.connections) }) : t("pools.deleteBody")}
+          <Stack gap={2}>
+            <span>{pending.pool.connections > 0 ? t("pools.deleteBodyUsed", { n: String(pending.pool.connections) }) : t("pools.deleteBody")}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
         </Dialog>
       )}
     </Stack>
@@ -338,6 +349,7 @@ function PoolDialog({ pool, onCancel, onSaved }: { pool: ProxyPool | null; onCan
       onSaved(trimmedName, pool === null);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return;
+      // A plain headline first; the gateway's own reason, when it gave one, one line under it.
       setError(e instanceof ApiError && e.status === 400 && e.detail ? e.detail : t("error.generic"));
     } finally {
       setBusy(false);
@@ -351,7 +363,13 @@ function PoolDialog({ pool, onCancel, onSaved }: { pool: ProxyPool | null; onCan
       submitLabel={pool ? t("common.save") : t("pools.add")}
       labels={ui(lang).formDialog}
       busy={busy}
-      error={error ?? undefined}
+      error={
+        error ? (
+          <>
+            <strong>{t("ux.pools.saveFailed")}</strong> {error}
+          </>
+        ) : undefined
+      }
       onCancel={onCancel}
       onSubmit={() => void submit()}
     >

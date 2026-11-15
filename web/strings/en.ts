@@ -1069,4 +1069,5 @@ export const en = {
   "ux.providers.headersFailed": "The headers were not saved.",
   "ux.providers.device.restart": "Get a new code",
   "ux.clearFilter": "Clear filter",
+  "ux.pools.saveFailed": "The pool was not saved.",
 };

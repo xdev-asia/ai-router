@@ -1071,4 +1071,5 @@ export const vi: Record<keyof typeof en, string> = {
   "ux.providers.headersFailed": "Chưa lưu được header.",
   "ux.providers.device.restart": "Lấy mã mới",
   "ux.clearFilter": "Xoá bộ lọc",
+  "ux.pools.saveFailed": "Chưa lưu được nhóm proxy.",
 };
