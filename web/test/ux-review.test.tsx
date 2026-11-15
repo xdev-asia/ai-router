@@ -10,6 +10,7 @@ import { SignIn } from "../pages/SignIn";
 import { Systems } from "../pages/Systems";
 import { Combos } from "../pages/Combos";
 import { ProxyPools } from "../pages/ProxyPools";
+import { Pricing, formatPrice } from "../pages/Pricing";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -412,5 +413,47 @@ describe("proxy pools", () => {
     const alert = await within(dialog).findByRole("alert");
     expect(within(alert).getByText(t("ux.pools.saveFailed"))).toBeTruthy();
     expect(alert.textContent).toContain("relay must use https");
+  });
+});
+
+describe("pricing", () => {
+  const ROW = { target: "openai/gpt-x", input: 1234.5, output: 10, cache_read: 0, cache_write: 0, custom: true, default: null };
+
+  it("writes prices the way the owner's language writes numbers", async () => {
+    expect(formatPrice(1234.5, "en")).toBe("$1,234.5");
+    expect(formatPrice(1.25, "vi")).toMatch(/^1,25\s*US\$$/);
+    localStorage.setItem("ai-router.lang", "vi");
+    resetLang();
+    routes["GET /admin/pricing"] = () => json([ROW]);
+    render(<Pricing />);
+    const table = await screen.findByRole("table", { name: t("pricing.caption") });
+    expect(within(table).getByText(/^1\.234,5\s*US\$$/)).toBeTruthy();
+  });
+
+  it("names the add button of the add dialog for what it does", async () => {
+    routes["GET /admin/pricing"] = () => json([ROW]);
+    render(<Pricing />);
+    fireEvent.click(await screen.findByRole("button", { name: t("pricing.add") }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: t("pricing.add") })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: t("common.save") })).toBeNull();
+  });
+
+  it("tells an empty price list apart from a search that matched nothing", async () => {
+    routes["GET /admin/pricing"] = () => json([]);
+    const first = render(<Pricing />);
+    expect(await screen.findByText(t("ux.pricing.empty"))).toBeTruthy();
+    expect(screen.queryByText(t("pricing.noMatch"))).toBeNull();
+    const add = within(first.container.querySelector(".x-empty") as HTMLElement).getByRole("button", { name: t("pricing.add") });
+    fireEvent.click(add);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    first.unmount();
+
+    routes["GET /admin/pricing"] = () => json([ROW]);
+    render(<Pricing />);
+    await screen.findByRole("table", { name: t("pricing.caption") });
+    fireEvent.change(screen.getByLabelText(t("pricing.searchLabel")), { target: { value: "zzz" } });
+    expect(screen.getByText(t("pricing.noMatch"))).toBeTruthy();
+    expect(screen.queryByText(t("ux.pricing.empty"))).toBeNull();
   });
 });

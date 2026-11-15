@@ -1072,4 +1072,6 @@ export const vi: Record<keyof typeof en, string> = {
   "ux.providers.device.restart": "Lấy mã mới",
   "ux.clearFilter": "Xoá bộ lọc",
   "ux.pools.saveFailed": "Chưa lưu được nhóm proxy.",
+  "ux.pricing.empty": "Chưa có giá nào",
+  "ux.pricing.emptyHint": "Thêm giá cho mỗi 1M token để trang Mức dùng ước tính chi phí của các lượt gọi.",
 };

@@ -17,7 +17,7 @@ import {
   type DataTableColumn,
 } from "@xdev-asia/ui";
 import { ApiError, api, useLoad, type PriceRates, type PriceRow, type Provider } from "../api";
-import { t, useLang } from "../i18n";
+import { t, useLang, type Lang } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
 
@@ -29,8 +29,9 @@ type Pending = { kind: "edit"; row: PriceRow | null } | { kind: "reset"; row: Pr
 const providerOf = (target: string) => target.slice(0, target.indexOf("/"));
 const modelOf = (target: string) => target.slice(target.indexOf("/") + 1);
 
-/** "$1.25" per 1M tokens; four decimals at most, no trailing zeros. */
-export const formatPrice = (n: number): string => `$${Number(n.toFixed(4))}`;
+/** "$1.25" per 1M tokens, written the way the owner's language writes numbers; four decimals at most, no trailing zeros. */
+export const formatPrice = (n: number, lang: Lang = "en"): string =>
+  new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 4 }).format(n);
 
 /** Prices whose model contains the query (ignoring case), from one provider when one is picked. */
 export function filterPrices(rows: readonly PriceRow[], query: string, provider: string): PriceRow[] {
@@ -86,10 +87,10 @@ export function Pricing() {
   const columns: DataTableColumn<PriceRow>[] = [
     { key: "model", header: t("pricing.col.model"), mono: true, cell: (r) => modelOf(r.target) },
     { key: "provider", header: t("pricing.col.provider"), hideNarrow: true, cell: (r) => names.get(providerOf(r.target)) ?? providerOf(r.target) },
-    { key: "input", header: t("pricing.col.input"), align: "end", cell: (r) => formatPrice(r.input) },
-    { key: "output", header: t("pricing.col.output"), align: "end", cell: (r) => formatPrice(r.output) },
-    { key: "cacheRead", header: t("pricing.col.cacheRead"), align: "end", hideNarrow: true, cell: (r) => formatPrice(r.cache_read) },
-    { key: "cacheWrite", header: t("pricing.col.cacheWrite"), align: "end", hideNarrow: true, cell: (r) => formatPrice(r.cache_write) },
+    { key: "input", header: t("pricing.col.input"), align: "end", cell: (r) => formatPrice(r.input, lang) },
+    { key: "output", header: t("pricing.col.output"), align: "end", cell: (r) => formatPrice(r.output, lang) },
+    { key: "cacheRead", header: t("pricing.col.cacheRead"), align: "end", hideNarrow: true, cell: (r) => formatPrice(r.cache_read, lang) },
+    { key: "cacheWrite", header: t("pricing.col.cacheWrite"), align: "end", hideNarrow: true, cell: (r) => formatPrice(r.cache_write, lang) },
     {
       key: "source",
       header: t("pricing.col.source"),
@@ -146,6 +147,21 @@ export function Pricing() {
           {t("pricing.shown", { n: String(shown.length), total: String(all.length) })}
         </p>
       )}
+      {prices.status === "ready" && all.length === 0 ? (
+        <Card>
+          <EmptyState
+            size="center"
+            icon="tag"
+            title={t("ux.pricing.empty")}
+            hint={t("ux.pricing.emptyHint")}
+            actions={
+              <Button icon="plus" onClick={() => setPending({ kind: "edit", row: null })}>
+                {t("pricing.add")}
+              </Button>
+            }
+          />
+        </Card>
+      ) : (
       <Card flush>
         {prices.status === "loading" && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}
         {prices.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
@@ -177,6 +193,7 @@ export function Pricing() {
           />
         )}
       </Card>
+      )}
       {pending?.kind === "edit" && (
         <PriceDialog
           row={pending.row}
@@ -245,7 +262,7 @@ function PriceDialog({ row, onCancel, onSaved }: { row: PriceRow | null; onCance
   return (
     <FormDialog
       title={row ? t("pricing.editTitle", { target: row.target }) : t("pricing.addTitle")}
-      submitLabel={t("common.save")}
+      submitLabel={row ? t("common.save") : t("pricing.add")}
       labels={labels.formDialog}
       busy={busy}
       error={error ?? undefined}
@@ -265,10 +282,10 @@ function PriceDialog({ row, onCancel, onSaved }: { row: PriceRow | null; onCance
       <p className="pricing-hint">
         {builtIn
           ? t("pricing.builtInIs", {
-              input: formatPrice(builtIn.input),
-              output: formatPrice(builtIn.output),
-              cacheRead: formatPrice(builtIn.cache_read),
-              cacheWrite: formatPrice(builtIn.cache_write),
+              input: formatPrice(builtIn.input, lang),
+              output: formatPrice(builtIn.output, lang),
+              cacheRead: formatPrice(builtIn.cache_read, lang),
+              cacheWrite: formatPrice(builtIn.cache_write, lang),
             })
           : t("pricing.ratesHint")}
       </p>

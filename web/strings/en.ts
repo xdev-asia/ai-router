@@ -1070,4 +1070,6 @@ export const en = {
   "ux.providers.device.restart": "Get a new code",
   "ux.clearFilter": "Clear filter",
   "ux.pools.saveFailed": "The pool was not saved.",
+  "ux.pricing.empty": "No prices yet",
+  "ux.pricing.emptyHint": "Add a price per 1M tokens so the Usage page can estimate what calls cost.",
 };

@@ -344,7 +344,7 @@ describe("pricing page", () => {
     fireEvent.change(within(dialog).getByLabelText(t("pricing.target")), { target: { value: "gpt-5" } });
     fireEvent.change(within(dialog).getByLabelText(t("pricing.col.input")), { target: { value: "-1" } });
     fireEvent.change(within(dialog).getByLabelText(t("pricing.col.output")), { target: { value: "2" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("pricing.add") }));
     expect(await within(dialog).findByText(t("pricing.invalidTarget"))).toBeTruthy();
     expect(within(dialog).getByText(t("pricing.invalidPrice"))).toBeTruthy();
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
