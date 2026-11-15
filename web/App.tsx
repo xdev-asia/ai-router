@@ -281,7 +281,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
               provider ? (
                 <ProviderDetail key={provider} id={provider} />
               ) : (
-                <Providers query={providerQuery} />
+                <Providers query={providerQuery} onClearQuery={() => setProviderQuery("")} />
               )
             ) : (
               <Systems />

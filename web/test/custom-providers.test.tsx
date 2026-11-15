@@ -131,14 +131,14 @@ describe("providers page: custom providers", () => {
     fireEvent.click(within(section).getAllByRole("button", { name: t("providers.custom.addOpenai") })[0]);
     const dialog = await screen.findByRole("dialog");
     // Nothing is sent while a field is wrong.
-    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("ux.providers.custom.create") }));
     expect(within(dialog).getByText(t("providers.custom.idBad"))).toBeTruthy();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
 
     fireEvent.change(within(dialog).getByLabelText(t("providers.custom.id")), { target: { value: "corp" } });
     fireEvent.change(within(dialog).getByLabelText(t("providers.name")), { target: { value: "Corp LLM" } });
     fireEvent.change(within(dialog).getByLabelText(t("providers.custom.baseUrl")), { target: { value: "https://llm.corp.test/v1/" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("ux.providers.custom.create") }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({ id: "corp", name: "Corp LLM", format: "openai", base_url: "https://llm.corp.test/v1/" });
@@ -158,7 +158,7 @@ describe("providers page: custom providers", () => {
     fireEvent.change(within(dialog).getByLabelText(t("providers.custom.id")), { target: { value: "corp" } });
     fireEvent.change(within(dialog).getByLabelText(t("providers.name")), { target: { value: "Corp" } });
     fireEvent.change(within(dialog).getByLabelText(t("providers.custom.baseUrl")), { target: { value: "https://claude.corp.test" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("ux.providers.custom.create") }));
     expect(await within(dialog).findByText(t("providers.custom.idTaken"))).toBeTruthy();
     expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ format: "anthropic" });
   });

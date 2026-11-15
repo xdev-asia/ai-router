@@ -143,7 +143,7 @@ function ProviderStatus({ provider, accounts }: { provider: Provider; accounts: 
  * Providers: a search field and a status filter, then one section per kind of
  * provider, each a grid of cards. A card opens the provider's connections; its switch turns them all off or on.
  */
-export function Providers({ query = "" }: { query?: string }) {
+export function Providers({ query = "", onClearQuery }: { query?: string; onClearQuery?: () => void }) {
   useLang();
   const [providers, reloadProviders] = useLoad<Provider[]>("/providers");
   const [connections, reloadConnections] = useLoad<Connection[]>("/connections");
@@ -219,7 +219,18 @@ export function Providers({ query = "" }: { query?: string }) {
       {(providers.status === "error" || connections.status === "error") && (
         <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
       )}
-      {ready && shown.length === 0 && <EmptyState icon="search" title={t("providers.noMatch")} />}
+      {ready && shown.length === 0 && (
+        <EmptyState
+          icon="search"
+          title={needle ? t("ux.providers.noMatchQuery", { query: query.trim() }) : t("providers.noMatch")}
+          actions={
+            <>
+              {needle && onClearQuery && <Button onClick={onClearQuery}>{t("ux.clearSearch")}</Button>}
+              {filter !== "all" && <Button onClick={() => setFilter("all")}>{t("ux.clearFilter")}</Button>}
+            </>
+          }
+        />
+      )}
       {SECTIONS.map(({ kind, title, hint }) => {
         const cards = shown.filter(({ provider }) => sectionOf(provider) === kind);
         const custom = kind === "custom";
@@ -330,7 +341,10 @@ export function ProviderDetail({ id }: { id: string }) {
   const pools = poolsLoad.status === "ready" && Array.isArray(poolsLoad.data) ? poolsLoad.data : [];
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** What went wrong, in plain words, with the technical side (what a provider answered) under it. */
+  const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
+  /** Why the action of the open dialog failed; shown inside it, which stays open. */
+  const [dialogError, setDialogError] = useState<string | null>(null);
   /** The order just chosen, shown until the gateway's answer replaces it. */
   const [order, setOrder] = useState<string[] | null>(null);
 
@@ -351,17 +365,25 @@ export function ProviderDetail({ id }: { id: string }) {
     `${id}|${name}|${provider?.mark ?? ""}|${provider?.color ?? ""}|${lang}`,
   );
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, inDialog = false) {
     setBusy(true);
     setError(null);
+    setDialogError(null);
     try {
       await action();
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError(t("error.generic"));
+      if (e instanceof ApiError && e.status === 401) return;
+      if (inDialog) setDialogError(t("error.generic"));
+      else setError({ title: t("error.generic") });
     } finally {
       setBusy(false);
     }
   }
+
+  const closeDialog = () => {
+    setPending(null);
+    setDialogError(null);
+  };
 
   const toggle = (a: Connection) =>
     run(async () => {
@@ -417,7 +439,8 @@ export function ProviderDetail({ id }: { id: string }) {
   const test = (a: Connection) =>
     run(async () => {
       const r = await api<{ ok: true } | { ok: false; status: number; message: string }>(`/connections/${encodeURIComponent(a.id)}/test`, { method: "POST" });
-      notify(r.ok ? t("providers.testOk", { name: a.name }) : t("providers.testFailed", { name: a.name, error: `${r.status} ${r.message}` }));
+      if (r.ok) notify(t("providers.testOk", { name: a.name }));
+      else setError({ title: t("ux.providers.testFailed", { name: a.name }), detail: t("ux.providers.testAnswer", { answer: `${r.status} ${r.message}` }) });
       reload();
     });
 
@@ -425,9 +448,9 @@ export function ProviderDetail({ id }: { id: string }) {
     run(async () => {
       await api(`/connections/${encodeURIComponent(a.id)}`, { method: "DELETE" });
       notify(t("providers.deletedNotice", { name: a.name }));
-      setPending(null);
+      closeDialog();
       reload();
-    });
+    }, true);
 
   /** Why the custom provider was not deleted, shown in its dialog. */
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -489,7 +512,11 @@ export function ProviderDetail({ id }: { id: string }) {
           </a>
         )}
       </div>
-      {error && <Banner tone="danger" title={error} />}
+      {error && (
+        <Banner tone="danger" title={error.title}>
+          {error.detail}
+        </Banner>
+      )}
       {(providers.status === "loading" || connections.status === "loading") && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}
       {(providers.status === "error" || connections.status === "error") && (
         <Banner
@@ -617,8 +644,10 @@ export function ProviderDetail({ id }: { id: string }) {
       )}
       {pending?.kind === "device" && provider && (
         <DeviceSignInDialog
+          key={pending.login.id}
           provider={provider}
           login={pending.login}
+          onRestart={() => void startSignIn()}
           onCancel={() => setPending(null)}
           onDone={(name) => {
             notify(t("providers.signedIn", { name }));
@@ -651,10 +680,13 @@ export function ProviderDetail({ id }: { id: string }) {
           labels={labels.dialog}
           confirmLabel={t("providers.delete")}
           busy={busy}
-          onCancel={() => setPending(null)}
+          onCancel={closeDialog}
           onConfirm={() => void remove(pending.account)}
         >
-          {t("providers.deleteBody")}
+          <Stack gap={2}>
+            <span>{t("providers.deleteBody")}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
         </Dialog>
       )}
       {pending?.kind === "customEdit" && provider && (
@@ -734,7 +766,7 @@ function CustomProviderDialog({
   return (
     <FormDialog
       title={provider ? t("providers.editTitle", { name: provider.name }) : t("providers.custom.addTitle")}
-      submitLabel={t("common.save")}
+      submitLabel={creating ? t("ux.providers.custom.create") : t("common.save")}
       labels={ui(lang).formDialog}
       busy={busy}
       error={error ?? undefined}
@@ -1134,7 +1166,7 @@ function AccountDialog({
   return (
     <FormDialog
       title={account ? t("providers.editTitle", { name: account.name }) : t("providers.add")}
-      submitLabel={isBulk && parsed.lines.length > 0 ? t("providers.bulkSave", { n: String(parsed.lines.length) }) : t("common.save")}
+      submitLabel={isBulk && parsed.lines.length > 0 ? t("providers.bulkSave", { n: String(parsed.lines.length) }) : account ? t("common.save") : t("providers.add")}
       labels={ui(lang).formDialog}
       busy={busy}
       error={error ?? undefined}
@@ -1176,28 +1208,36 @@ function HeadersCard({ provider }: { provider: string }) {
   const [loaded, reload] = useLoad<{ headers: Record<string, string> }>(path);
   const [rows, setRows] = useState<{ name: string; value: string }[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Why the last save failed, in plain words, with the gateway's reason under it. */
+  const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
+  /** The headers as the gateway holds them, to tell whether there is anything to save. */
+  const [saved, setSaved] = useState<string | null>(null);
 
   useEffect(() => {
-    if (loaded.status === "ready") setRows(Object.entries(loaded.data.headers).map(([name, value]) => ({ name, value })));
+    if (loaded.status === "ready") {
+      setRows(Object.entries(loaded.data.headers).map(([name, value]) => ({ name, value })));
+      setSaved(JSON.stringify(loaded.data.headers));
+    }
   }, [loaded]);
 
   // Only some providers take custom headers; the others answer 404 and have no card.
   if (loaded.status === "error" && loaded.code === "not_found") return null;
 
   const edit = (i: number, patch: Partial<{ name: string; value: string }>) => setRows((r) => (r ?? []).map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const headers = Object.fromEntries((rows ?? []).filter((r) => r.name.trim() !== "").map((r) => [r.name.trim(), r.value]));
+  const changed = JSON.stringify(headers) !== saved;
 
   async function save() {
     setBusy(true);
     setError(null);
     try {
-      const headers = Object.fromEntries((rows ?? []).filter((r) => r.name.trim() !== "").map((r) => [r.name.trim(), r.value]));
       const r = await api<{ headers: Record<string, string> }>(path, { method: "PUT", body: { headers } });
       setRows(Object.entries(r.headers).map(([name, value]) => ({ name, value })));
+      setSaved(JSON.stringify(r.headers));
       notify(t("providers.headersSaved"));
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return;
-      setError(e instanceof ApiError && e.detail ? e.detail : t("error.generic"));
+      setError({ title: t("ux.providers.headersFailed"), detail: e instanceof ApiError && e.detail ? e.detail : t("error.generic") });
     } finally {
       setBusy(false);
     }
@@ -1213,7 +1253,7 @@ function HeadersCard({ provider }: { provider: string }) {
             <Button icon="plus" disabled={busy} onClick={() => setRows((r) => [...(r ?? []), { name: "", value: "" }])}>
               {t("providers.headerAdd")}
             </Button>
-            <Button disabled={busy} onClick={() => void save()}>
+            <Button disabled={busy || !changed} onClick={() => void save()}>
               {busy ? t("common.saving") : t("providers.headerSave")}
             </Button>
           </>
@@ -1224,7 +1264,11 @@ function HeadersCard({ provider }: { provider: string }) {
       {loaded.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
       {rows && (
         <Stack gap={3}>
-          {error && <Banner tone="danger" title={error} />}
+          {error && (
+            <Banner tone="danger" title={error.title}>
+              {error.detail}
+            </Banner>
+          )}
           {rows.length === 0 && <p className="muted">{t("providers.headersEmpty")}</p>}
           {rows.map((r, i) => (
             <div key={i} className="header-row">
@@ -1333,7 +1377,20 @@ type DeviceLogin = {
  * Shows the code of a device sign-in (GitHub Copilot) and asks the gateway every few seconds whether the user has
  * entered it. It closes by itself when the account is added.
  */
-function DeviceSignInDialog({ provider, login, onCancel, onDone }: { provider: Provider; login: DeviceLogin; onCancel: () => void; onDone: (name: string) => void }) {
+function DeviceSignInDialog({
+  provider,
+  login,
+  onCancel,
+  onDone,
+  onRestart,
+}: {
+  provider: Provider;
+  login: DeviceLogin;
+  onCancel: () => void;
+  onDone: (name: string) => void;
+  /** Starts the sign-in over with a new code, once this one expired. */
+  onRestart: () => void;
+}) {
   const [lang] = useLang();
   const notify = useNotify();
   const [error, setError] = useState<string | null>(null);
@@ -1387,14 +1444,14 @@ function DeviceSignInDialog({ provider, login, onCancel, onDone }: { provider: P
       title={t("providers.oauth.title", { name: provider.name })}
       description={t("providers.device.description")}
       labels={ui(lang).dialog}
-      confirmLabel={error ? t("providers.device.retry") : t("providers.oauth.reopen")}
+      confirmLabel={expired ? t("ux.providers.device.restart") : error ? t("providers.device.retry") : t("providers.oauth.reopen")}
       onConfirm={() => {
-        if (error) {
+        if (expired) onRestart();
+        else if (error) {
           setError(null);
           setRound((n) => n + 1);
         } else window.open(page, "_blank", "noopener");
       }}
-      confirmDisabled={expired || undefined}
       onCancel={onCancel}
       body="plain"
     >
@@ -1404,7 +1461,7 @@ function DeviceSignInDialog({ provider, login, onCancel, onDone }: { provider: P
           {login.verification_uri}
         </a>
         {expired ? (
-          <Banner tone="warn"title={t("providers.device.expired")} />
+          <Banner tone="warn" title={t("providers.device.expired")} />
         ) : error ? (
           <Banner tone="danger" title={error} />
         ) : (

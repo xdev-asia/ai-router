@@ -631,7 +631,7 @@ describe("providers", () => {
     expect(screen.getByRole("link", { name: /Anthropic/ })).toBeTruthy();
 
     fireEvent.change(screen.getByRole("searchbox", { name: t("providers.search") }), { target: { value: "zzz" } });
-    expect(screen.getByText(t("providers.noMatch"))).toBeTruthy();
+    expect(screen.getByText(t("ux.providers.noMatchQuery", { query: "zzz" }))).toBeTruthy();
   });
 
   it("a provider's switch turns all of its accounts off, and only providers with accounts have one", async () => {
@@ -676,7 +676,7 @@ describe("providers", () => {
     expect(key.type).toBe("password");
     fireEvent.change(screen.getByLabelText(t("providers.name")), { target: { value: "New" } });
     fireEvent.change(key, { target: { value: "sk-new-12345678" } });
-    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: t("providers.add") }));
     await waitFor(() => expect(calls.find((c) => c.method === "POST" && c.url === "/admin/connections")).toMatchObject({ body: { provider: "openai", name: "New", api_key: "sk-new-12345678" } }));
     expect(await screen.findByText(t("providers.savedNotice", { name: "New" }))).toBeTruthy();
     expect(document.body.textContent).not.toContain("sk-new-12345678");
@@ -685,7 +685,7 @@ describe("providers", () => {
   it("asks for a name and a key before calling the API", async () => {
     await openProvider();
     fireEvent.click(screen.getByRole("button", { name: t("providers.add") }));
-    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: t("providers.add") }));
     expect(await screen.findByText(t("providers.nameRequired"))).toBeTruthy();
     expect(screen.getByText(t("providers.apiKeyRequired"))).toBeTruthy();
     expect(calls.some((c) => c.method === "POST" && c.url.startsWith("/admin/"))).toBe(false);
@@ -761,7 +761,8 @@ describe("providers", () => {
 
     fireEvent.click(screen.getByRole("button", { name: `${t("systems.col.actions")}: Backup` }));
     fireEvent.click(await screen.findByRole("menuitem", { name: t("providers.test") }));
-    expect(await screen.findByText(t("providers.testFailed", { name: "Backup", error: "401 Invalid API Key" }))).toBeTruthy();
+    expect(await screen.findByText(t("ux.providers.testFailed", { name: "Backup" }))).toBeTruthy();
+    expect(screen.getByText(t("ux.providers.testAnswer", { answer: "401 Invalid API Key" }))).toBeTruthy();
   });
 
   describe("subscription login", () => {

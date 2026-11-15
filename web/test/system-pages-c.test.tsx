@@ -176,13 +176,13 @@ describe("one key", () => {
     fireEvent.change(within(dialog).getByLabelText(t("providers.name")), { target: { value: "New" } });
     fireEvent.change(within(dialog).getByLabelText(t("providers.apiKey")), { target: { value: "sk-test-new" } });
     fireEvent.change(within(dialog).getByLabelText(t("providers.priority")), { target: { value: "5000" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("providers.add") }));
     expect(await within(dialog).findByText(t("providers.priorityBad"))).toBeTruthy();
     expect(calls.some((c) => c.method === "POST" && c.url === "/admin/connections")).toBe(false);
 
     fireEvent.change(within(dialog).getByLabelText(t("providers.priority")), { target: { value: "2" } });
     fireEvent.change(await within(dialog).findByLabelText(t("providers.pool")), { target: { value: "p1" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: t("common.save") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("providers.add") }));
     await waitFor(() =>
       expect(calls.find((c) => c.method === "POST" && c.url === "/admin/connections")!.body).toEqual({
         provider: "openai",
@@ -227,10 +227,10 @@ describe("providers page", () => {
     expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ headers: { "x-team": "core", "x bad": "1" } });
 
     refuse = false;
-    fireEvent.click(screen.getByRole("button", { name: t("providers.headerRemove", { n: "2" }) }));
+    fireEvent.change(screen.getByLabelText(`${t("providers.headerName")} 2`), { target: { value: "x-good" } });
     fireEvent.click(screen.getByRole("button", { name: t("providers.headerSave") }));
     expect(await screen.findByText(t("providers.headersSaved"))).toBeTruthy();
-    expect(calls.filter((c) => c.method === "PUT").at(-1)!.body).toEqual({ headers: { "x-team": "core" } });
+    expect(calls.filter((c) => c.method === "PUT").at(-1)!.body).toEqual({ headers: { "x-team": "core", "x-good": "1" } });
   });
 
   it("an API-key provider has no headers card", async () => {

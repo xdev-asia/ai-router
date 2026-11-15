@@ -5,6 +5,7 @@ import { Icon } from "@xdev-asia/ui";
 import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
 import { ProviderModelsCard } from "../pages/ProviderModels";
+import { ProviderDetail, Providers } from "../pages/Providers";
 import { SignIn } from "../pages/SignIn";
 import { Systems } from "../pages/Systems";
 
@@ -208,7 +209,7 @@ describe("systems", () => {
     expect(await screen.findByText(t("ux.systems.nameBad"))).toBeTruthy();
   });
 
-  it("saves a cap only once it changed", async () => {
+  it("saves a cap only once it changed (systems)", async () => {
     render(<Systems />);
     await openMenu(t("systems.editCap"));
     const save = screen.getByRole("button", { name: t("common.save") }) as HTMLButtonElement;
@@ -217,5 +218,127 @@ describe("systems", () => {
     expect(save.disabled).toBe(false);
     fireEvent.change(screen.getByLabelText(t("create.cap")), { target: { value: " 1000 " } });
     expect(save.disabled).toBe(true);
+  });
+});
+
+describe("providers", () => {
+  const builtin = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    name,
+    format: "openai",
+    auth: ["api_key"],
+    env_key: false,
+    key_url: null,
+    strategy: "fill-first",
+    color: "#333333",
+    mark: name.slice(0, 2),
+    ...extra,
+  });
+  const conn = (id: string, provider: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    provider,
+    auth_type: "api_key",
+    name: `Conn ${id}`,
+    hint: "0042",
+    disabled: false,
+    cooldown_until: 0,
+    priority: 1,
+    last_error: null,
+    proxy_pool: null,
+    ...extra,
+  });
+  const GITHUB = builtin("github", "GitHub Copilot", { auth: ["oauth"] });
+  const CODEX = builtin("codex", "OpenAI Codex", { format: "codex", auth: ["oauth"] });
+
+  beforeEach(() => {
+    routes["GET /admin/providers"] = () => json([builtin("openai", "OpenAI"), GITHUB, CODEX]);
+    routes["GET /admin/connections"] = () => json([conn("c1", "openai"), conn("o1", "codex", { auth_type: "oauth", hint: null })]);
+  });
+
+  const openMenu = async (name: string, item: string) => {
+    fireEvent.click(await screen.findByRole("button", { name: `${t("systems.col.actions")}: ${name}` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+  };
+
+  it("keeps the delete dialog open with the error when deleting a connection fails", async () => {
+    routes["DELETE /admin/connections/c1"] = () => json({ error: "boom" }, 500);
+    render(<ProviderDetail id="openai" />);
+    await openMenu("Conn c1", t("providers.delete"));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("providers.delete") }));
+    expect(await within(dialog).findByText(t("error.generic"))).toBeTruthy();
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  it("says in plain words that a key failed its test, with what the provider answered under it", async () => {
+    routes["POST /admin/connections/c1/test"] = () => json({ ok: false, status: 401, message: "Invalid API Key" });
+    render(<ProviderDetail id="openai" />);
+    await openMenu("Conn c1", t("providers.test"));
+    const title = await screen.findByText(t("ux.providers.testFailed", { name: "Conn c1" }));
+    const banner = title.closest(".banner")!;
+    expect(banner.textContent).toContain(t("ux.providers.testAnswer", { answer: "401 Invalid API Key" }));
+    // The headline is plain words: the code is in the line under it.
+    expect(title.textContent).not.toContain("401");
+  });
+
+  it("names the add button of the add-connection dialog for what it does", async () => {
+    render(<ProviderDetail id="openai" />);
+    await screen.findByText("Conn c1");
+    fireEvent.click(screen.getAllByRole("button", { name: t("providers.add") })[0]);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: t("providers.add") })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: t("common.save") })).toBeNull();
+  });
+
+  it("names the add button of the custom provider dialog for what it does", async () => {
+    render(<Providers />);
+    const heading = await screen.findByRole("heading", { name: t("providers.section.custom") });
+    fireEvent.click(within(heading.closest("section")!).getAllByRole("button", { name: t("providers.custom.addOpenai") })[0]);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: t("ux.providers.custom.create") })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: t("common.save") })).toBeNull();
+  });
+
+  it("names the search that matched nothing and offers to clear it", async () => {
+    const clear = vi.fn();
+    render(<Providers query="zzz" onClearQuery={clear} />);
+    const empty = (await screen.findByText(t("ux.providers.noMatchQuery", { query: "zzz" }))).closest(".x-empty")!;
+    fireEvent.click(within(empty as HTMLElement).getByRole("button", { name: t("ux.clearSearch") }));
+    expect(clear).toHaveBeenCalled();
+  });
+
+  it("saves custom headers only once they changed, with a plain headline when the gateway refuses", async () => {
+    routes["GET /admin/providers/codex/headers"] = () => json({ headers: { "x-team": "core" } });
+    routes["PUT /admin/providers/codex/headers"] = () => json({ error: "invalid_request", message: "header name x bad is not allowed" }, 400);
+    render(<ProviderDetail id="codex" />);
+    const name = (await screen.findByLabelText(t("providers.headerName"))) as HTMLInputElement;
+    const save = screen.getByRole("button", { name: t("providers.headerSave") }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(name, { target: { value: "x bad" } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    const title = await screen.findByText(t("ux.providers.headersFailed"));
+    expect(title.closest(".banner")!.textContent).toContain("header name x bad is not allowed");
+    fireEvent.change(name, { target: { value: "x-team" } });
+    expect(save.disabled).toBe(true);
+  });
+
+  it("offers a new code when the device sign-in code expires", async () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    let starts = 0;
+    routes["POST /admin/oauth/github/start"] = () =>
+      json({ flow: "device", id: `dev-${++starts}`, user_code: "WDJB-MJHT", verification_uri: "https://github.com/login/device", interval: 1, expires_in: starts === 1 ? 0 : 600 });
+    routes["POST /admin/oauth/github/poll"] = () => json({ status: "pending", interval: 5 }, 202);
+    routes["GET /admin/connections"] = () => json([]);
+    render(<ProviderDetail id="github" />);
+    fireEvent.click((await screen.findAllByRole("button", { name: t("providers.add") }))[0]);
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(t("providers.device.expired"), undefined, { timeout: 3000 })).toBeTruthy();
+    const restart = within(dialog).getByRole("button", { name: t("ux.providers.device.restart") }) as HTMLButtonElement;
+    expect(restart.disabled).toBe(false);
+    fireEvent.click(restart);
+    await waitFor(() => expect(starts).toBe(2));
+    expect(await screen.findByText(t("providers.device.waiting"))).toBeTruthy();
+    open.mockRestore();
   });
 });
