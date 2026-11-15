@@ -31,7 +31,8 @@ export function usageOfMessage(body: unknown): Usage {
 
 /**
  * Reads a Messages SSE stream to the end and returns its usage: `message_start` carries the model and
- * the starting counts, each `message_delta` carries the cumulative counts that changed.
+ * the starting counts, each `message_delta` carries the cumulative counts that changed. A stream that ends with an
+ * error gives the counts read before it.
  */
 export async function usageOfStream(body: ReadableStream<Uint8Array>): Promise<Usage> {
   let u = EMPTY;
@@ -53,9 +54,14 @@ export async function usageOfStream(body: ReadableStream<Uint8Array>): Promise<U
     }
   };
   for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += value;
+    let r: ReadableStreamReadResult<string>;
+    try {
+      r = await reader.read();
+    } catch {
+      break; // the stream ended with an error (an idle timeout): the counts read so far
+    }
+    if (r.done) break;
+    buf += r.value;
     let i: number;
     while ((i = buf.indexOf("\n")) >= 0) {
       line(buf.slice(0, i));

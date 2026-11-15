@@ -40,6 +40,99 @@ const STRATEGY_HINT: Record<ComboStrategy, StringKey> = {
 
 const MAX_BACKUP = 5 * 1024 * 1024;
 
+/** How long the gateway waits for a provider (GET /admin/timeouts, worker/timeouts.ts). */
+interface Timeouts {
+  first_byte_s: number;
+  idle_s: number;
+}
+type TimeoutKey = keyof Timeouts;
+const TIMEOUT_ROWS: { key: TimeoutKey; label: StringKey; hint: StringKey }[] = [
+  { key: "first_byte_s", label: "prefs.timeoutFirstByte", hint: "prefs.timeoutFirstByteHint" },
+  { key: "idle_s", label: "prefs.timeoutIdle", hint: "prefs.timeoutIdleHint" },
+];
+
+/** The worker's rule: 0 (off), or a whole number of seconds from 10 to 3600. */
+export function timeoutOk(text: string): boolean {
+  const v = text.trim();
+  if (!/^\d+$/.test(v)) return false;
+  const n = Number(v);
+  return n === 0 || (n >= 10 && n <= 3600);
+}
+
+/** The two upstream limits, each with its own field and Save (docs/add/upstream-timeouts.md). */
+function TimeoutsCard() {
+  const notify = useNotify();
+  const [load, reload] = useLoad<Timeouts>("/timeouts");
+  const [saved, setSaved] = useState<Timeouts | null>(null);
+  const [draft, setDraft] = useState<Record<TimeoutKey, string>>({ first_byte_s: "", idle_s: "" });
+  const [bad, setBad] = useState<Partial<Record<TimeoutKey, boolean>>>({});
+  const [saving, setSaving] = useState<TimeoutKey | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (load.status !== "ready") return;
+    setSaved(load.data);
+    setDraft({ first_byte_s: String(load.data.first_byte_s), idle_s: String(load.data.idle_s) });
+  }, [load]);
+
+  async function save(key: TimeoutKey) {
+    if (!timeoutOk(draft[key])) {
+      setBad((b) => ({ ...b, [key]: true }));
+      return;
+    }
+    setBad((b) => ({ ...b, [key]: false }));
+    setSaving(key);
+    setError(null);
+    try {
+      const next = await api<Timeouts>("/timeouts", { method: "PUT", body: { [key]: Number(draft[key].trim()) } });
+      setSaved(next);
+      setDraft((d) => ({ ...d, [key]: String(next[key]) }));
+      notify(t("prefs.saved"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      if (e instanceof ApiError && e.status === 400) setBad((b) => ({ ...b, [key]: true }));
+      else setError(t("error.generic"));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <Card title={t("prefs.timeouts")} subtitle={t("prefs.timeoutsHint")} headingLevel={2}>
+      {load.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
+      {load.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
+      {saved && (
+        <Stack gap={3}>
+          {error && <Banner tone="danger" title={error} />}
+          {TIMEOUT_ROWS.map(({ key, label, hint }) => (
+            <SettingRow
+              key={key}
+              label={t(label)}
+              description={`${t(hint)} ${t("prefs.timeoutRange")}`}
+              control={
+                <div className="prefs-inline">
+                  <Field
+                    label={t(label)}
+                    hideLabel
+                    inputMode="numeric"
+                    value={draft[key]}
+                    autoComplete="off"
+                    onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                    error={bad[key] ? t("prefs.timeoutInvalid") : undefined}
+                  />
+                  <Button aria-label={t("prefs.saveNamed", { name: t(label) })} disabled={saving !== null || draft[key].trim() === String(saved[key])} onClick={() => void save(key)}>
+                    {t("common.save")}
+                  </Button>
+                </div>
+              }
+            />
+          ))}
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
 /** The tables of a backup file and their rows, or null when the file is not one. */
 export function readBackup(text: string): Record<string, unknown[]> | null {
   let v: unknown;
@@ -259,6 +352,8 @@ export function Settings() {
             </Stack>
           )}
         </Card>
+
+        <TimeoutsCard />
 
         <Card title={t("prefs.signIn")} subtitle={t("prefs.signInHint")} headingLevel={2}>
           {info.status === "loading" && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}

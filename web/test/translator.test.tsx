@@ -78,6 +78,7 @@ describe("translator switch", () => {
   it("is off until turned on in Settings, and stays on in this browser", async () => {
     routes["GET /admin/settings/info"] = () => json({ admin_token: true, oidc: false, console_emails: 0, connections_key: true, codex_relay: false });
     routes["GET /admin/combo-settings"] = () => json({ strategy: "fallback", sticky_limit: 3 });
+    routes["GET /admin/timeouts"] = () => json({ first_byte_s: 300, idle_s: 300 });
     const { result } = renderHook(() => useTranslatorShown());
     expect(result.current[0]).toBe(false);
     render(<Settings />);

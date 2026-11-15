@@ -264,10 +264,14 @@ body {
 }
 
 .page-intro {
-  flex: 1 1 20rem;
   margin: 0;
   font: var(--type-body);
   color: var(--text-2);
+}
+
+/* Beside the page's tools it takes the free width; alone in a column Stack a flex basis would be its height. */
+.page-actions > .page-intro {
+  flex: 1 1 20rem;
 }
 
 /* Name over version, beside the tile, in the sidebar. */
@@ -309,16 +313,30 @@ body {
   color: var(--text-2);
 }
 
-/* Token saver: the Headroom address with its Save button on the same line. */
+/* Token saver: the Headroom address and its Save button as the control of a setting row, the button level with the input. */
 .saver-inline {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: var(--x-space-2);
+  max-width: 100%;
 }
 
 .saver-inline > :first-child {
-  flex: 1;
+  width: 18rem;
   min-width: 0;
+}
+
+/* Narrow: the control drops under the text (the library wraps the row); then it takes the row's full width. */
+@media (max-width: 639.98px) {
+  .saver-address .settings-item-control,
+  .saver-inline {
+    flex: 1 1 100%;
+  }
+
+  .saver-inline > :first-child {
+    flex: 1;
+    width: auto;
+  }
 }
 
 /* Pricing: search, provider and Add in a right column, as on Combos; row actions side by side; four prices two by two. */

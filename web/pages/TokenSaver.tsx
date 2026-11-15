@@ -87,7 +87,7 @@ export function TokenSaver() {
                 label={t("saver.rtk")}
                 description={t("saver.rtkHint")}
                 controlId="saver-rtk"
-                control={<Switch id="saver-rtk" checked={data.rtk} disabled={busy} onChange={(e) => void save({ rtk: e.target.checked })} />}
+                control={<Switch id="saver-rtk" aria-describedby="saver-rtk-hint" checked={data.rtk} disabled={busy} onChange={(e) => void save({ rtk: e.target.checked })} />}
               />
               <SettingRow
                 label={t("saver.headroom")}
@@ -96,42 +96,52 @@ export function TokenSaver() {
                 control={
                   <Switch
                     id="saver-headroom"
+                    aria-describedby="saver-headroom-hint"
                     checked={data.headroom.enabled}
                     disabled={busy || data.headroom.url === null}
                     onChange={(e) => void save({ headroom: { enabled: e.target.checked, url: data.headroom.url } })}
                   />
                 }
               />
-              <div className="saver-inline">
-                <Field
-                  label={t("saver.headroomUrl")}
-                  hint={t("saver.headroomUrlHint")}
-                  type="url"
-                  value={url}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(e) => setUrl(e.target.value)}
-                  error={urlError ? t("saver.headroomUrlBad") : undefined}
-                />
-                <Button disabled={busy} onClick={saveHeadroomUrl}>
-                  {t("saver.saveHeadroom")}
-                </Button>
-              </div>
+              {/* No controlId, as on Settings' sticky field: the Field names its error `<id>-hint`, the id the row would give its description. */}
+              <SettingRow
+                label={t("saver.headroomUrl")}
+                description={t("saver.headroomUrlHint")}
+                className="saver-address"
+                control={
+                  <div className="saver-inline">
+                    <Field
+                      id="saver-headroom-url"
+                      label={t("saver.headroomUrl")}
+                      hideLabel
+                      type="url"
+                      value={url}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(e) => setUrl(e.target.value)}
+                      error={urlError ? t("saver.headroomUrlBad") : undefined}
+                    />
+                    <Button disabled={busy} onClick={saveHeadroomUrl}>
+                      {t("saver.saveHeadroom")}
+                    </Button>
+                  </div>
+                }
+              />
               <SettingRow
                 label={t("saver.caveman")}
                 description={t("saver.cavemanHint")}
                 controlId="saver-caveman"
-                control={<Select id="saver-caveman" value={data.caveman ?? ""} options={levels} disabled={busy} onChange={(e) => void save({ caveman: level(e.target.value) })} />}
+                control={<Select id="saver-caveman" aria-describedby="saver-caveman-hint" value={data.caveman ?? ""} options={levels} disabled={busy} onChange={(e) => void save({ caveman: level(e.target.value) })} />}
               />
               <SettingRow
                 label={t("saver.ponytail")}
                 description={t("saver.ponytailHint")}
                 controlId="saver-ponytail"
-                control={<Select id="saver-ponytail" value={data.ponytail ?? ""} options={levels} disabled={busy} onChange={(e) => void save({ ponytail: level(e.target.value) })} />}
+                control={<Select id="saver-ponytail" aria-describedby="saver-ponytail-hint" value={data.ponytail ?? ""} options={levels} disabled={busy} onChange={(e) => void save({ ponytail: level(e.target.value) })} />}
               />
             </Stack>
           </Card>
-          <Card>
+          <Card title={t("saver.customCard")} headingLevel={2}>
             <Stack gap={3}>
               <Textarea label={t("saver.custom")} hint={t("saver.customHint")} rows={5} maxLength={4000} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
               <div>

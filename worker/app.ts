@@ -11,6 +11,7 @@ import { openaiRoutes } from "./openai";
 import { logRequest } from "./logs";
 import { anthropicRoutes, type Upstream } from "./proxy";
 import { skillRoutes } from "./skills";
+import { withDeadlines, withTimeouts } from "./timeouts";
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
@@ -25,6 +26,8 @@ export interface Deps {
   upstream: Upstream;
   /** Sends a request to xDev ID (console sign-in). `fetch` in production; a fake in tests. */
   idp?: Idp;
+  /** How long one second of an upstream timeout lasts (timeouts.ts): 1000; tests shorten it. */
+  secondMs?: number;
 }
 
 /**
@@ -34,6 +37,8 @@ export interface Deps {
  */
 export function makeApp(deps: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
+  // Every provider request waits at most the owner's first-byte and idle limits (timeouts.ts).
+  const upstream = withDeadlines(deps.upstream);
   app.use("*", async (c, next) => {
     c.set("startedAt", Date.now());
     await next();
@@ -42,7 +47,11 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   // The logged path is the pathname only, so a Gemini `?key=<token>` never reaches the log.
   for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*"]) app.use(path, logRequest);
   // The owner's providers (custom-providers.ts), read once per request so routing and the console see them.
-  for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*", "/admin/*"]) app.use(path, withCustomProviders);
+  const timeouts = withTimeouts(deps.secondMs);
+  for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*", "/admin/*"]) {
+    app.use(path, withCustomProviders);
+    app.use(path, timeouts);
+  }
   // No token: compose's healthcheck and the console's new-build check (web/version.ts) read it. The build is a
   // commit of the repository and a time, nothing secret.
   const health = (c: Context<AppEnv>) => c.json({ ok: true, version: c.env.APP_VERSION?.trim() || "dev", built_at: c.env.APP_BUILT_AT?.trim() || null });
@@ -56,15 +65,15 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
     if (!state || !(await isPendingState(c.env.DB, state))) return next();
     const code = c.req.query("code");
     const result = code
-      ? await finishLogin(c.env, deps.upstream, null, code, state)
+      ? await finishLogin(c.env, upstream, null, code, state)
       : ({ ok: false, status: 400, error: "provider_refused", message: c.req.query("error_description") ?? c.req.query("error") ?? "the sign-in was not completed" } as const);
     return c.html(loginPage(result.ok ? { ok: true, name: result.name } : { ok: false, message: result.message }), result.ok ? 200 : result.status);
   });
   app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
-  app.route("/admin", adminRoutes(deps.upstream));
+  app.route("/admin", adminRoutes(upstream));
   app.route("/skills", skillRoutes());
-  const anthropic = anthropicRoutes(deps.upstream);
-  const openai = openaiRoutes(deps.upstream);
+  const anthropic = anthropicRoutes(upstream);
+  const openai = openaiRoutes(upstream);
   app.route("/anthropic", anthropic);
   app.route("/openai", openai);
 
@@ -76,7 +85,7 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   app.use("/v1/*", v1Cors);
   // Gemini API (Gemini CLI: GOOGLE_GEMINI_BASE_URL=https://<host>, the gateway token as GEMINI_API_KEY).
   app.use("/v1beta/*", v1Cors);
-  app.route("/v1beta", geminiRoutes(deps.upstream));
+  app.route("/v1beta", geminiRoutes(upstream));
   app.all("/v1/v1/*", (c) => {
     const url = new URL(c.req.url);
     url.pathname = url.pathname.replace(/^(\/v1)+\/v1\//, "/v1/");

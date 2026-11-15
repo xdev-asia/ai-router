@@ -10,5 +10,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["web/test/**/*.test.{ts,tsx}"],
+    // Tests read web/styles.css as text (?raw) to check rules a DOM without layout cannot measure; nothing is injected.
+    css: { include: [/styles\.css\?raw$/] },
   },
 });

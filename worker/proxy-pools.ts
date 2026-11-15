@@ -3,6 +3,7 @@ import { CODEX_URL, codexDestination } from "./codex";
 import type { AppEnv, Env } from "./env";
 import { open, seal } from "./secret-box";
 import { ProxyError, socketFetch, type ProxyTarget } from "./socket-fetch";
+import { withDeadlines } from "./timeouts";
 
 /**
  * Proxy pools: a named set of exits a Codex account sends its upstream calls through, one
@@ -213,7 +214,7 @@ export async function codexDestinationFor(env: Env, poolId: string | null): Prom
   const auth = await openAuth(env, row.proxy_auth);
   const t = auth && target(proxies[i - relays.length]!, auth);
   if (!t) return { ok: false, message: "not_configured: the proxy pool's proxy passwords cannot be opened (CONNECTIONS_KEY changed)" };
-  return { ok: true, url: CODEX_URL, secret: null, fetch: viaProxy(t) };
+  return { ok: true, url: CODEX_URL, secret: null, fetch: withDeadlines(viaProxy(t)) };
 }
 
 const bad = (message: string) => Response.json({ error: "invalid_request", message }, { status: 400 });

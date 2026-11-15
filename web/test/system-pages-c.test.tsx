@@ -259,6 +259,7 @@ describe("settings", () => {
   beforeEach(() => {
     routes["GET /admin/settings/info"] = () => json(INFO);
     routes["GET /admin/combo-settings"] = () => json({ strategy: "fallback", sticky_limit: 3 });
+    routes["GET /admin/timeouts"] = () => json({ first_byte_s: 300, idle_s: 300 });
   });
 
   async function openSettings() {
@@ -289,6 +290,37 @@ describe("settings", () => {
     fireEvent.change(sticky, { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
     await waitFor(() => expect(calls.filter((c) => c.method === "PUT").at(-1)!.body).toEqual({ sticky_limit: 10 }));
+  });
+
+  it("saves each upstream timeout: 0, or 10 to 3600 seconds", async () => {
+    routes["PUT /admin/timeouts"] = (body) => json({ first_byte_s: 300, idle_s: 300, ...(body as object) });
+    await openSettings();
+    const idle = (await screen.findByLabelText(t("prefs.timeoutIdle"))) as HTMLInputElement;
+    expect(idle.value).toBe("300");
+    expect(idle.getAttribute("inputmode")).toBe("numeric");
+    const saveIdle = screen.getByRole("button", { name: t("prefs.saveNamed", { name: t("prefs.timeoutIdle") }) }) as HTMLButtonElement;
+    expect(saveIdle.disabled).toBe(true); // nothing changed yet
+    for (const v of ["5", "3601", "1.5", "abc"]) {
+      fireEvent.change(idle, { target: { value: v } });
+      fireEvent.click(saveIdle);
+      expect(await screen.findByText(t("prefs.timeoutInvalid"))).toBeTruthy();
+    }
+    expect(calls.filter((c) => c.url === "/admin/timeouts" && c.method === "PUT")).toHaveLength(0);
+    fireEvent.change(idle, { target: { value: "60" } });
+    fireEvent.click(saveIdle);
+    await waitFor(() => expect(calls.find((c) => c.url === "/admin/timeouts" && c.method === "PUT")!.body).toEqual({ idle_s: 60 }));
+    await waitFor(() => expect(screen.queryByText(t("prefs.timeoutInvalid"))).toBeNull());
+    fireEvent.change(screen.getByLabelText(t("prefs.timeoutFirstByte")), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: t("prefs.saveNamed", { name: t("prefs.timeoutFirstByte") }) }));
+    await waitFor(() => expect(calls.filter((c) => c.url === "/admin/timeouts" && c.method === "PUT").at(-1)!.body).toEqual({ first_byte_s: 0 }));
+  });
+
+  it("shows the field error when the gateway refuses a timeout", async () => {
+    routes["PUT /admin/timeouts"] = () => json({ error: "invalid_input", hint: "first_byte_s, idle_s: 0 (off) or 10 to 3600 seconds" }, 400);
+    await openSettings();
+    fireEvent.change(await screen.findByLabelText(t("prefs.timeoutFirstByte")), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: t("prefs.saveNamed", { name: t("prefs.timeoutFirstByte") }) }));
+    expect(await screen.findByText(t("prefs.timeoutInvalid"))).toBeTruthy();
   });
 
   it("imports a backup only after a confirmation that lists its tables", async () => {

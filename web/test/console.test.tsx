@@ -9,6 +9,7 @@ import { parseCap } from "../pages/Systems";
 import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 import { buildLabel } from "../version";
+import styles from "../styles.css?raw";
 
 const OPENAI_PATHS = [
   "/v1/chat/completions",
@@ -1006,6 +1007,25 @@ describe("token saver", () => {
     fireEvent.change(screen.getByLabelText(t("saver.headroomUrl")), { target: { value: "https://headroom.test" } });
     fireEvent.click(screen.getByRole("button", { name: t("saver.saveHeadroom") }));
     await waitFor(() => expect(puts()).toEqual([{ headroom: { enabled: false, url: "https://headroom.test" } }]));
+  });
+
+  it("lays the Headroom address out as a setting row and titles the custom prompt card", async () => {
+    await openSavers();
+    const address = screen.getByLabelText(t("saver.headroomUrl"));
+    const row = address.closest(".settings-item");
+    expect(row).toBeTruthy();
+    expect(within(row as HTMLElement).getByText(t("saver.headroomUrlHint"))).toBeTruthy();
+    expect(within(row as HTMLElement).getByRole("button", { name: t("saver.saveHeadroom") })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: t("saver.customCard") })).toBeTruthy();
+    for (const id of ["saver-rtk", "saver-headroom", "saver-caveman", "saver-ponytail"]) {
+      expect(document.getElementById(id)?.getAttribute("aria-describedby")).toBe(`${id}-hint`);
+    }
+  });
+
+  it("the intro grows only as a column of a .page-actions row, never as height", () => {
+    const intro = /\n\.page-intro\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
+    expect(intro).not.toMatch(/\bflex\s*:/);
+    expect(styles).toMatch(/\.page-actions\s*>\s*\.page-intro\s*\{[^}]*flex:\s*1 1 20rem/);
   });
 
   it("switches Headroom on when it has an address", async () => {

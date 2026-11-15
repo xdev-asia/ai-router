@@ -23,6 +23,7 @@ import { modelRoutes } from "./models-admin";
 import { visionAdapterRoutes } from "./vision";
 import { translatorRoutes } from "./translator";
 import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
+import { TIMEOUTS_HINT, getTimeouts, mergeTimeouts, saveTimeouts } from "./timeouts";
 import { STRATEGIES, configError, getComboSettings, isStrategy as isComboStrategy, mergeComboSettings, readConfig, resetCombo, saveComboSettings } from "./combo-strategy";
 import { currentMonth, monthRange } from "./usage";
 import { QUOTA_PROVIDERS, consumeResetCredit, codexResetCredits, fetchQuota, getHiddenRows, isQuotaProvider, quotaConnection, setHiddenRows } from "./quota";
@@ -566,6 +567,17 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
     const next = b ? mergeComboSettings(await getComboSettings(c.env.DB), b) : null;
     if (!next) return c.json({ error: "invalid_input", hint: `strategy: one of ${STRATEGIES.join(", ")}; sticky_limit: 1 to 1000` }, 400);
     await saveComboSettings(c.env.DB, next);
+    return c.json(next);
+  });
+
+  /** How long the gateway waits for a provider (timeouts.ts). PUT takes either limit and keeps the other. */
+  a.get("/timeouts", async (c) => c.json(await getTimeouts(c.env.DB)));
+
+  a.put("/timeouts", async (c) => {
+    const b = await readJson(c.req.raw);
+    const next = b ? mergeTimeouts(await getTimeouts(c.env.DB), b) : null;
+    if (!next) return c.json({ error: "invalid_input", hint: TIMEOUTS_HINT }, 400);
+    await saveTimeouts(c.env.DB, next);
     return c.json(next);
   });
 

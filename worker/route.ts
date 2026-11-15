@@ -164,7 +164,27 @@ function meterOpenAIStream(body: ReadableStream<Uint8Array>, model: string, keep
     }
     ctrl.enqueue(enc.encode(raw + "\n\n"));
   };
-  const client = body.pipeThrough(
+  // The usage settles when the stream ends, fails (an idle timeout) or is cancelled, so no wait outlives it.
+  const reader = body.getReader();
+  const source = new ReadableStream<Uint8Array>({
+    async pull(c) {
+      let r: ReadableStreamReadResult<Uint8Array>;
+      try {
+        r = await reader.read();
+      } catch (e) {
+        resolve(found);
+        c.error(e);
+        return;
+      }
+      if (r.done) c.close();
+      else c.enqueue(r.value);
+    },
+    cancel(reason) {
+      resolve(found);
+      return reader.cancel(reason);
+    },
+  });
+  const client = source.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(bytes, ctrl) {
         buf += dec.decode(bytes, { stream: true }).replace(/\r\n/g, "\n");
