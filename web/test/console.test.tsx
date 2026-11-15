@@ -3,11 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, pageFromHash, providerFromHash } from "../App";
 import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
+import { apiOf } from "../pages/Endpoint";
 import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
 import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 import { buildLabel } from "../version";
+
+const OPENAI_PATHS = [
+  "/v1/chat/completions",
+  "/v1/responses",
+  "/v1/models",
+  "/v1/embeddings",
+  "/v1/images/generations",
+  "/v1/audio/speech",
+  "/v1/audio/transcriptions",
+  "/v1/videos",
+  "/v1/search",
+  "/v1/fetch",
+];
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -330,13 +344,65 @@ describe("frame", () => {
     expect(screen.getByRole("button", { name: t("build.reload") })).toBeTruthy();
   });
 
-  it("Endpoint & Key opens on the base URL of this origin and the /v1 paths", async () => {
+  it("Endpoint & Key opens on the OpenAI base URL of this origin and its /v1 paths", async () => {
     await signIn();
     await screen.findByText("Chat");
     expect(screen.getByRole("heading", { level: 2, name: t("endpoint.title") })).toBeTruthy();
+    const formats = screen.getByRole("group", { name: t("endpoint.format") });
+    expect(within(formats).getAllByRole("button").map((b) => b.textContent)).toEqual([t("endpoint.fmt.openai"), t("endpoint.fmt.anthropic"), t("endpoint.fmt.gemini")]);
+    expect(within(formats).getByRole("button", { name: t("endpoint.fmt.openai") }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(t("endpoint.body.openai"))).toBeTruthy();
+    expect(screen.getByText("OPENAI_BASE_URL")).toBeTruthy();
     expect(screen.getAllByText(`${window.location.origin}/v1`).length).toBeGreaterThan(0);
-    const paths = screen.getByRole("list", { name: t("endpoint.paths") });
-    expect(within(paths).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["/v1/chat/completions", "/v1/messages", "/v1/models"]);
+    const items = () => within(screen.getByRole("list", { name: t("endpoint.paths") })).getAllByRole("listitem").map((li) => li.textContent);
+    expect(items()).toEqual(OPENAI_PATHS);
+  });
+
+  it("Endpoint & Key switches to the Anthropic and Gemini base URLs, which are the origin", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    const formats = screen.getByRole("group", { name: t("endpoint.format") });
+    const items = () => within(screen.getByRole("list", { name: t("endpoint.paths") })).getAllByRole("listitem").map((li) => li.textContent);
+
+    fireEvent.click(within(formats).getByRole("button", { name: t("endpoint.fmt.anthropic") }));
+    expect(screen.getByText(t("endpoint.body.anthropic"))).toBeTruthy();
+    expect(screen.getByText("ANTHROPIC_BASE_URL")).toBeTruthy();
+    expect(screen.getAllByText(window.location.origin).length).toBeGreaterThan(0);
+    expect(items()).toEqual(["/v1/messages", "/v1/messages/count_tokens"]);
+
+    fireEvent.click(within(formats).getByRole("button", { name: t("endpoint.fmt.gemini") }));
+    expect(screen.getByText(t("endpoint.body.gemini"))).toBeTruthy();
+    expect(screen.getByText("GOOGLE_GEMINI_BASE_URL")).toBeTruthy();
+    expect(screen.getAllByText(window.location.origin).length).toBeGreaterThan(0);
+    expect(items()).toEqual(["/v1beta/models", "/v1beta/models/{model}:generateContent", "/v1beta/models/{model}:streamGenerateContent", "/v1beta/models/{model}:countTokens", "/v1beta/models/{model}:embedContent"]);
+  });
+
+  it("names the API of a request path the way the Endpoint page does", () => {
+    expect(apiOf("/v1/chat/completions")).toBe("openai");
+    expect(apiOf("/openai/v1/responses")).toBe("openai");
+    expect(apiOf("/v1/embeddings")).toBe("openai");
+    expect(apiOf("/v1/messages")).toBe("anthropic");
+    expect(apiOf("/v1/messages/count_tokens")).toBe("anthropic");
+    expect(apiOf("/anthropic/v1/messages")).toBe("anthropic");
+    expect(apiOf("/v1beta/models/gemini-2.5-pro:generateContent")).toBe("gemini");
+    expect(apiOf("/v1/search")).toBe("openai");
+  });
+
+  it("Logs shows which API each request used", async () => {
+    const line = (id: number, path: string) => ({ id, at: 1_700_000_000_000 + id, level: "info", method: "POST", path, status: 200, took_ms: 12, system_id: "app", model: "m", message: null });
+    routes["GET /admin/logs"] = () =>
+      json({ logs: [line(3, "/v1beta/models/g:generateContent"), line(2, "/v1/messages"), line(1, "/v1/chat/completions")], kept: { rows: 500, minutes: 15 } });
+    await signIn();
+    await screen.findByText("Chat");
+    window.location.hash = "#/logs";
+    fireEvent(window, new HashChangeEvent("hashchange"));
+    expect(await screen.findByRole("columnheader", { name: t("logs.col.api") })).toBeTruthy();
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows.map((r) => within(r).queryByText(t("endpoint.fmt.gemini")) ?? within(r).queryByText(t("endpoint.fmt.anthropic")) ?? within(r).queryByText(t("endpoint.fmt.openai"))).map((e) => e?.textContent)).toEqual([
+      t("endpoint.fmt.gemini"),
+      t("endpoint.fmt.anthropic"),
+      t("endpoint.fmt.openai"),
+    ]);
   });
 
   it("the provider search sits in the top bar on the providers page only", async () => {

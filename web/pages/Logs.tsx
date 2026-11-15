@@ -15,6 +15,7 @@ import {
 } from "@xdev-asia/ui";
 import { ApiError, api } from "../api";
 import { RequestDetails } from "./RequestDetails";
+import { apiOf } from "./Endpoint";
 import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
@@ -188,6 +189,7 @@ function ConsoleLog() {
     { key: "time", header: t("logs.col.time"), mono: true, width: "min", cell: (l) => time(l.at) },
     { key: "level", header: t("logs.col.level"), width: "min", cell: (l) => <StatusDot tone={TONE[l.level]} label={t(ROW_LABEL[l.level])} /> },
     { key: "request", header: t("logs.col.request"), mono: true, cell: (l) => `${l.method} ${l.path}` },
+    { key: "api", header: t("logs.col.api"), width: "min", hideNarrow: true, cell: (l) => t(`endpoint.fmt.${apiOf(l.path)}`) },
     { key: "status", header: t("logs.col.status"), mono: true, align: "end", width: "min", cell: (l) => String(l.status) },
     { key: "message", header: t("logs.col.message"), cell: (l) => [l.model, l.message].filter(Boolean).join(" · ") || "—" },
     { key: "took", header: t("logs.col.took"), mono: true, align: "end", width: "min", hideNarrow: true, cell: (l) => `${l.took_ms} ms` },
