@@ -299,7 +299,7 @@ describe("settings", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [file] } });
 
-    const dialog = await screen.findByRole("dialog", { name: t("prefs.importTitle") });
+    const dialog = await screen.findByRole("alertdialog", { name: t("prefs.importTitle") });
     expect(within(dialog).getByText(t("prefs.importRows", { table: "combo", n: "2" }))).toBeTruthy();
     expect(within(dialog).getByText(t("prefs.importRows", { table: "price", n: "1" }))).toBeTruthy();
     expect(calls.some((c) => c.method === "POST" && c.url === "/admin/backup")).toBe(false);
@@ -317,9 +317,39 @@ describe("settings", () => {
     expect(await screen.findByText(t("prefs.importBad"))).toBeTruthy();
 
     fireEvent.change(input, { target: { files: [new File([JSON.stringify({ version: 1, tables: { combo: [{}] } })], "b.json", { type: "application/json" })] } });
-    const dialog = await screen.findByRole("dialog", { name: t("prefs.importTitle") });
+    const dialog = await screen.findByRole("alertdialog", { name: t("prefs.importTitle") });
     fireEvent.click(within(dialog).getByRole("button", { name: t("prefs.importConfirm") }));
     expect(await screen.findByText(t("prefs.importFailed", { message: "combo row 1: name is required" }))).toBeTruthy();
+  });
+
+  it("a failed load offers a retry on every card that reads it", async () => {
+    routes["GET /admin/settings/info"] = () => json({ error: "boom" }, 500);
+    window.location.hash = "#/settings";
+    await signIn();
+    await screen.findByText(t("prefs.strategy"));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: t("common.retry") })).toHaveLength(2));
+  });
+
+  it("the sticky limit Save stays disabled until the value changed", async () => {
+    routes["GET /admin/combo-settings"] = () => json({ strategy: "round-robin", sticky_limit: 3 });
+    await openSettings();
+    const sticky = await screen.findByLabelText(t("prefs.sticky"));
+    const save = screen.getByRole("button", { name: t("common.save") }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(sticky, { target: { value: "4" } });
+    expect(save.disabled).toBe(false);
+    fireEvent.change(sticky, { target: { value: "3" } });
+    expect(save.disabled).toBe(true);
+  });
+
+  it("the import confirm is a danger alert and its failure shows inside it", async () => {
+    routes["POST /admin/backup"] = () => json({ error: "boom" }, 500);
+    await openSettings();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File([JSON.stringify({ version: 1, tables: { combo: [] } })], "b.json", { type: "application/json" })] } });
+    const dialog = await screen.findByRole("alertdialog", { name: t("prefs.importTitle") });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("prefs.importConfirm") }));
+    expect(await within(dialog).findByText(t("error.generic"))).toBeTruthy();
   });
 
   it("readBackup takes only version 1 files with known tables", () => {

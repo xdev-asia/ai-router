@@ -91,6 +91,7 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [backup, setBackup] = useState<Record<string, unknown[]> | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   useEffect(() => {
     if (combo.status !== "ready") return;
@@ -105,7 +106,7 @@ export function Settings() {
       await action();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return;
-      if (!onError?.(e)) setError(t("error.generic"));
+      if (!onError?.(e)) (backup ? setDialogError : setError)(t("error.generic"));
     } finally {
       setBusy(false);
     }
@@ -153,20 +154,26 @@ export function Settings() {
       setImportError(t("prefs.importBad"));
       return;
     }
+    setDialogError(null);
     setBackup(tables);
   }
+
+  const closeImport = () => {
+    setBackup(null);
+    setDialogError(null);
+  };
 
   const importBackup = (tables: Record<string, unknown[]>) =>
     run(
       async () => {
         const r = await api<{ ok: true; rows: number }>("/backup", { body: { version: 1, tables } });
-        setBackup(null);
+        closeImport();
         notify(t("prefs.imported", { n: String(r.rows) }));
         reloadCombo();
       },
       (e) => {
         if (!(e instanceof ApiError && e.detail)) return false;
-        setBackup(null);
+        closeImport();
         setImportError(t("prefs.importFailed", { message: e.detail }));
         return true;
       },
@@ -242,7 +249,7 @@ export function Settings() {
                         onChange={(e) => setSticky(e.target.value)}
                         error={stickyBad ? t("prefs.stickyBad") : undefined}
                       />
-                      <Button disabled={busy} onClick={saveSticky}>
+                      <Button disabled={busy || sticky.trim() === String(routing.sticky_limit)} onClick={saveSticky}>
                         {t("common.save")}
                       </Button>
                     </div>
@@ -271,6 +278,7 @@ export function Settings() {
 
         <Card title={t("prefs.gateway")} headingLevel={2}>
           {info.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
+          {info.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reloadInfo}>{t("common.retry")}</Button>} />}
           {info.status === "ready" && (
             <Stack gap={3}>
               <SettingRow label={t("prefs.connectionsKey")} description={t("prefs.connectionsKeyHint")} control={<SecretState set={info.data.connections_key} />} />
@@ -311,13 +319,16 @@ export function Settings() {
       {backup && (
         <Dialog
           modal
+          alert
+          tone="danger"
           title={t("prefs.importTitle")}
           labels={labels.dialog}
           confirmLabel={t("prefs.importConfirm")}
           busy={busy}
-          onCancel={() => setBackup(null)}
+          onCancel={closeImport}
           onConfirm={() => void importBackup(backup)}
         >
+          {dialogError && <Banner tone="danger" title={dialogError} />}
           <p>{t("prefs.importBody")}</p>
           <ul className="prefs-tables">
             {Object.entries(backup).map(([table, rows]) => (
