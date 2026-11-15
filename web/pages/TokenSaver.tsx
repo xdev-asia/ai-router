@@ -22,6 +22,8 @@ export function TokenSaver() {
   const notify = useNotify();
   const [settings, reload] = useLoad<TokenSaverSettings>("/token-saver");
   const [busy, setBusy] = useState(false);
+  // Which of the two Save buttons started the save in flight, so only that one says "Saving".
+  const [saving, setSaving] = useState<"url" | "prompt" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [urlError, setUrlError] = useState(false);
@@ -40,8 +42,9 @@ export function TokenSaver() {
     if (savedPrompt !== null && savedPrompt !== seen.prompt) setPrompt(savedPrompt);
   }
 
-  async function save(patch: Partial<TokenSaverSettings>) {
+  async function save(patch: Partial<TokenSaverSettings>, from: "url" | "prompt" | null = null) {
     setBusy(true);
+    setSaving(from);
     setError(null);
     try {
       await api("/token-saver", { method: "PUT", body: patch });
@@ -51,6 +54,7 @@ export function TokenSaver() {
       if (!(e instanceof ApiError && e.status === 401)) setError(t("error.generic"));
     } finally {
       setBusy(false);
+      setSaving(null);
     }
   }
 
@@ -70,8 +74,12 @@ export function TokenSaver() {
     }
     setUrlError(false);
     // Without an address Headroom cannot stay on.
-    void save({ headroom: { enabled: address === "" ? false : (data?.headroom.enabled ?? false), url: address === "" ? null : address } });
+    void save({ headroom: { enabled: address === "" ? false : (data?.headroom.enabled ?? false), url: address === "" ? null : address } }, "url");
   }
+
+  // Save waits for a change; spaces around the saved value are not one, since the save trims them.
+  const urlChanged = savedUrl !== null && url.trim() !== savedUrl;
+  const promptChanged = savedPrompt !== null && prompt.trim() !== savedPrompt;
 
   return (
     <Stack gap={4}>
@@ -121,8 +129,8 @@ export function TokenSaver() {
                       onChange={(e) => setUrl(e.target.value)}
                       error={urlError ? t("saver.headroomUrlBad") : undefined}
                     />
-                    <Button disabled={busy} onClick={saveHeadroomUrl}>
-                      {t("saver.saveHeadroom")}
+                    <Button disabled={busy || !urlChanged} onClick={saveHeadroomUrl}>
+                      {saving === "url" ? t("common.saving") : t("saver.saveHeadroom")}
                     </Button>
                   </div>
                 }
@@ -145,8 +153,8 @@ export function TokenSaver() {
             <Stack gap={3}>
               <Textarea label={t("saver.custom")} hint={t("saver.customHint")} rows={5} maxLength={4000} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
               <div>
-                <Button disabled={busy} onClick={() => void save({ custom_prompt: prompt.trim() === "" ? null : prompt.trim() })}>
-                  {t("saver.saveCustom")}
+                <Button disabled={busy || !promptChanged} onClick={() => void save({ custom_prompt: prompt.trim() === "" ? null : prompt.trim() }, "prompt")}>
+                  {saving === "prompt" ? t("common.saving") : t("saver.saveCustom")}
                 </Button>
               </div>
             </Stack>

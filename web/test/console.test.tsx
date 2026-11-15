@@ -76,7 +76,8 @@ const REQUESTS = {
 };
 
 let calls: { method: string; url: string; auth: string | null; body: unknown }[];
-let routes: Record<string, (body?: unknown) => Response>;
+// A route may answer later (a Promise) to hold a request in flight.
+let routes: Record<string, (body?: unknown) => Response | Promise<Response>>;
 /** The xDev ID session the fake gateway sees (the cookie itself is invisible to the page). */
 let ssoUser: { email: string; name: string } | null;
 let ssoConfigured: boolean;
@@ -1026,6 +1027,33 @@ describe("token saver", () => {
     const intro = /\n\.page-intro\s*\{([^}]*)\}/.exec(styles)?.[1] ?? "";
     expect(intro).not.toMatch(/\bflex\s*:/);
     expect(styles).toMatch(/\.page-actions\s*>\s*\.page-intro\s*\{[^}]*flex:\s*1 1 20rem/);
+  });
+
+  it("the two Save buttons wait for a change, and the one saving says so", async () => {
+    routes["GET /admin/token-saver"] = () => json({ ...SETTINGS, custom_prompt: "Be brief.", headroom: { enabled: false, url: "https://headroom.test" } });
+    let release: () => void = () => {};
+    routes["PUT /admin/token-saver"] = () => new Promise<Response>((r) => (release = () => r(json(SETTINGS))));
+    await openSavers();
+    const saveUrl = () => screen.getByRole("button", { name: /^(Save address|Saving)$/ }) as HTMLButtonElement;
+    const savePrompt = () => screen.getByRole("button", { name: t("saver.saveCustom") }) as HTMLButtonElement;
+    expect(saveUrl().disabled).toBe(true);
+    expect(savePrompt().disabled).toBe(true);
+
+    // Only spaces around the saved value is no change.
+    fireEvent.change(screen.getByLabelText(t("saver.custom")), { target: { value: " Be brief. " } });
+    expect(savePrompt().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(t("saver.custom")), { target: { value: "Be briefer." } });
+    expect(savePrompt().disabled).toBe(false);
+
+    // An address that is not a web address still enables Save, so the error can show.
+    fireEvent.change(screen.getByLabelText(t("saver.headroomUrl")), { target: { value: "headroom" } });
+    expect(saveUrl().disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText(t("saver.headroomUrl")), { target: { value: "https://other.test" } });
+    fireEvent.click(saveUrl());
+    expect(await screen.findByRole("button", { name: t("common.saving") })).toBeTruthy();
+    expect(savePrompt().disabled).toBe(true);
+    release();
+    await waitFor(() => expect(screen.queryByRole("button", { name: t("common.saving") })).toBeNull());
   });
 
   it("switches Headroom on when it has an address", async () => {
