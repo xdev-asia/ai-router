@@ -1061,4 +1061,6 @@ export const vi: Record<keyof typeof en, string> = {
   "ux.models.removeTitle": "Xoá {name}?",
   "ux.models.removeBody": "Client gọi model này sẽ nhận lỗi cho đến khi bạn thêm lại.",
   "ux.models.removeConfirm": "Xoá model",
+  "ux.systems.usageFailed": "Không tải được mức dùng tháng này nên chưa hiện mức dùng của từng hệ thống.",
+  "ux.systems.nameBad": "Nhập tên từ 1 đến 100 ký tự.",
 };

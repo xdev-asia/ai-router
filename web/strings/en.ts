@@ -1059,4 +1059,6 @@ export const en = {
   "ux.models.removeTitle": "Remove {name}?",
   "ux.models.removeBody": "Clients that ask for this model get an error until you add it again.",
   "ux.models.removeConfirm": "Remove model",
+  "ux.systems.usageFailed": "This month's usage did not load, so each system's use is not shown.",
+  "ux.systems.nameBad": "Enter a name of 1 to 100 characters.",
 };

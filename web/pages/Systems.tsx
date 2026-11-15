@@ -52,31 +52,41 @@ export function Systems() {
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** A failure of the action an open dialog asked for: shown in that dialog, which stays open. */
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
-  const used = new Map<string, number>();
-  if (usage.status === "ready") for (const r of usage.data.rows) used.set(r.system_id, (used.get(r.system_id) ?? 0) + capTokens(r));
+  // Only a loaded report gives the month's use; until then, or when it failed, the cell shows "—", never 0.
+  const used = usage.status === "ready" ? new Map<string, number>() : null;
+  if (used && usage.status === "ready") for (const r of usage.data.rows) used.set(r.system_id, (used.get(r.system_id) ?? 0) + capTokens(r));
 
-  async function run<T>(work: () => Promise<T>, after: (v: T) => void) {
+  async function run<T>(work: () => Promise<T>, after: (v: T) => void, inDialog = false) {
     setBusy(true);
     setError(null);
+    setDialogError(null);
     try {
       after(await work());
       reload();
       reloadUsage();
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError(t("error.generic"));
+      if (!(e instanceof ApiError && e.status === 401)) (inDialog ? setDialogError : setError)(t("error.generic"));
     } finally {
       setBusy(false);
     }
   }
 
-  const setDisabled = (s: System, disabled: boolean) =>
+  const closeDialog = () => {
+    setPending(null);
+    setDialogError(null);
+  };
+
+  const setDisabled = (s: System, disabled: boolean, inDialog = false) =>
     run(
       () => api(`/systems/${encodeURIComponent(s.id)}`, { method: "PATCH", body: { disabled } }),
       () => {
         setPending(null);
         notify(t(disabled ? "systems.disabledNotice" : "systems.enabledNotice", { id: s.id }));
       },
+      inDialog,
     );
 
   const columns: DataTableColumn<System>[] = [
@@ -99,6 +109,7 @@ export function Systems() {
       key: "month",
       header: t("systems.col.month"),
       cell: (s) => {
+        if (!used) return <span className="ws-meter">—</span>;
         const n = used.get(s.id) ?? 0;
         // Same face as Meter's label, so rows with and without a cap line up.
         if (s.monthly_token_cap === null) return <span className="ws-meter">{formatNumber(n)}</span>;
@@ -153,6 +164,9 @@ export function Systems() {
         </Button>
       </div>
       {error && <Banner tone="danger" title={error} />}
+      {usage.status === "error" && (
+        <Banner tone="warn" title={t("ux.systems.usageFailed")} action={<Button onClick={reloadUsage}>{t("common.retry")}</Button>} />
+      )}
       <Card flush>
         {systems.status === "loading" && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}
         {systems.status === "error" && (
@@ -165,7 +179,18 @@ export function Systems() {
             rows={systems.data}
             rowKey={(s) => s.id}
             labels={labels.dataTable}
-            empty={<EmptyState icon="server" title={t("systems.empty")} />}
+            empty={
+              <EmptyState
+                size="center"
+                icon="key"
+                title={t("systems.empty")}
+                actions={
+                  <Button icon="plus" onClick={() => setPending({ kind: "create" })}>
+                    {t("systems.add")}
+                  </Button>
+                }
+              />
+            }
           />
         )}
       </Card>
@@ -210,15 +235,19 @@ export function Systems() {
           labels={labels.dialog}
           confirmLabel={t("systems.rotate")}
           busy={busy}
-          onCancel={() => setPending(null)}
+          onCancel={closeDialog}
           onConfirm={() =>
             void run(
               () => api<{ id: string; token: string }>(`/systems/${encodeURIComponent(pending.system.id)}/rotate`, { method: "POST" }),
               (r) => setPending({ kind: "token", id: r.id, token: r.token }),
+              true,
             )
           }
         >
-          {t("systems.rotateBody")}
+          <Stack gap={2}>
+            <span>{t("systems.rotateBody")}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
         </Dialog>
       )}
       {pending?.kind === "disable" && (
@@ -230,10 +259,13 @@ export function Systems() {
           labels={labels.dialog}
           confirmLabel={t("systems.disable")}
           busy={busy}
-          onCancel={() => setPending(null)}
-          onConfirm={() => void setDisabled(pending.system, true)}
+          onCancel={closeDialog}
+          onConfirm={() => void setDisabled(pending.system, true, true)}
         >
-          {t("systems.disableBody")}
+          <Stack gap={2}>
+            <span>{t("systems.disableBody")}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
         </Dialog>
       )}
       {pending?.kind === "token" && <TokenDialog id={pending.id} token={pending.token} onClose={() => setPending(null)} />}
@@ -290,7 +322,7 @@ function CreateDialog({ onCancel, onCreated }: { onCancel: () => void; onCreated
         onChange={(e) => setId(e.target.value)}
         error={tried && !idOk ? t("create.idHint") : undefined}
       />
-      <Field label={t("create.name")} value={name} autoComplete="off" onChange={(e) => setName(e.target.value)} error={tried && !nameOk ? t("create.badInput") : undefined} />
+      <Field label={t("create.name")} value={name} autoComplete="off" onChange={(e) => setName(e.target.value)} error={tried && !nameOk ? t("ux.systems.nameBad") : undefined} />
       <Field
         label={t("create.cap")}
         hint={t("create.capHint")}
@@ -305,7 +337,8 @@ function CreateDialog({ onCancel, onCreated }: { onCancel: () => void; onCreated
 
 function CapDialog({ system, onCancel, onSaved }: { system: System; onCancel: () => void; onSaved: () => void }) {
   const [lang] = useLang();
-  const [cap, setCap] = useState(system.monthly_token_cap === null ? "" : String(system.monthly_token_cap));
+  const saved = system.monthly_token_cap === null ? "" : String(system.monthly_token_cap);
+  const [cap, setCap] = useState(saved);
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -330,6 +363,7 @@ function CapDialog({ system, onCancel, onSaved }: { system: System; onCancel: ()
     <FormDialog
       title={t("cap.title", { id: system.id })}
       submitLabel={t("common.save")}
+      submitDisabled={cap.trim() === saved}
       labels={ui(lang).formDialog}
       busy={busy}
       error={error ?? undefined}

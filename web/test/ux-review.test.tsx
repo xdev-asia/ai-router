@@ -6,6 +6,7 @@ import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
 import { ProviderModelsCard } from "../pages/ProviderModels";
 import { SignIn } from "../pages/SignIn";
+import { Systems } from "../pages/Systems";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -36,6 +37,9 @@ afterEach(() => {
 /** The svg an IconButton draws for `name`. */
 const iconSvg = (name: Parameters<typeof Icon>[0]["name"]) => renderToStaticMarkup(<Icon name={name} />);
 const svgOf = (el: HTMLElement) => el.querySelector("svg")?.outerHTML ?? "";
+/** The drawing of an icon, whatever its size. */
+const drawing = (svg: string) => svg.replace(/^<svg[^>]*>/, "");
+const hasIcon = (el: Element, name: Parameters<typeof Icon>[0]["name"]) => drawing(el.querySelector("svg")?.outerHTML ?? "") === drawing(iconSvg(name));
 
 describe("sign-in", () => {
   it("lets a password manager fill the admin token", () => {
@@ -138,5 +142,80 @@ describe("provider models", () => {
     // Same meaning as the card's own buttons.
     expect(svgOf(screen.getByRole("button", { name: t("models.activeAll") }))).toBe(iconSvg("eye"));
     expect(svgOf(screen.getByRole("button", { name: t("models.disableAll") }))).toBe(iconSvg("eye-off"));
+  });
+});
+
+describe("systems", () => {
+  const SYSTEM = { id: "chat", name: "Chat", monthly_token_cap: 1000, disabled: false, created_at: 1, allowed_models: null, rtk: false, caveman: null, ponytail: null };
+  const USAGE = {
+    month: "2026-11",
+    rows: [{ system_id: "chat", provider: "anthropic", model: "m", requests: 3, input_tokens: 400, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }],
+  };
+
+  beforeEach(() => {
+    routes["GET /admin/systems"] = () => json([SYSTEM]);
+    routes["GET /admin/usage"] = () => json(USAGE);
+  });
+
+  const openMenu = async (item: string) => {
+    fireEvent.click(await screen.findByRole("button", { name: `${t("systems.col.actions")}: chat` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+  };
+
+  it("keeps the rotate dialog open with the error when rotating fails", async () => {
+    routes["POST /admin/systems/chat/rotate"] = () => json({ error: "boom" }, 500);
+    render(<Systems />);
+    await openMenu(t("systems.rotate"));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("systems.rotate") }));
+    expect(await within(dialog).findByText(t("error.generic"))).toBeTruthy();
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  it("keeps the disable dialog open with the error when disabling fails", async () => {
+    routes["PATCH /admin/systems/chat"] = () => json({ error: "boom" }, 500);
+    render(<Systems />);
+    await openMenu(t("systems.disable"));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("systems.disable") }));
+    expect(await within(dialog).findByText(t("error.generic"))).toBeTruthy();
+  });
+
+  it("says the month's usage did not load instead of showing zero", async () => {
+    routes["GET /admin/usage"] = () => json({ error: "boom" }, 500);
+    render(<Systems />);
+    expect(await screen.findByText(t("ux.systems.usageFailed"))).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("common.retry") })).toBeTruthy();
+    const row = screen.getByText("Chat").closest("tr")!;
+    expect(row.textContent).not.toContain("0 / 1,000");
+    expect(row.textContent).toContain("—");
+  });
+
+  it("offers to add the first system from the empty table", async () => {
+    routes["GET /admin/systems"] = () => json([]);
+    render(<Systems />);
+    const empty = (await screen.findByText(t("systems.empty"))).closest(".x-empty")!;
+    expect(hasIcon(empty, "key")).toBe(true);
+    fireEvent.click(within(empty as HTMLElement).getByRole("button", { name: t("systems.add") }));
+    expect(await screen.findByRole("heading", { name: t("create.title") })).toBeTruthy();
+  });
+
+  it("says what is wrong with the name", async () => {
+    render(<Systems />);
+    fireEvent.click(await screen.findByRole("button", { name: t("systems.add") }));
+    fireEvent.change(screen.getByLabelText(t("create.id")), { target: { value: "web" } });
+    fireEvent.click(screen.getByRole("button", { name: t("create.submit") }));
+    expect(await screen.findByText(t("ux.systems.nameBad"))).toBeTruthy();
+  });
+
+  it("saves a cap only once it changed", async () => {
+    render(<Systems />);
+    await openMenu(t("systems.editCap"));
+    const save = screen.getByRole("button", { name: t("common.save") }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(t("create.cap")), { target: { value: "2000" } });
+    expect(save.disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText(t("create.cap")), { target: { value: " 1000 " } });
+    expect(save.disabled).toBe(true);
   });
 });
