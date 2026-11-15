@@ -1072,4 +1072,12 @@ export const en = {
   "ux.pools.saveFailed": "The pool was not saved.",
   "ux.pricing.empty": "No prices yet",
   "ux.pricing.emptyHint": "Add a price per 1M tokens so the Usage page can estimate what calls cost.",
+  "ux.quota.credits.loadFailed": "The reset credits did not load.",
+  "ux.quota.credits.resetFailed": "The limits were not reset.",
+  "ux.quota.credit.available": "Available",
+  "ux.quota.credit.other": "Not available ({status})",
+  "ux.httpStatus": "The gateway answered HTTP {status}.",
+  "ux.logs.clearFailed": "The log was not cleared.",
+  "ux.details.clearFailed": "The request details were not cleared.",
+  "ux.details.toggleFailed": "Recording was not switched.",
 };

@@ -72,7 +72,8 @@ export function RequestDetails() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
+  const [dialogError, setDialogError] = useState<{ title: string; detail?: string } | null>(null);
   const [open, setOpen] = useState<RequestDetail | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -102,7 +103,11 @@ export function RequestDetails() {
       .catch(() => gen === generation.current && setLoadFailed(true));
   }, [model, attempt]);
 
-  const failed = (e: unknown) => setError(e instanceof ApiError ? `${t("error.generic")} (${e.status})` : t("error.generic"));
+  /** A plain headline, with what the gateway answered one step below it. */
+  const failure = (title: string, e: unknown) => ({
+    title,
+    detail: e instanceof ApiError ? t("ux.httpStatus", { status: String(e.status) }) : t("error.generic"),
+  });
 
   async function toggle(on: boolean) {
     setSaving(true);
@@ -112,7 +117,7 @@ export function RequestDetails() {
       setEnabled(r.enabled);
       notify(t(r.enabled ? "details.turnedOn" : "details.turnedOff"));
     } catch (e) {
-      failed(e);
+      setError(failure(t("ux.details.toggleFailed"), e));
     } finally {
       setSaving(false);
     }
@@ -129,14 +134,14 @@ export function RequestDetails() {
 
   async function clearAll() {
     setBusy(true);
-    setError(null);
+    setDialogError(null);
     try {
       await api("/request-details", { method: "DELETE" });
       setRows([]);
       setConfirming(false);
       notify(t("details.cleared"));
     } catch (e) {
-      failed(e);
+      setDialogError(failure(t("ux.details.clearFailed"), e));
     } finally {
       setBusy(false);
     }
@@ -180,7 +185,11 @@ export function RequestDetails() {
           </Stack>
         )}
       </Card>
-      {error && <Banner tone="danger" title={error} />}
+      {error && (
+        <Banner tone="danger" title={error.title}>
+          {error.detail}
+        </Banner>
+      )}
       <Stack direction="row" justify="between" gap={3} wrap>
         <SearchInput
           size="sm"
@@ -260,10 +269,20 @@ export function RequestDetails() {
           labels={labels.dialog}
           confirmLabel={t("details.clear")}
           busy={busy}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => {
+            setConfirming(false);
+            setDialogError(null);
+          }}
           onConfirm={() => void clearAll()}
         >
-          {t("details.clearBody")}
+          <Stack gap={2}>
+            <span>{t("details.clearBody")}</span>
+            {dialogError && (
+              <Banner tone="danger" title={dialogError.title}>
+                {dialogError.detail}
+              </Banner>
+            )}
+          </Stack>
         </Dialog>
       )}
     </Stack>

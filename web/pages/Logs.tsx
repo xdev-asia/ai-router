@@ -106,7 +106,7 @@ function ConsoleLog() {
   const [paused, setPaused] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [clearError, setClearError] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<{ title: string; detail?: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   /** Bumped on every filter change, so an answer for old filters is dropped. */
@@ -176,7 +176,7 @@ function ConsoleLog() {
       setConfirming(false);
       notify(t("logs.cleared"));
     } catch (e) {
-      setClearError(e instanceof ApiError ? `${t("error.generic")} (${e.status})` : t("error.generic"));
+      setClearError({ title: t("ux.logs.clearFailed"), detail: e instanceof ApiError ? t("ux.httpStatus", { status: String(e.status) }) : t("error.generic") });
     } finally {
       setBusy(false);
     }
@@ -269,7 +269,11 @@ function ConsoleLog() {
         >
           <Stack gap={2}>
             <span>{t("logs.clearBody")}</span>
-            {clearError && <Banner tone="danger" title={clearError} />}
+            {clearError && (
+              <Banner tone="danger" title={clearError.title}>
+                {clearError.detail}
+              </Banner>
+            )}
           </Stack>
         </Dialog>
       )}

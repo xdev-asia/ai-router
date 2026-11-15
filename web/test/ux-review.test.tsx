@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Icon } from "@xdev-asia/ui";
-import { setAuth } from "../api";
+import { setAuth, type Connection } from "../api";
 import { resetLang, t } from "../i18n";
 import { ProviderModelsCard } from "../pages/ProviderModels";
 import { ProviderDetail, Providers } from "../pages/Providers";
@@ -11,6 +11,9 @@ import { Systems } from "../pages/Systems";
 import { Combos } from "../pages/Combos";
 import { ProxyPools } from "../pages/ProxyPools";
 import { Pricing, formatPrice } from "../pages/Pricing";
+import { CreditsDialog } from "../pages/Quota";
+import { Logs } from "../pages/Logs";
+import { RequestDetails } from "../pages/RequestDetails";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -455,5 +458,82 @@ describe("pricing", () => {
     fireEvent.change(screen.getByLabelText(t("pricing.searchLabel")), { target: { value: "zzz" } });
     expect(screen.getByText(t("pricing.noMatch"))).toBeTruthy();
     expect(screen.queryByText(t("ux.pricing.empty"))).toBeNull();
+  });
+});
+
+describe("quota reset credits", () => {
+  const conn = { id: "o1", name: "Mine", provider: "codex" } as Connection;
+  const PATH = "/admin/quota/o1/reset-credits";
+  const credits = () => json({ available_count: 1, credits: [{ status: "available", granted_at: 1_900_000_000, expires_at: 1_900_100_000 }, { status: "redeemed", granted_at: 1_800_000_000, expires_at: null }] });
+
+  it("says in plain words that the credits did not load, with the gateway's reason under it", async () => {
+    routes[`GET ${PATH}`] = () => json({ error: "upstream_error", message: "chatgpt answered 403" }, 502);
+    render(<CreditsDialog conn={conn} lang="en" onClose={() => {}} onReset={() => {}} />);
+    const title = await screen.findByText(t("ux.quota.credits.loadFailed"));
+    expect(title.closest(".banner")!.textContent).toContain("chatgpt answered 403");
+  });
+
+  it("says in plain words that the reset failed, and keeps the no-credit case short", async () => {
+    let status = 502;
+    routes[`GET ${PATH}`] = credits;
+    routes["POST /admin/quota/o1/reset-credit"] = () => json({ error: "upstream_error", message: "chatgpt answered 500" }, status);
+    render(<CreditsDialog conn={conn} lang="en" onClose={() => {}} onReset={() => {}} />);
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("table");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("quota.credits.reset") }));
+    const title = await within(dialog).findByText(t("ux.quota.credits.resetFailed"));
+    expect(title.closest(".banner")!.textContent).toContain("chatgpt answered 500");
+    status = 409;
+    fireEvent.click(within(dialog).getByRole("button", { name: t("quota.credits.reset") }));
+    expect(await within(dialog).findByText(t("quota.credits.none"))).toBeTruthy();
+    expect(within(dialog).queryByText(t("ux.quota.credits.resetFailed"))).toBeNull();
+  });
+
+  it("names each credit's status in the owner's language", async () => {
+    routes[`GET ${PATH}`] = credits;
+    render(<CreditsDialog conn={conn} lang="en" onClose={() => {}} onReset={() => {}} />);
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText(t("ux.quota.credit.available"))).toBeTruthy();
+    expect(within(table).getByText(t("ux.quota.credit.other", { status: "redeemed" }))).toBeTruthy();
+  });
+});
+
+describe("logs and request details", () => {
+  const LINE = { id: 1, at: Date.UTC(2026, 10, 13, 9, 30), level: "info", method: "POST", path: "/v1/messages", status: 200, model: "m", system_id: "s", message: null, took_ms: 5 };
+  const DETAIL = { id: 7, at: Date.UTC(2026, 10, 13, 9, 30), system_id: "s", model: "m", path: "/v1/messages", status: 200, took_ms: 5, ttft_ms: 1, input_tokens: 1, output_tokens: 1, cached_tokens: 0, request: "{}", response: "ok", thinking: "" };
+
+  it("says in plain words that the log was not cleared, with the status under it", async () => {
+    routes["GET /admin/logs"] = () => json({ logs: [LINE], kept: { rows: 500, minutes: 15 } });
+    routes["DELETE /admin/logs"] = () => json({ error: "boom" }, 503);
+    render(<Logs />);
+    await screen.findByText("POST /v1/messages");
+    fireEvent.click(screen.getByRole("button", { name: t("logs.clear") }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("logs.clear") }));
+    const title = await within(dialog).findByText(t("ux.logs.clearFailed"));
+    expect(title.closest(".banner")!.textContent).toContain(t("ux.httpStatus", { status: "503" }));
+  });
+
+  it("keeps the clear dialog open with a plain error when clearing request details fails", async () => {
+    routes["GET /admin/observability"] = () => json({ enabled: true });
+    routes["GET /admin/request-details"] = () => json({ details: [DETAIL], kept: 200 });
+    routes["DELETE /admin/request-details"] = () => json({ error: "boom" }, 500);
+    render(<RequestDetails />);
+    await screen.findByRole("table", { name: t("details.caption") });
+    fireEvent.click(screen.getByRole("button", { name: t("details.clear") }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("details.clear") }));
+    const title = await within(dialog).findByText(t("ux.details.clearFailed"));
+    expect(title.closest(".banner")!.textContent).toContain(t("ux.httpStatus", { status: "500" }));
+  });
+
+  it("says in plain words that recording did not switch", async () => {
+    routes["GET /admin/observability"] = () => json({ enabled: false });
+    routes["GET /admin/request-details"] = () => json({ details: [], kept: 200 });
+    routes["PUT /admin/observability"] = () => json({ error: "boom" }, 500);
+    render(<RequestDetails />);
+    fireEvent.click(await screen.findByRole("switch", { name: t("details.record") }));
+    const title = await screen.findByText(t("ux.details.toggleFailed"));
+    expect(title.closest(".banner")!.textContent).toContain(t("ux.httpStatus", { status: "500" }));
   });
 });

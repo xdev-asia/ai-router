@@ -507,17 +507,21 @@ function Account(props: {
 
 type CreditRow = ResetCredits["credits"][number] & { key: string };
 
-function CreditsDialog({ conn, lang, onClose, onReset }: { conn: Connection; lang: Lang; onClose: () => void; onReset: () => void }) {
+/** What the gateway said about a failed call, for the line under a plain headline. */
+const failure = (e: unknown): string => (e instanceof ApiError ? (e.detail ?? e.code) : t("error.generic"));
+
+/** A Codex account's reset credits, and the button that spends one. */
+export function CreditsDialog({ conn, lang, onClose, onReset }: { conn: Connection; lang: Lang; onClose: () => void; onReset: () => void }) {
   const notify = useNotify();
   const [data, setData] = useState<ResetCredits | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let live = true;
     api<ResetCredits>(`/quota/${encodeURIComponent(conn.id)}/reset-credits`).then(
       (d) => live && setData(d),
-      (e: unknown) => live && setError(e instanceof ApiError ? (e.detail ?? e.code) : t("error.generic")),
+      (e: unknown) => live && setError({ title: t("ux.quota.credits.loadFailed"), detail: failure(e) }),
     );
     return () => {
       live = false;
@@ -526,18 +530,21 @@ function CreditsDialog({ conn, lang, onClose, onReset }: { conn: Connection; lan
 
   const reset = async () => {
     setSaving(true);
+    setError(null);
     try {
       const r = await api<{ windows_reset: number }>(`/quota/${encodeURIComponent(conn.id)}/reset-credit`, { method: "POST", body: {} });
       notify(t("quota.credits.done", { n: String(r.windows_reset) }));
       onReset();
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 409 ? t("quota.credits.none") : e instanceof ApiError ? (e.detail ?? e.code) : t("error.generic"));
+      setError(e instanceof ApiError && e.status === 409 ? { title: t("quota.credits.none") } : { title: t("ux.quota.credits.resetFailed"), detail: failure(e) });
       setSaving(false);
     }
   };
 
+  // Only "available" is known to mean a usable credit; any other status is shown as unusable, with its own word.
+  const statusLabel = (status: string) => (status === "available" ? t("ux.quota.credit.available") : t("ux.quota.credit.other", { status }));
   const columns: DataTableColumn<CreditRow>[] = [
-    { key: "status", header: t("quota.credits.status"), cell: (x) => <StatusDot tone={x.status === "available" ? "ok" : "neutral"} label={x.status} /> },
+    { key: "status", header: t("quota.credits.status"), cell: (x) => <StatusDot tone={x.status === "available" ? "ok" : "neutral"} label={statusLabel(x.status)} /> },
     { key: "granted", header: t("quota.credits.granted"), cell: (x) => formatDate(x.granted_at, lang) },
     { key: "expires", header: t("quota.credits.expires"), cell: (x) => formatDate(x.expires_at, lang) },
   ];
@@ -556,7 +563,11 @@ function CreditsDialog({ conn, lang, onClose, onReset }: { conn: Connection; lan
       onCancel={onClose}
       body="plain"
     >
-      {error && <Banner tone="danger" title={error} />}
+      {error && (
+        <Banner tone="danger" title={error.title}>
+          {error.detail}
+        </Banner>
+      )}
       {!data && !error && <Skeleton lines={3} announce labels={{ loading: t("loading") }} />}
       {data && (
         <DataTable

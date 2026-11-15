@@ -1074,4 +1074,12 @@ export const vi: Record<keyof typeof en, string> = {
   "ux.pools.saveFailed": "Chưa lưu được nhóm proxy.",
   "ux.pricing.empty": "Chưa có giá nào",
   "ux.pricing.emptyHint": "Thêm giá cho mỗi 1M token để trang Mức dùng ước tính chi phí của các lượt gọi.",
+  "ux.quota.credits.loadFailed": "Chưa tải được lượt đặt lại.",
+  "ux.quota.credits.resetFailed": "Chưa đặt lại được giới hạn.",
+  "ux.quota.credit.available": "Còn dùng được",
+  "ux.quota.credit.other": "Không dùng được ({status})",
+  "ux.httpStatus": "Gateway trả về HTTP {status}.",
+  "ux.logs.clearFailed": "Chưa xóa được nhật ký.",
+  "ux.details.clearFailed": "Chưa xóa được chi tiết yêu cầu.",
+  "ux.details.toggleFailed": "Chưa đổi được chế độ ghi.",
 };
