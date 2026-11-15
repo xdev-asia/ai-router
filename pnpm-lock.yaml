@@ -173,8 +173,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       '@xdev-asia/ui':
-        specifier: 3.10.0
-        version: 3.10.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
+        specifier: 3.10.1
+        version: 3.10.1(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       hono:
         specifier: ^4.13.16
         version: 4.13.16
@@ -1543,8 +1543,8 @@ packages:
   '@vitest/utils@4.1.12':
     resolution: {integrity: sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==}
 
-  '@xdev-asia/ui@3.10.0':
-    resolution: {integrity: sha512-w6yzHuKQ34Qza0xO5+h8/dJQVj/JRQU2aylz8TFVqkfiBLkec9TpQMQ6oxjZIM9T2ux7iTSMT/i/+5zn+Ssy0Q==, tarball: https://npm.pkg.github.com/download/@xdev-asia/ui/3.10.0/0c9d3a24a103f57ea202264a033e0f39fe5b1c78}
+  '@xdev-asia/ui@3.10.1':
+    resolution: {integrity: sha512-/oM7txXhgUD9ag9XYWzOR4CpL0k6645wXZ8PmCyP2nSTkgJ9ptQbnSByzfTxCl18VO8yrP58JzW1jyxeB9XZhA==, tarball: https://npm.pkg.github.com/download/@xdev-asia/ui/3.10.1/ebf1f40ed5ea6e83b1d0e1e124b313e5a3bad1fe}
     engines: {node: '>=24'}
     hasBin: true
     peerDependencies:
@@ -3105,7 +3105,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
 
-  '@xdev-asia/ui@3.10.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
+  '@xdev-asia/ui@3.10.1(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@tiptap/core': 3.33.0(@tiptap/pm@3.33.0)
       '@tiptap/extension-image': 3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))
