@@ -34,9 +34,13 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a version: $VERSION"; exit 1; }
           corepack enable
           printf '//npm.pkg.github.com/:_authToken=%s\n' "$GH_PACKAGES_TOKEN" >> ~/.npmrc
-          sed -i -E "s|\"@xdev-asia/ui@[0-9.]+\"|\"@xdev-asia/ui@$VERSION\"|" pnpm-workspace.yaml
-          grep -q "\"@xdev-asia/ui@$VERSION\"" pnpm-workspace.yaml || { echo "::error::no @xdev-asia/ui exclude in pnpm-workspace.yaml"; exit 1; }
+          # The lockfile still holds the old release while pnpm checks it, so both stay excluded until the add is done.
+          line=$(grep -E '^  - "@xdev-asia/ui@[0-9.]+"$' pnpm-workspace.yaml | tail -1)
+          [ -n "$line" ] || { echo "::error::no @xdev-asia/ui exclude in pnpm-workspace.yaml"; exit 1; }
+          sed -i "\|^$line\$|a\\  - \"@xdev-asia/ui@$VERSION\"" pnpm-workspace.yaml
           corepack pnpm add --save-exact "@xdev-asia/ui@$VERSION"
+          sed -i -E "/^  - \"@xdev-asia\/ui@[0-9.]+\"$/{/@$VERSION\"$/!d}" pnpm-workspace.yaml
+          corepack pnpm install --frozen-lockfile
           git diff --stat
 
       - name: Push branch
