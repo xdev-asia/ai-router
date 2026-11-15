@@ -1057,4 +1057,8 @@ export const vi: Record<keyof typeof en, string> = {
   "providers.headerRemove": "Bỏ header {n}",
   "providers.headersSaved": "Đã lưu header.",
   "providers.headersEmpty": "Chưa có header tuỳ chỉnh.",
+  // ux review fixes
+  "ux.models.removeTitle": "Xoá {name}?",
+  "ux.models.removeBody": "Client gọi model này sẽ nhận lỗi cho đến khi bạn thêm lại.",
+  "ux.models.removeConfirm": "Xoá model",
 };

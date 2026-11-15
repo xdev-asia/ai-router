@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Banner, Button, Card, Dialog, Field, FormDialog, IconButton, ModelChip, ModelChipAdd, Select, Skeleton } from "@xdev-asia/ui";
+import { Banner, Button, Card, Dialog, Field, FormDialog, IconButton, ModelChip, ModelChipAdd, Select, Skeleton, Stack } from "@xdev-asia/ui";
 import { ApiError, api, useLoad, type ProviderModel, type ProviderModels as Models } from "../api";
 import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
@@ -11,7 +11,12 @@ const bare = (model: string) => model.replace(/\[1m\]$/i, "").replace(/\([^()]*\
 const LEVELS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
 const levelLabel = (mode: string) => (LEVELS.includes(mode) ? t(`models.level.${mode}` as StringKey) : mode);
 
-type Pending = { kind: "add" } | { kind: "disableAll"; ids: string[] } | { kind: "alias"; model: ProviderModel; current: string | null } | null;
+type Pending =
+  | { kind: "add" }
+  | { kind: "disableAll"; ids: string[] }
+  | { kind: "remove"; model: ProviderModel }
+  | { kind: "alias"; model: ProviderModel; current: string | null }
+  | null;
 
 /**
  * A provider's Available Models card (FR-CON-11, FR-MDL-05..12): each model's id to copy, test,
@@ -26,21 +31,37 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A failure of the action an open dialog asked for: shown in that dialog, which stays open. */
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<void>, inDialog = false) {
     setBusy(true);
     setError(null);
+    setDialogError(null);
     try {
       await action();
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 401)) setError(t("error.generic"));
+      if (!(e instanceof ApiError && e.status === 401)) (inDialog ? setDialogError : setError)(t("error.generic"));
     } finally {
       setBusy(false);
     }
   }
 
-  if (data.status === "loading") return <Skeleton lines={2} announce labels={{ loading: t("loading") }} />;
-  if (data.status === "error") return <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />;
+  const closeDialog = () => {
+    setPending(null);
+    setDialogError(null);
+  };
+
+  if (data.status !== "ready")
+    return (
+      <Card title={t("models.title")}>
+        {data.status === "loading" ? (
+          <Skeleton lines={2} announce labels={{ loading: t("loading") }} />
+        ) : (
+          <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />
+        )}
+      </Card>
+    );
   const { alias, thinking, models } = data.data;
   const code = (m: ProviderModel) => `${alias}/${m.id}`;
   const mode = thinking?.mode ?? "auto";
@@ -82,7 +103,7 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
       await api("/models/disabled", { body: { provider, ids } });
       setPending(null);
       reload();
-    });
+    }, true);
 
   const activeAll = () =>
     run(async () => {
@@ -94,8 +115,9 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
     run(async () => {
       await api(`/models/custom?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(m.id)}`, { method: "DELETE" });
       notify(t("models.removed", { name: code(m) }));
+      setPending(null);
       reload();
-    });
+    }, true);
 
   /** Sends "hi" to the model through the gateway and says how it went. */
   async function test(m: ProviderModel) {
@@ -154,7 +176,7 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
                   <>
                     <IconButton
                       size="sm"
-                      icon={m.disabled ? "eye-off" : "eye"}
+                      icon={m.disabled ? "eye" : "eye-off"}
                       label={m.disabled ? t("models.show", { name: code(m) }) : t("models.hide", { name: code(m) })}
                       disabled={busy}
                       onClick={() => void setDisabled(m, !m.disabled)}
@@ -167,7 +189,7 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
                       onClick={() => void test(m)}
                     />
                     <IconButton size="sm" icon="tag" label={t("models.alias", { name: code(m) })} disabled={busy} onClick={() => setPending({ kind: "alias", model: m, current: a })} />
-                    {m.custom && <IconButton size="sm" icon="trash" label={t("models.remove", { name: code(m) })} disabled={busy} onClick={() => void remove(m)} />}
+                    {m.custom && <IconButton size="sm" icon="trash" label={t("models.remove", { name: code(m) })} disabled={busy} onClick={() => setPending({ kind: "remove", model: m })} />}
                   </>
                 }
               />
@@ -187,10 +209,31 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
           labels={ui(lang).dialog}
           confirmLabel={t("models.disableAll")}
           busy={busy}
-          onCancel={() => setPending(null)}
+          onCancel={closeDialog}
           onConfirm={() => void disableAll(pending.ids)}
         >
-          {t("models.disableAllBody", { n: String(pending.ids.length) })}
+          <Stack gap={2}>
+            <span>{t("models.disableAllBody", { n: String(pending.ids.length) })}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
+        </Dialog>
+      )}
+      {pending?.kind === "remove" && (
+        <Dialog
+          modal
+          alert
+          tone="danger"
+          title={t("ux.models.removeTitle", { name: code(pending.model) })}
+          labels={ui(lang).dialog}
+          confirmLabel={t("ux.models.removeConfirm")}
+          busy={busy}
+          onCancel={closeDialog}
+          onConfirm={() => void remove(pending.model)}
+        >
+          <Stack gap={2}>
+            <span>{t("ux.models.removeBody")}</span>
+            {dialogError && <Banner tone="danger" title={dialogError} />}
+          </Stack>
         </Dialog>
       )}
       {pending?.kind === "add" && (
@@ -278,8 +321,9 @@ function AliasDialog({ target, current, onCancel, onSaved }: { target: string; c
     setBusy(true);
     setError(null);
     try {
-      if (current && current !== value) await api(`/models/aliases?alias=${encodeURIComponent(current)}`, { method: "DELETE" });
+      // The new name first: if it fails, the model keeps the alias it had.
       if (value) await api("/models/aliases", { method: "PUT", body: { alias: value, model: target } });
+      if (current && current !== value) await api(`/models/aliases?alias=${encodeURIComponent(current)}`, { method: "DELETE" });
       onSaved(value ? t("models.aliasSaved", { alias: value, name: target }) : t("models.aliasRemoved", { alias: current ?? "" }));
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return;

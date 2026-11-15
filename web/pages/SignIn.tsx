@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthShell, Banner, BrandMark, Button, Field, Stack, ThemeSwitch } from "@xdev-asia/ui";
 import { ApiError, signInWithToken } from "../api";
 import { t } from "../i18n";
@@ -19,7 +19,15 @@ export function signinError(search: string): SigninError | null {
  * The pasted token is traded for a session cookie (POST /auth/token); the page does not keep it.
  */
 export function SignIn({ sso }: { sso: boolean }) {
-  const ssoError = signinError(window.location.search);
+  // Read once, then take it off the address so a reload or a shared link does not show it again.
+  const [ssoError] = useState(() => signinError(window.location.search));
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("signin_error")) return;
+    params.delete("signin_error");
+    const search = params.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`);
+  }, []);
   const [theme, setTheme, shownTheme] = useTheme();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +89,7 @@ export function SignIn({ sso }: { sso: boolean }) {
           <Field
             label={t("signin.token")}
             type="password"
-            autoComplete="off"
+            autoComplete="current-password"
             spellCheck={false}
             value={value}
             onChange={(e) => setValue(e.target.value)}

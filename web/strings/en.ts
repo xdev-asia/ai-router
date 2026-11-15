@@ -1055,4 +1055,8 @@ export const en = {
   "providers.headerRemove": "Remove header {n}",
   "providers.headersSaved": "Headers saved.",
   "providers.headersEmpty": "No custom headers.",
+  // ux review fixes
+  "ux.models.removeTitle": "Remove {name}?",
+  "ux.models.removeBody": "Clients that ask for this model get an error until you add it again.",
+  "ux.models.removeConfirm": "Remove model",
 };
