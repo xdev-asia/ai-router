@@ -15,6 +15,9 @@ import { CreditsDialog } from "../pages/Quota";
 import { Logs } from "../pages/Logs";
 import { RequestDetails } from "../pages/RequestDetails";
 import { Usage } from "../pages/Usage";
+import { CliTools } from "../pages/CliTools";
+import { cliToolFromHash, pageFromHash, providerFromHash } from "../App";
+import { hashParams, hashRoute, withHashParams } from "../url-state";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -568,5 +571,81 @@ describe("usage overview load failure", () => {
     fireEvent.click(within(banner).getByRole("button", { name: t("common.retry") }));
     await screen.findByText(t("usage.successRate"));
     expect(screen.queryByText(t("error.load"))).toBeNull();
+  });
+});
+
+describe("page state in the address", () => {
+  it("splits a hash route from its query, and leaves defaults and empty values out", () => {
+    expect(hashRoute("#/logs?level=error")).toBe("#/logs");
+    expect(hashRoute("#/logs")).toBe("#/logs");
+    expect(hashParams("#/logs?level=error&q=a%20b").get("q")).toBe("a b");
+    expect(withHashParams("#/logs", "#/logs?level=error", { level: "all", q: "boom" }, { level: "all", q: "" })).toBe("#/logs?q=boom");
+    expect(withHashParams("#/usage", "", { tab: "details" }, { tab: "overview" })).toBe("#/usage?tab=details");
+    expect(withHashParams("#/usage", "#/usage?tab=details", { tab: "overview" }, { tab: "overview" })).toBe("#/usage");
+  });
+
+  it("routes a page whose hash carries a query", () => {
+    expect(pageFromHash("#/usage?tab=details")).toBe("usage");
+    expect(pageFromHash("#/logs?level=error&q=x")).toBe("logs");
+    expect(providerFromHash("#/providers/openai?x=1")).toBe("openai");
+    expect(cliToolFromHash("#/cli-tools/codex?x=1")).toBe("codex");
+  });
+
+  it("keeps the usage tab and period in the address", async () => {
+    window.location.hash = "#/usage?period=7d";
+    routes["GET /admin/usage/summary"] = () => json({ error: "internal" }, 500);
+    routes["GET /admin/usage/chart"] = () => json({ period: "7d", step: 86400, buckets: [] });
+    routes["GET /admin/providers"] = () => json([]);
+    render(<Usage />);
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/summary?period=7d")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: t("usage.period.30d") }));
+    expect(window.location.hash).toBe("#/usage?period=30d");
+    fireEvent.click(screen.getByRole("tab", { name: t("usage.tab.details") }));
+    expect(hashParams(window.location.hash).get("tab")).toBe("details");
+  });
+
+  it("keeps the logs view, level and search in the address", async () => {
+    window.location.hash = "#/logs?level=error&q=boom";
+    routes["GET /admin/logs"] = () => json({ logs: [], kept: { rows: 500, minutes: 15 } });
+    routes["GET /admin/observability"] = () => json({ enabled: false });
+    routes["GET /admin/request-details"] = () => json({ details: [], kept: 200 });
+    render(<Logs />);
+    await waitFor(() => expect(calls.some((c) => c.url === "/admin/logs?level=error&q=boom")).toBe(true));
+    expect((screen.getByRole("searchbox", { name: t("logs.filter") }) as HTMLInputElement).value).toBe("boom");
+    fireEvent.click(screen.getByRole("button", { name: t("logs.level.warn") }));
+    expect(hashParams(window.location.hash).get("level")).toBe("warn");
+    fireEvent.click(screen.getByRole("tab", { name: t("logs.tab.details") }));
+    expect(hashParams(window.location.hash).get("view")).toBe("details");
+  });
+
+  it("keeps the combos search in the address", async () => {
+    window.location.hash = "#/combos?q=fast";
+    routes["GET /admin/combos"] = () => json([]);
+    routes["GET /admin/models"] = () => json({ data: [] });
+    render(<Combos />);
+    const box = (await screen.findByRole("searchbox", { name: t("combos.searchLabel") })) as HTMLInputElement;
+    expect(box.value).toBe("fast");
+    fireEvent.change(box, { target: { value: "cheap" } });
+    expect(window.location.hash).toBe("#/combos?q=cheap");
+  });
+
+  it("keeps the pricing search and provider in the address", async () => {
+    window.location.hash = "#/pricing?q=mini";
+    routes["GET /admin/pricing"] = () => json([{ target: "openai/gpt-5-mini", input: 1, output: 2, cache_read: 0, cache_write: 0, custom: true, default: null }]);
+    routes["GET /admin/providers"] = () => json([]);
+    render(<Pricing />);
+    const box = (await screen.findByRole("searchbox", { name: t("pricing.searchLabel") })) as HTMLInputElement;
+    expect(box.value).toBe("mini");
+    fireEvent.change(box, { target: { value: "" } });
+    expect(window.location.hash).toBe("#/pricing");
+  });
+
+  it("keeps the CLI tools search in the address", () => {
+    window.location.hash = "#/cli-tools?q=cla";
+    render(<CliTools tool={null} />);
+    const box = screen.getByRole("searchbox", { name: t("cli.find") }) as HTMLInputElement;
+    expect(box.value).toBe("cla");
+    fireEvent.change(box, { target: { value: "co" } });
+    expect(window.location.hash).toBe("#/cli-tools?q=co");
   });
 });

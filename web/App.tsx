@@ -25,6 +25,7 @@ import { ShellTitleContext } from "./shell";
 import { useTheme } from "./theme";
 import { useTranslatorShown } from "./translator-pref";
 import { ui } from "./ui-labels";
+import { hashRoute } from "./url-state";
 import { BUILD, buildLabel, useNewBuild } from "./version";
 
 export type Page = "systems" | "providers" | "combos" | "cli-tools" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
@@ -55,8 +56,12 @@ const GROUPS: { title: StringKey; pages: Page[] }[] = [
   { title: "nav.system", pages: ["media", "proxy-pools", "skills", "logs", "translator", "settings", "pricing"] },
 ];
 
-/** Hash routes (`#/<page>`, `#/providers/<id>`, `#/media/<tab>`), so no page path ever collides with the /admin API. */
-export function pageFromHash(hash: string): Page {
+/**
+ * Hash routes (`#/<page>`, `#/providers/<id>`, `#/media/<tab>`), so no page path ever collides with the /admin API.
+ * A page may keep its filters after a `?` (`#/logs?level=error`, see url-state.ts); routing ignores them.
+ */
+export function pageFromHash(full: string): Page {
+  const hash = hashRoute(full);
   if (hash === "#/providers" || hash.startsWith("#/providers/")) return "providers";
   if (hash === "#/media" || hash.startsWith("#/media/")) return "media";
   if (hash.startsWith("#/cli-tools/")) return "cli-tools";
@@ -66,12 +71,12 @@ export function pageFromHash(hash: string): Page {
 
 /** The provider of `#/providers/<id>`; null on any other page. */
 export function providerFromHash(hash: string): string | null {
-  return /^#\/providers\/([a-z][a-z0-9-]{0,31})$/.exec(hash)?.[1] ?? null;
+  return /^#\/providers\/([a-z][a-z0-9-]{0,31})$/.exec(hashRoute(hash))?.[1] ?? null;
 }
 
 /** The tool of `#/cli-tools/<id>`; null on any other page. */
 export function cliToolFromHash(hash: string): string | null {
-  return /^#\/cli-tools\/([a-z][a-z0-9-]{0,31})$/.exec(hash)?.[1] ?? null;
+  return /^#\/cli-tools\/([a-z][a-z0-9-]{0,31})$/.exec(hashRoute(hash))?.[1] ?? null;
 }
 
 function useHash(): string {
@@ -254,7 +259,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
             {page === "cli-tools" ? (
               <CliTools tool={cliToolFromHash(hash)} />
             ) : page === "media" ? (
-              <Media tab={/^#\/media\/([a-z-]+)$/.exec(hash)?.[1] ?? null} />
+              <Media tab={/^#\/media\/([a-z-]+)$/.exec(hashRoute(hash))?.[1] ?? null} />
             ) : page === "proxy-pools" ? (
               <ProxyPools />
             ) : page === "skills" ? (

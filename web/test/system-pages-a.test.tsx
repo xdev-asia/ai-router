@@ -35,6 +35,7 @@ let skillsStatus: number;
 beforeEach(() => {
   localStorage.setItem("ai-router.lang", "en");
   resetLang();
+  window.location.hash = "";
   calls = [];
   logs = [...LINES];
   skillsStatus = 200;

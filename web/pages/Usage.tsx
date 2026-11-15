@@ -35,6 +35,7 @@ import { api, useLoad, type Connection, type Provider, type System, type UsageBu
 import { formatNumber, t, useLang, type Lang, type StringKey } from "../i18n";
 import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
+import { useHashParams } from "../url-state";
 
 const PERIODS: UsagePeriod[] = ["today", "24h", "7d", "30d", "60d", "all"];
 /** Rows in the recent list beside the router map; the Details tab has the rest. */
@@ -226,10 +227,17 @@ function Status({ code }: { code: number }) {
   return <StatusDot tone={code < 400 ? "ok" : code === 429 || code >= 500 ? "warn" : "danger"} label={String(code)} />;
 }
 
+/** The tab and the period live in the address (`#/usage?tab=details`, `#/usage?period=7d`). */
+const TAB_DEFAULT = { tab: "overview" };
+const TAB_ALLOWED = { tab: ["overview", "details"] };
+const PERIOD_DEFAULT = { period: "24h" };
+const PERIOD_ALLOWED = { period: PERIODS };
+
 /** Usage: an Overview of a period and a Details list of single requests. A breakdown row opens Details narrowed to it. */
 export function Usage() {
   useLang();
-  const [tab, setTab] = useState("overview");
+  const [{ tab }, setParams] = useHashParams("#/usage", TAB_DEFAULT, TAB_ALLOWED);
+  const setTab = (id: string) => setParams({ tab: id });
   const [filters, setFilters] = useState<RequestFilters>(NO_FILTERS);
   const openDetails = (next: Partial<RequestFilters>) => {
     setFilters({ ...NO_FILTERS, ...next });
@@ -376,7 +384,9 @@ function RecentFeed({ rows, loading, providerName, empty, onViewAll }: { rows: U
 
 function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters>) => void }) {
   const [providers] = useLoad<Provider[]>("/providers");
-  const [period, setPeriod] = useState<UsagePeriod>("24h");
+  const [params, setParams] = useHashParams("#/usage", PERIOD_DEFAULT, PERIOD_ALLOWED);
+  const period = params.period as UsagePeriod;
+  const setPeriod = (p: UsagePeriod) => setParams({ period: p });
   // "today" starts at the owner's midnight; the rolling periods need no offset.
   const [report, reload] = useLoad<UsageSummary>(`/usage/summary?period=${period}${period === "today" ? `&tz=${tzMinutes()}` : ""}`);
   const loading = report.status === "loading";

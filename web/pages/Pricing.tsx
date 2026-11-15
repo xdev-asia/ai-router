@@ -20,6 +20,7 @@ import { ApiError, api, useLoad, type PriceRates, type PriceRow, type Provider }
 import { t, useLang, type Lang } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
+import { useHashParams } from "../url-state";
 
 /** The gateway's rule for a price's model (worker/report.ts): `provider/model`, or a prefix of one. */
 export const PRICE_TARGET = /^[a-z][a-z0-9-]*\/[A-Za-z0-9._:/@+-]{1,200}$/;
@@ -47,6 +48,9 @@ function parsePrice(v: string, blank: number | null): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+/** The search and the provider filter live in the address (`#/pricing?q=mini&provider=openai`). */
+const FILTER_DEFAULT = { q: "", provider: "" };
+
 /** Pricing: the per-1M-token prices the Usage page estimates cost with. */
 export function Pricing() {
   const [lang] = useLang();
@@ -54,8 +58,9 @@ export function Pricing() {
   const notify = useNotify();
   const [prices, reload] = useLoad<PriceRow[]>("/pricing");
   const [providers] = useLoad<Provider[]>("/providers");
-  const [query, setQuery] = useState("");
-  const [provider, setProvider] = useState("");
+  const [{ q: query, provider }, setParams] = useHashParams("#/pricing", FILTER_DEFAULT);
+  const setQuery = (q: string) => setParams({ q });
+  const setProvider = (p: string) => setParams({ provider: p });
   const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

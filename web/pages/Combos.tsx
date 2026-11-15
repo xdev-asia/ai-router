@@ -41,6 +41,7 @@ import {
 import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
+import { useHashParams } from "../url-state";
 
 const MAX_MODELS = 50;
 const PREVIEW = 3;
@@ -202,6 +203,9 @@ export function visionBody(saved: VisionAdapter, models: readonly string[], targ
   return { enabled: saved.enabled && models.length > 0 && targets.length > 0, models: [...models], applies_to: [...targets] };
 }
 
+/** The search lives in the address (`#/combos?q=fast`). */
+const SEARCH_DEFAULT = { q: "" };
+
 /** Combos: one name for an ordered list of models; the gateway tries the next after a rate limit, a server error or a missing key. */
 export function Combos() {
   const [lang] = useLang();
@@ -212,11 +216,11 @@ export function Combos() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
-  const [query, setQueryState] = useState("");
+  const [{ q: query }, setParams] = useHashParams("#/combos", SEARCH_DEFAULT);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** A new search starts with nothing picked, so a bulk action never reaches rows the owner can no longer see. */
   const setQuery = (q: string) => {
-    setQueryState(q);
+    setParams({ q });
     setSelected(new Set());
   };
   const closeDialog = () => {

@@ -19,6 +19,7 @@ import { apiOf } from "./Endpoint";
 import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
+import { useHashParams } from "../url-state";
 
 /** One line of GET /admin/logs (worker/logs.ts). It never holds a key or request content. */
 export interface LogLine {
@@ -68,9 +69,17 @@ export function mergeLines(fresh: LogLine[], shown: LogLine[]): LogLine[] {
 const TONE = { info: "neutral", warn: "warn", error: "danger" } as const;
 const ROW_LABEL: Record<LogLine["level"], StringKey> = { info: "logs.row.info", warn: "logs.row.warn", error: "logs.row.error" };
 
+/** The tab, the level and the search live in the address (`#/logs?view=details`, `#/logs?level=error&q=timeout`). */
+const VIEW_DEFAULT = { view: "console" };
+const VIEW_ALLOWED = { view: ["console", "details"] };
+const FILTER_DEFAULT = { level: "all", q: "" };
+const FILTER_ALLOWED = { level: ["all", "info", "warn", "error"] };
+
 /** Logs: the console log, and the request details kept while Observability is on. */
 export function Logs() {
-  const [view, setView] = useState<"console" | "details">("console");
+  const [params, setParams] = useHashParams("#/logs", VIEW_DEFAULT, VIEW_ALLOWED);
+  const view = params.view as "console" | "details";
+  const setView = (v: "console" | "details") => setParams({ view: v });
   return (
     <Stack gap={4}>
       <Tabs
@@ -96,9 +105,12 @@ function ConsoleLog() {
   const labels = ui(lang);
   const notify = useNotify();
 
-  const [level, setLevel] = useState<Level>("all");
-  const [query, setQuery] = useState("");
-  const [q, setQ] = useState("");
+  const [params, setParams] = useHashParams("#/logs", FILTER_DEFAULT, FILTER_ALLOWED);
+  const level = params.level as Level;
+  const query = params.q;
+  const setLevel = (l: Level) => setParams({ level: l });
+  const setQuery = (s: string) => setParams({ q: s });
+  const [q, setQ] = useState(() => query.trim());
   const [rows, setRows] = useState<LogLine[] | null>(null);
   const [kept, setKept] = useState(DEFAULT_KEPT);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -161,10 +173,9 @@ function ConsoleLog() {
   }, [paused, ready, level, q]);
 
   const clearFilters = useCallback(() => {
-    setQuery("");
+    setParams({ q: "", level: "all" });
     setQ("");
-    setLevel("all");
-  }, []);
+  }, [setParams]);
 
   const clearLog = async () => {
     setBusy(true);

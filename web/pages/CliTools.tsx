@@ -4,6 +4,7 @@ import { useLoad, type Combo } from "../api";
 import { t, useLang, type StringKey } from "../i18n";
 import { useShellTitle } from "../shell";
 import { ui } from "../ui-labels";
+import { useHashParams } from "../url-state";
 import { baseUrl } from "./Endpoint";
 
 /**
@@ -672,9 +673,13 @@ export function CliTools({ tool }: { tool: string | null }) {
   return found ? <CliToolPage key={found.id} tool={found} /> : <CliToolGrid />;
 }
 
+/** The search lives in the address (`#/cli-tools?q=claude`). */
+const SEARCH_DEFAULT = { q: "" };
+
 function CliToolGrid() {
   const [lang] = useLang();
-  const [query, setQuery] = useState("");
+  const [{ q: query }, setParams] = useHashParams("#/cli-tools", SEARCH_DEFAULT);
+  const setQuery = (q: string) => setParams({ q });
   const shown = filterTools(TOOLS, query);
 
   return (
