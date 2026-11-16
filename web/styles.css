@@ -205,6 +205,17 @@ body {
   width: 7rem;
 }
 
+.prefs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--x-space-2);
+}
+
+.prefs-uri {
+  overflow-wrap: anywhere;
+}
+
 .prefs-tables {
   margin: var(--x-space-2) 0 0;
   padding-left: var(--x-space-4);

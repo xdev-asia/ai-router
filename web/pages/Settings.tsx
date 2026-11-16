@@ -133,6 +133,194 @@ function TimeoutsCard() {
   );
 }
 
+/** What GET /admin/sso says: the xDev ID client sign-in uses and where it comes from, never its secret. */
+export interface SsoView {
+  source: "settings" | "env" | "none";
+  issuer: string;
+  client_id: string;
+  secret_set: boolean;
+  redirect_uri: string;
+}
+
+type SsoField = "issuer" | "client_id" | "secret";
+type SsoDraft = Record<SsoField, string>;
+
+/** The fields PUT /admin/sso would refuse (worker/sso.ts), so nothing is sent for them. */
+export function validateSso(d: SsoDraft, secretSet: boolean): Partial<Record<SsoField, StringKey>> {
+  const bad: Partial<Record<SsoField, StringKey>> = {};
+  const issuer = d.issuer.trim();
+  let u: URL | null;
+  try {
+    u = new URL(issuer);
+  } catch {
+    u = null;
+  }
+  if (!u || issuer.length > 500 || u.protocol !== "https:" || u.username || u.password || issuer.includes("?") || issuer.includes("#")) {
+    bad.issuer = "prefs.ssoIssuerBad";
+  }
+  const client = d.client_id.trim();
+  if (!client || client.length > 200) bad.client_id = "prefs.ssoClientBad";
+  if (d.secret.length > 4096) bad.secret = "prefs.ssoSecretLong";
+  else if (!d.secret.trim() && !secretSet) bad.secret = "prefs.ssoSecretNeeded";
+  return bad;
+}
+
+const SSO_STATUS: Record<SsoView["source"], StringKey> = { settings: "prefs.ssoOnSettings", env: "prefs.ssoOnEnv", none: "prefs.ssoOff" };
+
+/** The xDev ID client the console signs in with (FR-SET-17 to FR-SET-21). The secret is write-only. */
+function SsoCard() {
+  const notify = useNotify();
+  const [lang] = useLang();
+  const labels = ui(lang);
+  const [load, reload] = useLoad<SsoView>("/sso");
+  const [saved, setSaved] = useState<SsoView | null>(null);
+  const [draft, setDraft] = useState<SsoDraft>({ issuer: "", client_id: "", secret: "" });
+  const [bad, setBad] = useState<Partial<Record<SsoField, StringKey>>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<StringKey | null>(null);
+  const [confirmEnv, setConfirmEnv] = useState(false);
+
+  const show = (v: SsoView) => {
+    setSaved(v);
+    setDraft({ issuer: v.issuer, client_id: v.client_id, secret: "" });
+    setBad({});
+  };
+
+  useEffect(() => {
+    if (load.status === "ready") show(load.data);
+  }, [load]);
+
+  const on = saved !== null && saved.issuer !== "" && saved.client_id !== "" && saved.secret_set;
+  const changed = saved !== null && (draft.issuer.trim() !== saved.issuer || draft.client_id.trim() !== saved.client_id || draft.secret.trim() !== "");
+  const edit = (field: SsoField) => (e: { target: { value: string } }) => setDraft((d) => ({ ...d, [field]: e.target.value }));
+
+  async function save() {
+    if (!saved) return;
+    const found = validateSso(draft, saved.secret_set);
+    setBad(found);
+    if (Object.keys(found).length > 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const body: Record<string, string> = { issuer: draft.issuer.trim(), client_id: draft.client_id.trim() };
+      if (draft.secret.trim()) body.secret = draft.secret.trim();
+      show(await api<SsoView>("/sso", { method: "PUT", body }));
+      notify(t("prefs.saved"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      if (e instanceof ApiError && e.status === 409) setError("prefs.ssoNoKey");
+      else if (e instanceof ApiError && e.status === 400) setError("prefs.ssoRefused");
+      else setError("error.generic");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function useEnv() {
+    setBusy(true);
+    setError(null);
+    try {
+      show(await api<SsoView>("/sso", { method: "DELETE" }));
+      notify(t("prefs.saved"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      setError("error.generic");
+    } finally {
+      setConfirmEnv(false);
+      setBusy(false);
+    }
+  }
+
+  async function copyRedirect(uri: string) {
+    try {
+      await navigator.clipboard.writeText(uri);
+      notify(t("prefs.ssoRedirectCopied"));
+    } catch {
+      notify(t("skills.copyFailed"));
+    }
+  }
+
+  return (
+    <Card title={t("prefs.sso")} subtitle={t("prefs.ssoHint")} headingLevel={2}>
+      {load.status === "loading" && <Skeleton lines={4} announce labels={{ loading: t("loading") }} />}
+      {load.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
+      {saved && (
+        <Stack gap={3}>
+          {error && <Banner tone="danger" title={t(error)} />}
+          <SettingRow label={t("prefs.ssoStatus")} description={t("prefs.ssoStatusHint")} control={<StatusDot tone={on ? "ok" : "neutral"} label={t(on ? SSO_STATUS[saved.source] : "prefs.ssoOff")} />} />
+          <SettingRow
+            label={t("prefs.ssoRedirect")}
+            description={
+              <>
+                {t("prefs.ssoRedirectHint")} <code className="prefs-uri">{saved.redirect_uri}</code>
+              </>
+            }
+            control={
+              <Button aria-label={t("prefs.ssoRedirectCopy")} onClick={() => void copyRedirect(saved.redirect_uri)}>
+                {t("common.copy")}
+              </Button>
+            }
+          />
+          <Field
+            label={t("prefs.ssoIssuer")}
+            hint={t("prefs.ssoIssuerHint")}
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            spellCheck={false}
+            value={draft.issuer}
+            onChange={edit("issuer")}
+            error={bad.issuer ? t(bad.issuer) : undefined}
+          />
+          <Field
+            label={t("prefs.ssoClient")}
+            autoComplete="off"
+            spellCheck={false}
+            value={draft.client_id}
+            onChange={edit("client_id")}
+            error={bad.client_id ? t(bad.client_id) : undefined}
+          />
+          <Field
+            label={t("prefs.ssoSecret")}
+            hint={t("prefs.ssoSecretHint")}
+            type="password"
+            autoComplete="off"
+            placeholder={saved.secret_set ? t("prefs.ssoSecretKept") : undefined}
+            value={draft.secret}
+            onChange={edit("secret")}
+            error={bad.secret ? t(bad.secret) : undefined}
+          />
+          <div className="prefs-actions">
+            {saved.source === "settings" && (
+              <Button disabled={busy} onClick={() => setConfirmEnv(true)}>
+                {t("prefs.ssoUseEnv")}
+              </Button>
+            )}
+            <Button variant="primary" aria-label={t("prefs.saveNamed", { name: t("prefs.sso") })} disabled={busy || !changed} onClick={() => void save()}>
+              {t("common.save")}
+            </Button>
+          </div>
+        </Stack>
+      )}
+      {confirmEnv && (
+        <Dialog
+          modal
+          alert
+          tone="danger"
+          title={t("prefs.ssoUseEnvTitle")}
+          labels={labels.dialog}
+          confirmLabel={t("prefs.ssoUseEnv")}
+          busy={busy}
+          onCancel={() => setConfirmEnv(false)}
+          onConfirm={() => void useEnv()}
+        >
+          <p>{t("prefs.ssoUseEnvBody")}</p>
+        </Dialog>
+      )}
+    </Card>
+  );
+}
+
 /** The tables of a backup file and their rows, or null when the file is not one. */
 export function readBackup(text: string): Record<string, unknown[]> | null {
   let v: unknown;
@@ -361,7 +549,6 @@ export function Settings() {
           {info.status === "ready" && (
             <Stack gap={3}>
               <SettingRow label={t("prefs.adminToken")} description={t("prefs.adminTokenHint")} control={<SecretState set={info.data.admin_token} />} />
-              <SettingRow label={t("prefs.oidc")} description={t("prefs.oidcHint")} control={<SecretState set={info.data.oidc} />} />
               <SettingRow
                 label={t("prefs.emails")}
                 description={t("prefs.emailsHint")}
@@ -370,6 +557,8 @@ export function Settings() {
             </Stack>
           )}
         </Card>
+
+        <SsoCard />
 
         <Card title={t("prefs.gateway")} headingLevel={2}>
           {info.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}

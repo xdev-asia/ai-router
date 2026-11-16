@@ -4,7 +4,7 @@ import { App } from "../App";
 import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
 import { parseBulkKeys } from "../pages/Providers";
-import { readBackup } from "../pages/Settings";
+import { readBackup, validateSso } from "../pages/Settings";
 
 // Settings, the add-account dialog (bulk add, Check, priority, proxy pool) and Codex's custom headers.
 // Every key here is made up for the test.
@@ -255,11 +255,15 @@ describe("providers page", () => {
 
 describe("settings", () => {
   const INFO = { admin_token: true, oidc: false, console_emails: 2, connections_key: true, codex_relay: false };
+  const REDIRECT = "https://router.test/auth/callback";
+  const SSO_ENV = { source: "env", issuer: "https://id.test/api/auth", client_id: "router", secret_set: true, redirect_uri: REDIRECT };
+  const SSO_NONE = { source: "none", issuer: "", client_id: "", secret_set: false, redirect_uri: REDIRECT };
 
   beforeEach(() => {
     routes["GET /admin/settings/info"] = () => json(INFO);
     routes["GET /admin/combo-settings"] = () => json({ strategy: "fallback", sticky_limit: 3 });
     routes["GET /admin/timeouts"] = () => json({ first_byte_s: 300, idle_s: 300 });
+    routes["GET /admin/sso"] = () => json(SSO_ENV);
   });
 
   async function openSettings() {
@@ -272,7 +276,7 @@ describe("settings", () => {
     await openSettings();
     await screen.findByText(t("prefs.emailsCount", { n: "2" }));
     expect(screen.getAllByText(t("prefs.set"))).toHaveLength(2);
-    expect(screen.getAllByText(t("prefs.notSet"))).toHaveLength(2);
+    expect(screen.getAllByText(t("prefs.notSet"))).toHaveLength(1);
     expect(document.body.textContent).not.toMatch(/\btrue\b|\bfalse\b/);
     expect(screen.getByText(t("prefs.signInHint"))).toBeTruthy();
   });
@@ -390,5 +394,83 @@ describe("settings", () => {
     expect(readBackup(JSON.stringify({ version: 1, tables: { connection: [] } }))).toBeNull();
     expect(readBackup(JSON.stringify({ version: 1, tables: { combo: {} } }))).toBeNull();
     expect(readBackup(JSON.stringify({ version: 1, tables: { combo: [], setting: [] } }))).toEqual({ combo: [], setting: [] });
+  });
+
+  describe("xDev ID sign-in card", () => {
+    it("checks fields the way the gateway does", () => {
+      const ok = { issuer: "https://id.test/api/auth", client_id: "router", secret: "" };
+      expect(validateSso(ok, true)).toEqual({});
+      expect(validateSso(ok, false)).toEqual({ secret: "prefs.ssoSecretNeeded" });
+      for (const issuer of ["http://id.test", "https://id.test/?a=1", "https://id.test/#x", "https://u:p@id.test", "id.test", `https://id.test/${"x".repeat(500)}`]) {
+        expect(validateSso({ ...ok, issuer }, true), issuer.slice(0, 40)).toEqual({ issuer: "prefs.ssoIssuerBad" });
+      }
+      expect(validateSso({ ...ok, client_id: "  " }, true)).toEqual({ client_id: "prefs.ssoClientBad" });
+      expect(validateSso({ ...ok, client_id: "x".repeat(201) }, true)).toEqual({ client_id: "prefs.ssoClientBad" });
+      expect(validateSso({ ...ok, secret: "x".repeat(4097) }, true)).toEqual({ secret: "prefs.ssoSecretLong" });
+    });
+
+    it("shows where sign-in comes from and the redirect URI to paste into xDev ID, never a secret", async () => {
+      await openSettings();
+      expect(await screen.findByText(t("prefs.ssoOnEnv"))).toBeTruthy();
+      expect(screen.getByText(REDIRECT)).toBeTruthy();
+      expect((screen.getByLabelText(t("prefs.ssoIssuer")) as HTMLInputElement).value).toBe(SSO_ENV.issuer);
+      expect((screen.getByLabelText(t("prefs.ssoClient")) as HTMLInputElement).value).toBe("router");
+      const secret = screen.getByLabelText(t("prefs.ssoSecret")) as HTMLInputElement;
+      expect(secret.type).toBe("password");
+      expect(secret.value).toBe("");
+      expect(secret.placeholder).toBe(t("prefs.ssoSecretKept"));
+      expect(screen.queryByRole("button", { name: t("prefs.ssoUseEnv") })).toBeNull();
+    });
+
+    it("Save waits for a change, then sends the secret only when one was typed", async () => {
+      routes["PUT /admin/sso"] = (body) => json({ ...SSO_ENV, ...(body as object), source: "settings", secret_set: true });
+      await openSettings();
+      const save = (await screen.findByRole("button", { name: t("prefs.saveNamed", { name: t("prefs.sso") }) })) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText(t("prefs.ssoClient")), { target: { value: "router-2" } });
+      expect(save.disabled).toBe(false);
+      fireEvent.click(save);
+      await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/admin/sso")!.body).toEqual({ issuer: SSO_ENV.issuer, client_id: "router-2" }));
+      expect(await screen.findByText(t("prefs.ssoOnSettings"))).toBeTruthy();
+
+      fireEvent.change(screen.getByLabelText(t("prefs.ssoSecret")), { target: { value: "typed-secret" } });
+      fireEvent.click(save);
+      await waitFor(() => expect(calls.filter((c) => c.url === "/admin/sso" && c.method === "PUT").at(-1)!.body).toEqual({ issuer: SSO_ENV.issuer, client_id: "router-2", secret: "typed-secret" }));
+      await waitFor(() => expect((screen.getByLabelText(t("prefs.ssoSecret")) as HTMLInputElement).value).toBe(""));
+    });
+
+    it("checks the fields before sending anything", async () => {
+      routes["GET /admin/sso"] = () => json(SSO_NONE);
+      await openSettings();
+      expect(await screen.findByText(t("prefs.ssoOff"))).toBeTruthy();
+      fireEvent.change(screen.getByLabelText(t("prefs.ssoIssuer")), { target: { value: "http://id.test" } });
+      fireEvent.click(screen.getByRole("button", { name: t("prefs.saveNamed", { name: t("prefs.sso") }) }));
+      expect(await screen.findByText(t("prefs.ssoIssuerBad"))).toBeTruthy();
+      expect(screen.getByText(t("prefs.ssoClientBad"))).toBeTruthy();
+      expect(screen.getByText(t("prefs.ssoSecretNeeded"))).toBeTruthy();
+      expect(calls.some((c) => c.url === "/admin/sso" && c.method === "PUT")).toBe(false);
+    });
+
+    it("says when the gateway cannot store a secret", async () => {
+      routes["PUT /admin/sso"] = () => json({ error: "not_configured", hint: "set the CONNECTIONS_KEY secret" }, 409);
+      await openSettings();
+      fireEvent.change(await screen.findByLabelText(t("prefs.ssoSecret")), { target: { value: "typed-secret" } });
+      fireEvent.click(screen.getByRole("button", { name: t("prefs.saveNamed", { name: t("prefs.sso") }) }));
+      expect(await screen.findByText(t("prefs.ssoNoKey"))).toBeTruthy();
+      expect((screen.getByLabelText(t("prefs.ssoSecret")) as HTMLInputElement).value).toBe("typed-secret");
+    });
+
+    it("goes back to the environment only after a confirmation", async () => {
+      routes["GET /admin/sso"] = () => json({ ...SSO_ENV, source: "settings" });
+      routes["DELETE /admin/sso"] = () => json(SSO_ENV);
+      await openSettings();
+      fireEvent.click(await screen.findByRole("button", { name: t("prefs.ssoUseEnv") }));
+      const dialog = await screen.findByRole("alertdialog", { name: t("prefs.ssoUseEnvTitle") });
+      expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+      fireEvent.click(within(dialog).getByRole("button", { name: t("prefs.ssoUseEnv") }));
+      await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url === "/admin/sso")).toBe(true));
+      expect(await screen.findByText(t("prefs.ssoOnEnv"))).toBeTruthy();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
   });
 });
