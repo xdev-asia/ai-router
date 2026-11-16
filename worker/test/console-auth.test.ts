@@ -27,6 +27,8 @@ interface Tweak {
   tokenStatus?: number;
   /** Claims xDev ID adds to userinfo, such as `xdev_role`. */
   info?: Record<string, unknown>;
+  /** How userinfo answers instead of 200: a status, or "down" when xDev ID cannot be reached. */
+  infoStatus?: number | "down";
   /** Another provider or client than the bindings' (a configuration saved in Settings). */
   issuer?: string;
   client?: string;
@@ -57,6 +59,8 @@ function fakeIdp(user: User, tweak: Tweak = {}) {
         return Response.json({ access_token: "at-1", token_type: "Bearer", id_token: fakeJwt(claims) });
       }
       if (req.url === `${issuer}/oauth2/userinfo`) {
+        if (tweak.infoStatus === "down") throw new TypeError("network down");
+        if (tweak.infoStatus) return new Response("{}", { status: tweak.infoStatus });
         if (req.headers.get("authorization") !== "Bearer at-1") return new Response("{}", { status: 401 });
         return Response.json({ ...user, ...tweak.info });
       }
@@ -341,6 +345,99 @@ describe("access granted by xDev ID", () => {
     const cookie = await signIn(MEMBER, { info: { xdev_role: "admin" } });
     expect((await send(null, "/admin/systems", { headers: { cookie } })).status).toBe(200);
     expect((await send(null, "/admin/systems", { headers: { cookie } }, { OIDC_CLIENT_ID: "another-client" })).status).toBe(401);
+  });
+});
+
+describe("role checked again with xDev ID", () => {
+  const MEMBER: User = { sub: "u-3", email: "member@example.com", email_verified: true, name: "Member" };
+  const NO_LIST = { CONSOLE_EMAILS: "" };
+  const row = () =>
+    env.DB.prepare("SELECT access, idp_token, checked_at FROM console_session").first<{ access: string; idp_token: string | null; checked_at: number | null }>();
+  /** Moves the last check `s` seconds into the past. */
+  const age = (s: number) => env.DB.prepare("UPDATE console_session SET checked_at = checked_at - ?").bind(s).run();
+  const systems = (idp: Idp | null, cookie: string, bindings: Partial<Env> = NO_LIST) => send(idp, "/admin/systems", { headers: { cookie } }, bindings);
+
+  it("keeps the access token sealed, never in plain text, and only for sessions xDev ID granted", async () => {
+    await signIn(MEMBER, { info: { xdev_role: "member" } }, NO_LIST);
+    const r = await row();
+    expect(r?.idp_token).toMatch(/^v1\./);
+    expect(r?.idp_token).not.toContain("at-1");
+    expect(typeof r?.checked_at).toBe("number");
+    await env.DB.prepare("DELETE FROM console_session").run();
+    await signIn();
+    expect((await row())?.idp_token).toBeNull();
+  });
+
+  it("does not ask again within 5 minutes, then asks and stays signed in while the role is there", async () => {
+    const tweak: Tweak = { info: { xdev_role: "member" } };
+    const cookie = await signIn(MEMBER, tweak, NO_LIST);
+    // Within 5 minutes: no call to xDev ID (a null idp would fail the check).
+    expect((await systems(null, cookie)).status).toBe(200);
+    const before = (await row())!.checked_at!;
+    await age(301);
+    const idp = fakeIdp(MEMBER, tweak);
+    expect((await systems(idp, cookie)).status).toBe(200);
+    expect(idp.calls).toEqual(["/api/auth/oauth2/userinfo"]);
+    expect((await row())!.checked_at!).toBeGreaterThanOrEqual(before);
+    expect((await systems(null, cookie)).status).toBe(200);
+  });
+
+  it("ends the session once xDev ID takes the role back", async () => {
+    const tweak: Tweak = { info: { xdev_role: "member" } };
+    const cookie = await signIn(MEMBER, tweak, NO_LIST);
+    tweak.info = {};
+    await age(301);
+    expect((await systems(fakeIdp(MEMBER, tweak), cookie)).status).toBe(401);
+    expect(await row()).toBeNull();
+    // Given back: the old session stays gone, a new sign-in is needed.
+    tweak.info = { xdev_role: "member" };
+    expect((await systems(fakeIdp(MEMBER, tweak), cookie)).status).toBe(401);
+    expect((await send(null, "/auth/me", { headers: { cookie } }, NO_LIST)).status).toBe(401);
+  });
+
+  it("ends the session when xDev ID refuses the token, or answers for another email", async () => {
+    for (const tweak of [{ infoStatus: 401 }, { infoStatus: 403 }, { info: { xdev_role: "member", email: "other@example.com" } }] as Tweak[]) {
+      const cookie = await signIn(MEMBER, { info: { xdev_role: "member" } }, NO_LIST);
+      await age(301);
+      expect((await systems(fakeIdp(MEMBER, tweak), cookie)).status, JSON.stringify(tweak)).toBe(401);
+      expect(await row(), JSON.stringify(tweak)).toBeNull();
+    }
+  });
+
+  it("keeps the session for a while when xDev ID cannot be reached, then ends it", async () => {
+    for (const infoStatus of ["down", 503] as const) {
+      const cookie = await signIn(MEMBER, { info: { xdev_role: "member" } }, NO_LIST);
+      await age(301);
+      const checked = (await row())!.checked_at;
+      expect((await systems(fakeIdp(MEMBER, { infoStatus }), cookie)).status, String(infoStatus)).toBe(200);
+      expect((await row())!.checked_at, String(infoStatus)).toBe(checked);
+      await age(30 * 60);
+      expect((await systems(fakeIdp(MEMBER, { infoStatus }), cookie)).status, String(infoStatus)).toBe(401);
+      expect(await row()).toBeNull();
+    }
+  });
+
+  it("without a role, an email on CONSOLE_EMAILS keeps its session, which then follows the list", async () => {
+    const tweak: Tweak = { info: { xdev_role: "admin" } };
+    const cookie = await signIn(OWNER, tweak);
+    tweak.info = {};
+    await age(301);
+    expect((await systems(fakeIdp(OWNER, tweak), cookie, {})).status).toBe(200);
+    expect(await row()).toMatchObject({ access: "list", idp_token: null });
+    expect((await systems(null, cookie, { CONSOLE_EMAILS: "second@example.com" })).status).toBe(401);
+  });
+
+  it("a session with no token to check with ends at the check", async () => {
+    // Signed in while CONNECTIONS_KEY was unset, or opened before tokens were kept.
+    const cookie = await signIn(MEMBER, { info: { xdev_role: "member" } }, { ...NO_LIST, CONNECTIONS_KEY: undefined });
+    expect((await row())?.idp_token).toBeNull();
+    expect((await systems(null, cookie)).status).toBe(200);
+    await age(301);
+    expect((await systems(fakeIdp(MEMBER, { info: { xdev_role: "member" } }), cookie)).status).toBe(401);
+
+    const old = await signIn(MEMBER, { info: { xdev_role: "member" } }, NO_LIST);
+    await env.DB.prepare("UPDATE console_session SET idp_token = NULL, checked_at = NULL").run();
+    expect((await systems(fakeIdp(MEMBER, { info: { xdev_role: "member" } }), old)).status).toBe(401);
   });
 });
 

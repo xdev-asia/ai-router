@@ -69,8 +69,9 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
       : ({ ok: false, status: 400, error: "provider_refused", message: c.req.query("error_description") ?? c.req.query("error") ?? "the sign-in was not completed" } as const);
     return c.html(loginPage(result.ok ? { ok: true, name: result.name } : { ok: false, message: result.message }), result.ok ? 200 : result.status);
   });
-  app.route("/auth", consoleAuthRoutes(deps.idp ?? ((req) => fetch(req))));
-  app.route("/admin", adminRoutes(upstream));
+  const idp: Idp = deps.idp ?? ((req) => fetch(req));
+  app.route("/auth", consoleAuthRoutes(idp));
+  app.route("/admin", adminRoutes(upstream, idp));
   app.route("/skills", skillRoutes());
   const anthropic = anthropicRoutes(upstream);
   const openai = openaiRoutes(upstream);

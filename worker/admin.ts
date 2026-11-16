@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { isLevel } from "./savers";
-import { consoleUser, sameOrigin } from "./console-auth";
+import { consoleUser, sameOrigin, type Idp } from "./console-auth";
 import { checkKey, createApiKeyConnection, getConnection, isStrategy, listConnections, sealApiKey, storedSecret, testConnection } from "./connections";
 import { keyShapeOk, mergeSettings, settingsOf } from "./wire";
 import { COMBO_NAME, FREE_TIER, PATTERN, hasEnvKey, isCustomProvider, isProvider, memberCombo, parseModel, providerDef, providerIds } from "./providers";
@@ -78,7 +78,7 @@ async function getSystem(db: D1Database, id: string): Promise<System | null> {
  * or the console's xDev ID session cookie (see console-auth.ts).
  * A system's plain token is returned once, on create and rotate, and stored only as its SHA-256.
  */
-export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
+export function adminRoutes(upstream: Upstream, idp: Idp): Hono<AppEnv> {
   const a = new Hono<AppEnv>();
 
   a.use("*", async (c, next) => {
@@ -90,7 +90,7 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
       return next();
     }
     // Console signed in with xDev ID. Writes must come from the console's own pages (no cross-site requests).
-    if (!(await consoleUser(c.env, req))) return c.json({ error: "unauthorized" }, 401);
+    if (!(await consoleUser(c.env, req, idp))) return c.json({ error: "unauthorized" }, 401);
     if (req.method !== "GET" && req.method !== "HEAD" && !sameOrigin(req)) return c.json({ error: "forbidden" }, 403);
     await next();
   });

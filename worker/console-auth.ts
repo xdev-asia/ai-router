@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { isAdmin, sha256hex } from "./auth";
 import type { AppEnv, Env } from "./env";
+import { open, seal } from "./secret-box";
 import { ssoConfig, ssoKey, type SsoConfig } from "./sso";
 
 /** Sends a request to the OpenID provider (xDev ID). `fetch` in production; a fake in tests. */
@@ -10,6 +11,10 @@ export const SESSION_COOKIE = "__Host-xllm_session";
 export const LOGIN_COOKIE = "__Host-xllm_login";
 const SESSION_TTL_S = 12 * 3600;
 const LOGIN_TTL_S = 10 * 60;
+/** A session xDev ID granted asks xDev ID again for the role this often. */
+const RECHECK_S = 5 * 60;
+/** While xDev ID cannot be reached, such a session lasts this long after its last check, then ends. */
+const UNREACHABLE_GRACE_S = 30 * 60;
 
 /** Who holds a console session: an xDev ID user, or the owner who signed in with the admin token. */
 export type ConsoleUser = { email: string; name: string } | { admin: true };
@@ -42,26 +47,81 @@ export function consoleEmails(env: Env): string[] {
 }
 
 
+/** xDev ID gives users of this client a role (FR-SET-22) as the `xdev_role` userinfo claim. */
+const hasRole = (info: Record<string, unknown>) => typeof info.xdev_role === "string" && info.xdev_role.trim() !== "";
+
+interface SessionRow {
+  email: string;
+  name: string;
+  admin_key: string | null;
+  access: string | null;
+  idp: string | null;
+  idp_token: string | null;
+  checked_at: number | null;
+}
+
 /** The signed-in console user of this request, from the session cookie; null when absent or expired. */
-export async function consoleUser(env: Env, req: Request): Promise<ConsoleUser | null> {
+export async function consoleUser(env: Env, req: Request, idp: Idp): Promise<ConsoleUser | null> {
   const token = cookie(req, SESSION_COOKIE);
   if (!token) return null;
-  const row = await env.DB.prepare("SELECT email, name, admin_key, access, idp FROM console_session WHERE token_sha256 = ? AND expires_at > ?")
-    .bind(await sha256hex(token), now())
-    .first<{ email: string; name: string; admin_key: string | null; access: string | null; idp: string | null }>();
+  const key = await sha256hex(token);
+  const row = await env.DB.prepare(
+    "SELECT email, name, admin_key, access, idp, idp_token, checked_at FROM console_session WHERE token_sha256 = ? AND expires_at > ?",
+  )
+    .bind(key, now())
+    .first<SessionRow>();
   if (!row) return null;
   if (row.admin_key !== null) {
     // Opened with the admin token: ends once that token is changed or removed.
-    const key = await adminKey(env);
-    return key !== null && key === row.admin_key ? { admin: true } : null;
+    const k = await adminKey(env);
+    return k !== null && k === row.admin_key ? { admin: true } : null;
   }
+  const user = { email: row.email, name: row.name };
   if (row.access === "id") {
     // Granted by xDev ID: ends once sign-in moves to another issuer or client.
     const sso = await ssoConfig(env);
-    return sso !== null && ssoKey(sso) === row.idp ? { email: row.email, name: row.name } : null;
+    if (sso === null || ssoKey(sso) !== row.idp) return null;
+    if (row.checked_at !== null && now() - row.checked_at < RECHECK_S) return user;
+    return (await recheck(env, idp, sso, key, row)) ? user : null;
   }
   // Removed from CONSOLE_EMAILS since signing in: no longer allowed.
-  return consoleEmails(env).includes(row.email) ? { email: row.email, name: row.name } : null;
+  return consoleEmails(env).includes(row.email) ? user : null;
+}
+
+/**
+ * Asks xDev ID's userinfo, with the session's own access token, whether the user still has a role here.
+ * Still there: the session goes on. Taken back: it follows CONSOLE_EMAILS if the email is listed, else it ends.
+ * A refused token, another email or no token kept: it ends. xDev ID unreachable: it goes on until
+ * UNREACHABLE_GRACE_S after the last good check, without moving that check.
+ */
+async function recheck(env: Env, idp: Idp, sso: SsoConfig, key: string, row: SessionRow): Promise<boolean> {
+  const end = async () => {
+    await env.DB.prepare("DELETE FROM console_session WHERE token_sha256 = ?").bind(key).run();
+    return false;
+  };
+  const accessToken = row.idp_token !== null && row.checked_at !== null ? await open(env, row.idp_token) : null;
+  if (accessToken === null) return end();
+  let info: Record<string, unknown> | null = null;
+  try {
+    const res = await idp(new Request(`${sso.issuer}/oauth2/userinfo`, { headers: { authorization: `Bearer ${accessToken}` } }));
+    if (res.ok) {
+      const v: unknown = await res.json();
+      info = v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+    } else if (res.status < 500) return end();
+  } catch {
+    info = null;
+  }
+  if (info === null) return now() - row.checked_at! < UNREACHABLE_GRACE_S ? true : end();
+  if (typeof info.email !== "string" || info.email.toLowerCase() !== row.email) return end();
+  if (hasRole(info)) {
+    await env.DB.prepare("UPDATE console_session SET checked_at = ? WHERE token_sha256 = ?").bind(now(), key).run();
+    return true;
+  }
+  if (!consoleEmails(env).includes(row.email)) return end();
+  await env.DB.prepare("UPDATE console_session SET access = 'list', idp = NULL, idp_token = NULL, checked_at = NULL WHERE token_sha256 = ?")
+    .bind(key)
+    .run();
+  return true;
 }
 
 /** Fingerprint of the current admin token (a hash of its hash), or null while none is set. */
@@ -73,13 +133,13 @@ async function adminKey(env: Env): Promise<string | null> {
 /** Stores a new console session (only its SHA-256) and sets its cookie. */
 async function openSession(
   c: Ctx,
-  row: { email: string; name: string; adminKey: string | null; access?: "id" | "list"; idp?: string },
+  row: { email: string; name: string; adminKey: string | null; access?: "id" | "list"; idp?: string; idpToken?: string | null },
 ): Promise<void> {
   const env = c.env;
   const token = random();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM console_session WHERE expires_at <= ?").bind(now()),
-    env.DB.prepare("INSERT INTO console_session (token_sha256, email, name, created_at, expires_at, admin_key, access, idp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    env.DB.prepare("INSERT INTO console_session (token_sha256, email, name, created_at, expires_at, admin_key, access, idp, idp_token, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).bind(
       await sha256hex(token),
       row.email,
@@ -89,6 +149,8 @@ async function openSession(
       row.adminKey,
       row.access ?? null,
       row.idp ?? null,
+      row.idpToken ?? null,
+      row.access === "id" ? now() : null,
     ),
   ]);
   c.header("set-cookie", setCookie(SESSION_COOKIE, token, SESSION_TTL_S), { append: true });
@@ -224,13 +286,14 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     if (info.sub !== claims.sub || typeof info.email !== "string") return back(c, "failed");
     const email = info.email.toLowerCase();
     if (info.email_verified !== true) return back(c, "not_allowed");
-    // xDev ID gives users of this client a role (FR-SET-22); CONSOLE_EMAILS stays as the owner's way in.
-    const role = typeof info.xdev_role === "string" && info.xdev_role.trim() !== "";
-    const access = role ? "id" : consoleEmails(env).includes(email) ? "list" : null;
+    // CONSOLE_EMAILS stays as the owner's way in without a role.
+    const access = hasRole(info) ? "id" : consoleEmails(env).includes(email) ? "list" : null;
     if (!access) return back(c, "not_allowed");
 
     const name = typeof info.name === "string" && info.name.trim() ? info.name.trim().slice(0, 100) : email;
-    await openSession(c, { email, name, adminKey: null, access, idp: access === "id" ? ssoKey(sso) : undefined });
+    // Kept sealed so the role can be checked again; without CONNECTIONS_KEY the session ends at that check.
+    const idpToken = access === "id" ? await seal(env, tokens.access_token) : null;
+    await openSession(c, { email, name, adminKey: null, access, idp: access === "id" ? ssoKey(sso) : undefined, idpToken });
     return back(c);
   });
 
@@ -248,7 +311,7 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
 
   /** Who is signed in (with xDev ID), for the console; 401 otherwise. Also says whether sign-in is set up. */
   a.get("/me", async (c) => {
-    const user = await consoleUser(c.env, c.req.raw);
+    const user = await consoleUser(c.env, c.req.raw, idp);
     if (!user) return c.json({ error: "unauthorized", sso: (await ssoConfig(c.env)) !== null }, 401);
     return c.json(user);
   });
