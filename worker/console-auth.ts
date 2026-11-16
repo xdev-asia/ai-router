@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { isAdmin, sha256hex } from "./auth";
 import type { AppEnv, Env } from "./env";
+import { ssoConfig, ssoKey, type SsoConfig } from "./sso";
 
 /** Sends a request to the OpenID provider (xDev ID). `fetch` in production; a fake in tests. */
 export type Idp = (req: Request) => Promise<Response>;
@@ -40,20 +41,24 @@ export function consoleEmails(env: Env): string[] {
     .filter(Boolean);
 }
 
-const configured = (env: Env) => Boolean(env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET && consoleEmails(env).length);
 
 /** The signed-in console user of this request, from the session cookie; null when absent or expired. */
 export async function consoleUser(env: Env, req: Request): Promise<ConsoleUser | null> {
   const token = cookie(req, SESSION_COOKIE);
   if (!token) return null;
-  const row = await env.DB.prepare("SELECT email, name, admin_key FROM console_session WHERE token_sha256 = ? AND expires_at > ?")
+  const row = await env.DB.prepare("SELECT email, name, admin_key, access, idp FROM console_session WHERE token_sha256 = ? AND expires_at > ?")
     .bind(await sha256hex(token), now())
-    .first<{ email: string; name: string; admin_key: string | null }>();
+    .first<{ email: string; name: string; admin_key: string | null; access: string | null; idp: string | null }>();
   if (!row) return null;
   if (row.admin_key !== null) {
     // Opened with the admin token: ends once that token is changed or removed.
     const key = await adminKey(env);
     return key !== null && key === row.admin_key ? { admin: true } : null;
+  }
+  if (row.access === "id") {
+    // Granted by xDev ID: ends once sign-in moves to another issuer or client.
+    const sso = await ssoConfig(env);
+    return sso !== null && ssoKey(sso) === row.idp ? { email: row.email, name: row.name } : null;
   }
   // Removed from CONSOLE_EMAILS since signing in: no longer allowed.
   return consoleEmails(env).includes(row.email) ? { email: row.email, name: row.name } : null;
@@ -66,18 +71,24 @@ async function adminKey(env: Env): Promise<string | null> {
 }
 
 /** Stores a new console session (only its SHA-256) and sets its cookie. */
-async function openSession(c: Ctx, row: { email: string; name: string; adminKey: string | null }): Promise<void> {
+async function openSession(
+  c: Ctx,
+  row: { email: string; name: string; adminKey: string | null; access?: "id" | "list"; idp?: string },
+): Promise<void> {
   const env = c.env;
   const token = random();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM console_session WHERE expires_at <= ?").bind(now()),
-    env.DB.prepare("INSERT INTO console_session (token_sha256, email, name, created_at, expires_at, admin_key) VALUES (?, ?, ?, ?, ?, ?)").bind(
+    env.DB.prepare("INSERT INTO console_session (token_sha256, email, name, created_at, expires_at, admin_key, access, idp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(
       await sha256hex(token),
       row.email,
       row.name,
       now(),
       now() + SESSION_TTL_S,
       row.adminKey,
+      row.access ?? null,
+      row.idp ?? null,
     ),
   ]);
   c.header("set-cookie", setCookie(SESSION_COOKIE, token, SESSION_TTL_S), { append: true });
@@ -120,7 +131,8 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
 
   a.get("/login", async (c) => {
     const env = c.env;
-    if (!configured(env)) return back(c, "not_configured");
+    const sso = await ssoConfig(env);
+    if (!sso) return back(c, "not_configured");
     const state = random();
     const nonce = random();
     const verifier = random();
@@ -135,7 +147,7 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     ]);
     const q = new URLSearchParams({
       response_type: "code",
-      client_id: env.OIDC_CLIENT_ID!,
+      client_id: sso.clientId,
       redirect_uri: `${new URL(c.req.url).origin}/auth/callback`,
       scope: "openid profile email",
       state,
@@ -145,12 +157,13 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     });
     // Binds the sign-in to this browser: a callback link sent from elsewhere does not match.
     c.header("set-cookie", setCookie(LOGIN_COOKIE, state, LOGIN_TTL_S));
-    return c.redirect(`${env.OIDC_ISSUER}/oauth2/authorize?${q}`, 302);
+    return c.redirect(`${sso.issuer}/oauth2/authorize?${q}`, 302);
   });
 
   a.get("/callback", async (c) => {
     const env = c.env;
-    if (!configured(env)) return back(c, "not_configured");
+    const sso: SsoConfig | null = await ssoConfig(env);
+    if (!sso) return back(c, "not_configured");
     const state = c.req.query("state") ?? "";
     const browserState = cookie(c.req.raw, LOGIN_COOKIE);
     if (!state || state !== browserState) return back(c, "expired");
@@ -165,11 +178,11 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     let tokens: { access_token?: unknown; id_token?: unknown };
     try {
       const res = await idp(
-        new Request(`${env.OIDC_ISSUER}/oauth2/token`, {
+        new Request(`${sso.issuer}/oauth2/token`, {
           method: "POST",
           headers: {
             "content-type": "application/x-www-form-urlencoded",
-            authorization: `Basic ${btoa(`${encodeURIComponent(env.OIDC_CLIENT_ID!)}:${encodeURIComponent(env.OIDC_CLIENT_SECRET!)}`)}`,
+            authorization: `Basic ${btoa(`${encodeURIComponent(sso.clientId)}:${encodeURIComponent(sso.secret)}`)}`,
           },
           body: new URLSearchParams({
             grant_type: "authorization_code",
@@ -186,10 +199,10 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     }
     const claims = typeof tokens.id_token === "string" ? decodeJwtPayload(tokens.id_token) : null;
     const aud = claims?.aud;
-    const audOk = aud === env.OIDC_CLIENT_ID || (Array.isArray(aud) && aud.includes(env.OIDC_CLIENT_ID));
+    const audOk = aud === sso.clientId || (Array.isArray(aud) && aud.includes(sso.clientId));
     if (
       !claims ||
-      claims.iss !== env.OIDC_ISSUER ||
+      claims.iss !== sso.issuer ||
       !audOk ||
       claims.nonce !== row.nonce ||
       typeof claims.exp !== "number" ||
@@ -202,7 +215,7 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
 
     let info: Record<string, unknown>;
     try {
-      const res = await idp(new Request(`${env.OIDC_ISSUER}/oauth2/userinfo`, { headers: { authorization: `Bearer ${tokens.access_token}` } }));
+      const res = await idp(new Request(`${sso.issuer}/oauth2/userinfo`, { headers: { authorization: `Bearer ${tokens.access_token}` } }));
       if (!res.ok) return back(c, "failed");
       info = (await res.json()) as Record<string, unknown>;
     } catch {
@@ -210,10 +223,14 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     }
     if (info.sub !== claims.sub || typeof info.email !== "string") return back(c, "failed");
     const email = info.email.toLowerCase();
-    if (info.email_verified !== true || !consoleEmails(env).includes(email)) return back(c, "not_allowed");
+    if (info.email_verified !== true) return back(c, "not_allowed");
+    // xDev ID gives users of this client a role (FR-SET-22); CONSOLE_EMAILS stays as the owner's way in.
+    const role = typeof info.xdev_role === "string" && info.xdev_role.trim() !== "";
+    const access = role ? "id" : consoleEmails(env).includes(email) ? "list" : null;
+    if (!access) return back(c, "not_allowed");
 
     const name = typeof info.name === "string" && info.name.trim() ? info.name.trim().slice(0, 100) : email;
-    await openSession(c, { email, name, adminKey: null });
+    await openSession(c, { email, name, adminKey: null, access, idp: access === "id" ? ssoKey(sso) : undefined });
     return back(c);
   });
 
@@ -232,7 +249,7 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
   /** Who is signed in (with xDev ID), for the console; 401 otherwise. Also says whether sign-in is set up. */
   a.get("/me", async (c) => {
     const user = await consoleUser(c.env, c.req.raw);
-    if (!user) return c.json({ error: "unauthorized", sso: configured(c.env) }, 401);
+    if (!user) return c.json({ error: "unauthorized", sso: (await ssoConfig(c.env)) !== null }, 401);
     return c.json(user);
   });
 

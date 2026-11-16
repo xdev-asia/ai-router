@@ -6,6 +6,7 @@ import { checkKey, createApiKeyConnection, getConnection, isStrategy, listConnec
 import { keyShapeOk, mergeSettings, settingsOf } from "./wire";
 import { COMBO_NAME, FREE_TIER, PATTERN, hasEnvKey, isCustomProvider, isProvider, memberCombo, parseModel, providerDef, providerIds } from "./providers";
 import { customProviderRoutes } from "./custom-providers";
+import { ssoConfig, ssoRoutes } from "./sso";
 import { loadCombos } from "./route";
 import type { AppEnv } from "./env";
 import { finishLogin, oauthDef, oauthMissingEnv, pollLogin, startLogin } from "./oauth";
@@ -543,17 +544,18 @@ export function adminRoutes(upstream: Upstream): Hono<AppEnv> {
   providerHeaderRoutes(a);
   webToolAdminRoutes(a, upstream);
   mediaAdminRoutes(a);
-  a.get("/settings/info", (c) => {
+  a.get("/settings/info", async (c) => {
     const e = c.env;
     const set = (v: string | undefined) => typeof v === "string" && v.trim() !== "";
     return c.json({
       admin_token: set(e.ADMIN_TOKEN_SHA256),
-      oidc: set(e.OIDC_ISSUER) && set(e.OIDC_CLIENT_ID) && set(e.OIDC_CLIENT_SECRET),
+      oidc: (await ssoConfig(e)) !== null,
       console_emails: (e.CONSOLE_EMAILS ?? "").split(",").filter((x) => x.trim() !== "").length,
       connections_key: set(e.CONNECTIONS_KEY),
       codex_relay: set(e.CODEX_RELAY_URL) && set(e.CODEX_RELAY_SECRET),
     });
   });
+  ssoRoutes(a);
   modelRoutes(a, upstream);
   customProviderRoutes(a);
   visionAdapterRoutes(a);
