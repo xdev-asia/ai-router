@@ -62,10 +62,12 @@ describe("model names and allow-list", () => {
     expect(JSON.parse(text).error.code).toBe("model_not_found");
   });
 
-  it("/anthropic refuses other providers and Claude models outside the allow-list", async () => {
+  it("/anthropic refuses models outside the allow-list, other providers' too", async () => {
     const token = await addSystem("chat");
     const up = fakeUpstream(() => json({}));
-    expect((await call(up, "/anthropic/v1/messages", messagesInit(token, hi("openai/gpt-5")))).res.status).toBe(404);
+    const other = await call(up, "/anthropic/v1/messages", messagesInit(token, hi("openai/gpt-5")));
+    expect(other.res.status).toBe(403);
+    expect(JSON.parse(other.text).error.type).toBe("permission_error");
     await allow("chat", ["anthropic/claude-haiku-5-5"]);
     expect((await call(up, "/anthropic/v1/messages", messagesInit(token, hi("claude-opus-5-5")))).res.status).toBe(403);
     expect(up.calls).toHaveLength(0);

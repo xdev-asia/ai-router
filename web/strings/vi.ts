@@ -484,7 +484,7 @@ export const vi: Record<keyof typeof en, string> = {
   "saver.rtk": "Nén kết quả công cụ (RTK)",
   "saver.rtkHint": "Rút gọn kết quả công cụ dài (git, grep, ls, log) trong yêu cầu. Có mất dữ liệu: kết quả dài bị cắt.",
   "saver.headroom": "Nén ngữ cảnh (Headroom)",
-  "saver.headroomHint": "Gửi messages của yêu cầu OpenAI và Gemini tới proxy Headroom của bạn trước; yêu cầu Anthropic (/v1/messages) không đi qua. Proxy nhận nội dung hội thoại, nên chỉ dùng proxy do bạn chạy.",
+  "saver.headroomHint": "Gửi messages của yêu cầu OpenAI và Gemini tới proxy Headroom của bạn trước; yêu cầu tới model Claude trên /v1/messages không đi qua. Proxy nhận nội dung hội thoại, nên chỉ dùng proxy do bạn chạy.",
   "saver.headroomUrl": "Địa chỉ Headroom",
   "saver.headroomUrlHint": "Địa chỉ gốc của proxy, ví dụ https://headroom.example.com",
   "saver.headroomUrlBad": "Nhập địa chỉ web bắt đầu bằng https:// hoặc http://.",

@@ -7,6 +7,8 @@ import { allowedPatterns, allows, anthropicBase, isCustomProvider, parseModel, p
 import { anyOn, applySavers, saversFor } from "./savers";
 import { getTokenSaver } from "./settings";
 import { clientGone } from "./timeouts";
+import { runMessages } from "./messages";
+import { estimateTokens } from "./translate/anthropic-openai";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
 export type Upstream = (req: Request) => Promise<Response>;
@@ -184,27 +186,42 @@ export function record(c: Context<AppEnv>, system: System, up: Response, streame
 
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).buffer as ArrayBuffer;
 
+/** The request body as a JSON object with a string `model`, or null (then it goes to Anthropic, which answers 400). */
+function bodyWithModel(body: ArrayBuffer): (Record<string, unknown> & { model: string }) | null {
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof (parsed as { model?: unknown }).model === "string") return parsed as Record<string, unknown> & { model: string };
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+/**
+ * Whether `model` is sent to an Anthropic-format provider as the client sent it: Claude models, the Claude
+ * subscription (`claude/`, a sign-in) and the owner's Anthropic-compatible providers. Everything else (other
+ * providers, combos, aliases) is translated and routed as chat (messages.ts).
+ */
+function passthroughTarget(model: string): { provider: ProviderId; model: string; custom: boolean } | null {
+  const ref = parseModel(model);
+  const t = ref?.kind === "target" ? ref.target : null;
+  if (!t) return null;
+  if (t.provider === PROVIDER) return { ...t, custom: false };
+  const custom = providerDef(t.provider).format === "anthropic" && (isCustomProvider(t.provider) || providerDef(t.provider).auth === "oauth");
+  return custom ? { ...t, custom: true } : null;
+}
+
 /**
  * /anthropic forwards Claude models, and the models of the owner's Anthropic-compatible providers
- * (`<id>/<model>`, sent upstream as `<model>`), only those the system may call. Anything else is refused.
+ * (`<id>/<model>`, sent upstream as `<model>`), only those the system may call.
  * A body that is not JSON, or has no model, goes to Anthropic, which answers with its own 400.
  */
 function routeOf(c: Context<AppEnv>, system: System, body: ArrayBuffer): { res: Response } | { provider: ProviderId; body: ArrayBuffer } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(body));
-  } catch {
-    return { provider: PROVIDER, body };
-  }
-  const model = (parsed as { model?: unknown } | null)?.model;
-  if (typeof model !== "string") return { provider: PROVIDER, body };
-  const ref = parseModel(model);
-  const t = ref?.kind === "target" ? ref.target : null;
-  // The owner's Anthropic-compatible providers, and the Claude subscription (`claude/`, a sign-in).
-  const custom = t !== null && providerDef(t.provider).format === "anthropic" && (isCustomProvider(t.provider) || providerDef(t.provider).auth === "oauth");
-  if (!t || (t.provider !== PROVIDER && !custom)) {
-    return { res: anthropicError(c, 404, "not_found_error", "this surface serves Claude models and Anthropic-compatible providers; use /openai/v1 for other providers and combos") };
-  }
+  const parsed = bodyWithModel(body);
+  if (!parsed) return { provider: PROVIDER, body };
+  const t = passthroughTarget(parsed.model);
+  if (!t) return { res: anthropicError(c, 404, "not_found_error", "not an Anthropic-format model") };
+  const custom = t.custom;
   if (!allows(allowedPatterns(system.allowed_models), targetName(t))) {
     return { res: anthropicError(c, 403, "permission_error", "this system may not use this model") };
   }
@@ -218,7 +235,11 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages", async (c) => {
     const g = await gate(c, true);
     if (!g.ok) return g.res;
-    const route = routeOf(c, g.system, await c.req.arrayBuffer());
+    const raw = await c.req.arrayBuffer();
+    // Another provider or a combo: translated to chat and back (messages.ts), metered by the chat router.
+    const parsed = bodyWithModel(raw);
+    if (parsed && !passthroughTarget(parsed.model)) return runMessages(c, upstream, g.system, parsed);
+    const route = routeOf(c, g.system, raw);
     if ("res" in route) return route.res;
     const { provider } = route;
     let body = route.body;
@@ -263,7 +284,11 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages/count_tokens", async (c) => {
     const g = await gate(c, false);
     if (!g.ok) return g.res;
-    const route = routeOf(c, g.system, await c.req.arrayBuffer());
+    const raw = await c.req.arrayBuffer();
+    // Another provider or a combo: a local estimate (FR-API-05), no provider call.
+    const parsed = bodyWithModel(raw);
+    if (parsed && !passthroughTarget(parsed.model)) return Response.json({ input_tokens: estimateTokens(parsed) }, { headers: { "cache-control": "no-store" } });
+    const route = routeOf(c, g.system, raw);
     if ("res" in route) return route.res;
     const up = await sendWithAccounts(c, upstream, g.system, route.provider, "/v1/messages/count_tokens", route.body, false, 0);
     if (!up) return noKey(c, route.provider);
