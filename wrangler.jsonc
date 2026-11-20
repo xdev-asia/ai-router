@@ -2,7 +2,9 @@
   "name": "xdev-llm",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-15",
-  "compatibility_flags": ["nodejs_compat"],
+  // enable_request_signal: request.signal fires when the client goes away, so the gateway ends the provider request
+  // too (worker/timeouts.ts). It is the default only from the 2026-11-17 compatibility date.
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "d1_databases": [
     {
       "binding": "DB",

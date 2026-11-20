@@ -49,15 +49,20 @@ export async function saveTimeouts(db: D1Database, value: Timeouts): Promise<voi
 interface Deadlines extends Timeouts {
   /** How long one second of a limit lasts: 1000, or less in tests (Deps.secondMs). */
   secondMs: number;
+  /** The client's request: when it is aborted, every provider request it started is aborted too (FR-SEL-18). */
+  client?: AbortSignal;
 }
 const perRequest = new AsyncLocalStorage<Deadlines>();
 /** Outside a request (the provider sign-in callback) the defaults apply. */
 const current = (): Deadlines => perRequest.getStore() ?? { ...TIMEOUTS_DEFAULT, secondMs: 1000 };
 
-/** Runs `fn` with these limits for every `withDeadlines` call inside it. */
-export function runWithDeadlines<T>(t: Timeouts, secondMs: number, fn: () => T): T {
-  return perRequest.run({ ...t, secondMs }, fn);
+/** Runs `fn` with these limits for every `withDeadlines` call inside it, and ties those calls to `client`. */
+export function runWithDeadlines<T>(t: Timeouts, secondMs: number, fn: () => T, client?: AbortSignal): T {
+  return perRequest.run({ ...t, secondMs, client }, fn);
 }
+
+/** True when the client of the current request has gone away: its failure is not the provider's. */
+export const clientGone = (): boolean => perRequest.getStore()?.client?.aborted === true;
 
 /** Reads the setting once per request; the gateway and admin routes run inside it (app.ts). */
 export const withTimeouts =
@@ -69,7 +74,7 @@ export const withTimeouts =
     } catch {
       // no setting table yet: the defaults
     }
-    await runWithDeadlines(t, secondMs, next);
+    await runWithDeadlines(t, secondMs, next, c.req.raw.signal);
   };
 
 // ---- The wrapper ---------------------------------------------------------------------------------------------
@@ -91,16 +96,19 @@ const log = (e: UpstreamTimeout) => console.warn(JSON.stringify({ level: "warn",
 /**
  * `fetcher` with the current request's limits. Past the first-byte limit it answers 504 (a 5xx, so the routers move to
  * the next account or combo target); past the idle limit it ends the body with an `UpstreamTimeout`. Either way it
- * aborts the request to the provider. The caller's own `req.signal` still aborts it.
+ * aborts the request to the provider. The caller's own `req.signal`, and the client's request, still abort it.
  */
 export function withDeadlines(fetcher: Upstream): Upstream {
   return async (req) => {
     const d = current();
-    if (!d.first_byte_s && !d.idle_s) return fetcher(req);
+    if (!d.first_byte_s && !d.idle_s && !d.client) return fetcher(req);
     const host = new URL(req.url).host;
     const ctl = new AbortController();
-    if (req.signal.aborted) ctl.abort(req.signal.reason);
-    else req.signal.addEventListener("abort", () => ctl.abort(req.signal.reason), { once: true });
+    for (const signal of [req.signal, d.client]) {
+      if (!signal) continue;
+      if (signal.aborted) ctl.abort(signal.reason);
+      else signal.addEventListener("abort", () => ctl.abort(signal.reason), { once: true });
+    }
     const sent = fetcher(new Request(req, { signal: ctl.signal }));
 
     let res: Response;

@@ -6,6 +6,10 @@ import { anthropicError } from "./errors";
 import { allowedPatterns, allows, anthropicBase, isCustomProvider, parseModel, providerDef, targetName, type ProviderId } from "./providers";
 import { anyOn, applySavers, saversFor } from "./savers";
 import { getTokenSaver } from "./settings";
+import { clientGone } from "./timeouts";
+import { runMessages } from "./messages";
+import { resolveModel } from "./route";
+import { estimateTokens } from "./translate/anthropic-openai";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
 export type Upstream = (req: Request) => Promise<Response>;
@@ -79,6 +83,7 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
   let keyFailure: Response | null = null;
   const oauth = providerDef(provider).auth === "oauth";
   for (const cand of await candidatesFor(c.env, provider, system.id, now, upstream)) {
+    if (clientGone()) return clientClosed();
     const key = await cand.key();
     if (key && typeof key !== "string") {
       keyFailure ??= authFailure(key);
@@ -92,11 +97,18 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
       await noteFailure(c.env.DB, failed.cand, failed.up.status, await errorMessage(failed.up), retryAfterOf(failed.up), now);
     }
     c.set("connection", cand.connection);
-    let up = await upstream(upstreamRequest(c, provider, path, key, body, oauth));
-    // A subscription token refused before it expired (revoked, or renewed elsewhere): renew it once and send again.
-    if (up.status === 401 && oauth) {
-      const renewed = await cand.key(true);
-      if (typeof renewed === "string") up = await upstream(upstreamRequest(c, provider, path, renewed, body, oauth));
+    let up: Response;
+    try {
+      up = await upstream(upstreamRequest(c, provider, path, key, body, oauth));
+      // A subscription token refused before it expired (revoked, or renewed elsewhere): renew it once and send again.
+      if (up.status === 401 && oauth) {
+        const renewed = await cand.key(true);
+        if (typeof renewed === "string") up = await upstream(upstreamRequest(c, provider, path, renewed, body, oauth));
+      }
+    } catch {
+      if (clientGone()) return clientClosed();
+      // The provider could not be reached: like a 5xx, the account is set aside and the next one is tried.
+      up = Response.json({ type: "error", error: { type: "api_error", message: `could not reach ${provider}` } }, { status: 502 });
     }
     if (!accountFailure(up.status)) {
       c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now).catch(() => undefined));
@@ -117,6 +129,9 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
   }
   return up;
 }
+
+/** The client went away (FR-SEL-18): no account is set aside and no other one is tried. */
+const clientClosed = () => Response.json({ type: "error", error: { type: "invalid_request_error", message: "client closed the request" } }, { status: 499 });
 
 /** 401: sign in again; 502: the sign-in service is down. The message never holds a token (oauth.ts). */
 const authFailure = (f: { error: string; status: number }) =>
@@ -172,27 +187,74 @@ export function record(c: Context<AppEnv>, system: System, up: Response, streame
 
 const encode = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).buffer as ArrayBuffer;
 
+/** The request body as a JSON object with a string `model`, or null (then it goes to Anthropic, which answers 400). */
+function bodyWithModel(body: ArrayBuffer): (Record<string, unknown> & { model: string }) | null {
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof (parsed as { model?: unknown }).model === "string") return parsed as Record<string, unknown> & { model: string };
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+/**
+ * Whether `model` is sent to an Anthropic-format provider as the client sent it: Claude models, the Claude
+ * subscription (`claude/`, a sign-in) and the owner's Anthropic-compatible providers. Everything else (other
+ * providers, combos, aliases) is translated and routed as chat (messages.ts).
+ */
+function passthroughTarget(model: string): { provider: ProviderId; model: string; custom: boolean } | null {
+  const ref = parseModel(model);
+  const t = ref?.kind === "target" ? ref.target : null;
+  if (!t) return null;
+  if (t.provider === PROVIDER) return { ...t, custom: false };
+  const custom = providerDef(t.provider).format === "anthropic" && (isCustomProvider(t.provider) || providerDef(t.provider).auth === "oauth");
+  return custom ? { ...t, custom: true } : null;
+}
+
+/**
+ * The model to forward as sent, or null to translate. A name that only an alias makes a Claude model (with no
+ * `(level)` suffix, which only the chat router applies) is forwarded too, as the model it stands for.
+ */
+async function forwardedModel(db: D1Database, model: string): Promise<string | null> {
+  if (passthroughTarget(model)) return model;
+  const r = await resolveModel(db, model);
+  const t = r?.ref.kind === "target" && !r.thinking ? r.ref.target : null;
+  if (!t || !passthroughTarget(targetName(t))) return null;
+  return t.provider === PROVIDER ? t.model : targetName(t);
+}
+
+/**
+ * Removes thinking blocks with no signature from earlier assistant turns. A translated turn (messages.ts) makes them;
+ * Anthropic checks the signatures it gets back, so an empty one would make it refuse the request. Signed blocks stay.
+ * True when something was removed.
+ */
+function dropUnsignedThinking(req: Record<string, unknown>): boolean {
+  let dropped = false;
+  for (const m of Array.isArray(req.messages) ? req.messages : []) {
+    if (!m || typeof m !== "object" || (m as { role?: unknown }).role !== "assistant") continue;
+    const content = (m as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    const kept = content.filter((b) => !(b && typeof b === "object" && (b as { type?: unknown }).type === "thinking" && !(b as { signature?: unknown }).signature));
+    if (kept.length !== content.length && kept.length > 0) {
+      (m as { content: unknown[] }).content = kept;
+      dropped = true;
+    }
+  }
+  return dropped;
+}
+
 /**
  * /anthropic forwards Claude models, and the models of the owner's Anthropic-compatible providers
- * (`<id>/<model>`, sent upstream as `<model>`), only those the system may call. Anything else is refused.
+ * (`<id>/<model>`, sent upstream as `<model>`), only those the system may call.
  * A body that is not JSON, or has no model, goes to Anthropic, which answers with its own 400.
  */
 function routeOf(c: Context<AppEnv>, system: System, body: ArrayBuffer): { res: Response } | { provider: ProviderId; body: ArrayBuffer } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(body));
-  } catch {
-    return { provider: PROVIDER, body };
-  }
-  const model = (parsed as { model?: unknown } | null)?.model;
-  if (typeof model !== "string") return { provider: PROVIDER, body };
-  const ref = parseModel(model);
-  const t = ref?.kind === "target" ? ref.target : null;
-  // The owner's Anthropic-compatible providers, and the Claude subscription (`claude/`, a sign-in).
-  const custom = t !== null && providerDef(t.provider).format === "anthropic" && (isCustomProvider(t.provider) || providerDef(t.provider).auth === "oauth");
-  if (!t || (t.provider !== PROVIDER && !custom)) {
-    return { res: anthropicError(c, 404, "not_found_error", "this surface serves Claude models and Anthropic-compatible providers; use /openai/v1 for other providers and combos") };
-  }
+  const parsed = bodyWithModel(body);
+  if (!parsed) return { provider: PROVIDER, body };
+  const t = passthroughTarget(parsed.model);
+  if (!t) return { res: anthropicError(c, 404, "not_found_error", "not an Anthropic-format model") };
+  const custom = t.custom;
   if (!allows(allowedPatterns(system.allowed_models), targetName(t))) {
     return { res: anthropicError(c, 403, "permission_error", "this system may not use this model") };
   }
@@ -206,7 +268,17 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages", async (c) => {
     const g = await gate(c, true);
     if (!g.ok) return g.res;
-    const route = routeOf(c, g.system, await c.req.arrayBuffer());
+    let raw = await c.req.arrayBuffer();
+    // Another provider or a combo: translated to chat and back (messages.ts), metered by the chat router.
+    const parsed = bodyWithModel(raw);
+    if (parsed) {
+      const forwarded = await forwardedModel(c.env.DB, parsed.model);
+      if (forwarded === null) return runMessages(c, upstream, g.system, parsed);
+      const renamed = forwarded !== parsed.model;
+      if (renamed) parsed.model = forwarded;
+      if (dropUnsignedThinking(parsed) || renamed) raw = encode(parsed);
+    }
+    const route = routeOf(c, g.system, raw);
     if ("res" in route) return route.res;
     const { provider } = route;
     let body = route.body;
@@ -225,6 +297,8 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
     }
     const up = await sendWithAccounts(c, upstream, g.system, provider, "/v1/messages", body, true, rtkSaved);
     if (!up) return noKey(c, provider);
+    // The client is gone: nothing to meter, no one to answer.
+    if (up.status === 499) return up;
     const headers = responseHeaders(up);
 
     if (!up.body) {
@@ -249,7 +323,17 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages/count_tokens", async (c) => {
     const g = await gate(c, false);
     if (!g.ok) return g.res;
-    const route = routeOf(c, g.system, await c.req.arrayBuffer());
+    let raw = await c.req.arrayBuffer();
+    // Another provider or a combo: a local estimate (FR-API-05), no provider call.
+    const parsed = bodyWithModel(raw);
+    if (parsed) {
+      const forwarded = await forwardedModel(c.env.DB, parsed.model);
+      if (forwarded === null) return Response.json({ input_tokens: estimateTokens(parsed) }, { headers: { "cache-control": "no-store" } });
+      const renamed = forwarded !== parsed.model;
+      if (renamed) parsed.model = forwarded;
+      if (dropUnsignedThinking(parsed) || renamed) raw = encode(parsed);
+    }
+    const route = routeOf(c, g.system, raw);
     if ("res" in route) return route.res;
     const up = await sendWithAccounts(c, upstream, g.system, route.provider, "/v1/messages/count_tokens", route.body, false, 0);
     if (!up) return noKey(c, route.provider);

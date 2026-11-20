@@ -482,7 +482,7 @@ export const en = {
   "saver.rtk": "Compress tool output (RTK)",
   "saver.rtkHint": "Shortens long tool results (git, grep, ls, logs) in the request. Lossy: long outputs are cut.",
   "saver.headroom": "Compress context (Headroom)",
-  "saver.headroomHint": "Sends the messages of OpenAI and Gemini requests to your Headroom proxy first; Anthropic requests (/v1/messages) skip it. It receives the conversation, so use one you run.",
+  "saver.headroomHint": "Sends the messages of OpenAI and Gemini requests to your Headroom proxy first; Requests to Claude models on /v1/messages skip it. It receives the conversation, so use one you run.",
   "saver.headroomUrl": "Headroom address",
   "saver.headroomUrlHint": "The proxy's base address, for example https://headroom.example.com",
   "saver.headroomUrlBad": "Enter a web address that starts with https:// or http://.",

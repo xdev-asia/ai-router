@@ -30,8 +30,20 @@ Some files and data come from other open-source projects, among them [9router](h
 | Forward | `POST /anthropic/v1/messages` and `/anthropic/v1/messages/count_tokens`, query string kept. Only `anthropic-version`, `anthropic-beta`, `content-type` and `accept` are passed on; the key becomes the system's Anthropic key |
 | Meter | One `usage` row per Messages request: model, status, token counts, request id, and the time from the request's arrival to the provider's last byte. Streaming replies are read on a copy of the stream. No request or response content is stored |
 
-The body is not changed, so thinking, caching, tools and fallbacks work as when calling Anthropic directly.
-A provider is a path prefix: another one can be added beside `/anthropic` without touching it.
+For Anthropic-format models (Claude, the `claude/` sign-in, Anthropic-compatible custom providers) the body is not
+changed, so thinking, caching, tools and fallbacks work as when calling Anthropic directly.
+
+Any other model or a combo on `/v1/messages` (Claude Code with `ANTHROPIC_MODEL=combo/fast`, say) is translated to
+chat, routed like `/v1/chat/completions`, and answered as a Claude message or event stream
+(`worker/translate/anthropic-openai.ts`). Left out on the way: `cache_control`, thinking blocks of earlier turns, and
+server tools such as `web_search_*`, which only Anthropic runs. A combo with a Claude model goes this way too, so it
+loses prompt caching; an alias of a Claude model (without a `(level)` suffix) is forwarded as sent. `count_tokens` for
+translated models is a local estimate, about four characters per token. Thinking blocks with no signature, which a
+translated answer leaves in the client's history, are removed before a request is forwarded to Anthropic.
+
+A client that goes away before the provider answers ends the provider request: the answer is `499`, no account is set
+aside and no other one is tried. This needs the `enable_request_signal` compatibility flag (in `wrangler.jsonc`) while
+the compatibility date is before 2026-11-17.
 
 ## Secrets and setup
 
@@ -89,7 +101,7 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 | `claude-*` or `anthropic/<model>` | Anthropic, translated to the Messages API |
 | `<provider>/<model>`: `openai`, `gemini`, `openrouter`, `deepseek`, `groq`, and 41 more OpenAI-compatible providers (`mistral`, `cerebras`, `together`, `fireworks`, ...; `GET /admin/providers` lists them) | that provider's API with a key from its connections or from `PROVIDER_KEYS`; the body is passed on with the bare model name. The 41 added ones take their base URLs from a third-party registry ([notices](THIRD_PARTY_NOTICES.md)) and have not been called against the live services here |
 | `combo/<name>` | the combo's targets in order (below) |
-| `<custom id>/<model>` | a custom provider the owner added (`/admin/custom-providers`): an OpenAI-compatible base URL (with its version path, e.g. `https://host/v1`) or an Anthropic-compatible host. Reached through the chat paths; `/anthropic/v1/messages` still goes to Anthropic only |
+| `<custom id>/<model>` | a custom provider the owner added (`/admin/custom-providers`): an OpenAI-compatible base URL (with its version path, e.g. `https://host/v1`) or an Anthropic-compatible host. Reached through the chat paths, and through `/v1/messages` (translated when the provider is OpenAI-compatible) |
 
 ## Subscription logins
 
@@ -191,7 +203,7 @@ usage (to meter) and drops that chunk when the client did not ask for it.
 | Path | Same as |
 |---|---|
 | `POST /v1/chat/completions`, `POST /v1/responses`, `GET /v1/models`, `GET /v1` | `/openai/v1/...` |
-| `POST /v1/messages`, `POST /v1/messages/count_tokens` | `/anthropic/v1/...` (Anthropic only) |
+| `POST /v1/messages`, `POST /v1/messages/count_tokens` | `/anthropic/v1/...`: Anthropic-format models as sent, any other model or combo translated |
 | `/v1/v1/*` | `/v1/*` |
 | `GET /api/health` | `GET /health` |
 

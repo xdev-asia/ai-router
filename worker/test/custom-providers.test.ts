@@ -202,20 +202,20 @@ describe("routing to a custom provider", () => {
     expect(rows[0]).toMatchObject({ provider: "corp-claude", input_tokens: 7, output_tokens: 3 });
   });
 
-  it("still refuses an OpenAI-compatible provider's models on the Anthropic surface", async () => {
+  it("serves an OpenAI-compatible provider's models on the Anthropic surface, translated to chat", async () => {
     await create({ id: "corp", name: "Corp", format: "openai", base_url: "https://a.test/v1" });
     await connect("corp", "sk-corp-test-00001111");
     const token = await addSystem("app");
     await allow("app", ["*"]);
-    const up = fakeUpstream(() => json(MESSAGE));
+    const up = fakeUpstream(() => json({ id: "c1", object: "chat.completion", model: "corp-large", choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }], usage: { prompt_tokens: 3, completion_tokens: 1 } }));
     const { res, text } = await call(up, "/anthropic/v1/messages", {
       method: "POST",
       headers: { "x-api-key": token, "content-type": "application/json" },
-      body: JSON.stringify({ model: "corp/corp-large", max_tokens: 16, messages: [] }),
+      body: JSON.stringify({ model: "corp/corp-large", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
     });
-    expect(res.status).toBe(404);
-    expect(JSON.parse(text).error.type).toBe("not_found_error");
-    expect(up.calls).toHaveLength(0);
+    expect(res.status, text).toBe(200);
+    expect(up.calls[0]!.url).toBe("https://a.test/v1/chat/completions");
+    expect(JSON.parse(text)).toMatchObject({ type: "message", model: "corp/corp-large", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn" });
   });
 
   it("lists a custom provider's added models in /v1/models", async () => {
