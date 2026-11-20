@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MCP_TOKEN_VAR, mcpSnippets, type McpClient } from "../pages/Settings";
+import { MCP_TOKEN_VAR, mcpSnippets, type McpClient } from "../pages/Mcp";
 
 describe("MCP snippets", () => {
   it("point every client at /mcp and read the token from the environment, never a literal", () => {

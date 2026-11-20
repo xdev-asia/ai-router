@@ -252,27 +252,38 @@ and Ponytail change how the model answers: fit for coding agents, not for system
 ## MCP
 
 `POST /mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP, stateless, JSON
-answers), so Claude Code, Codex, Cursor or any MCP client can check and change the gateway. It takes only
-`Authorization: Bearer <admin token>` (no console cookie). Settings > Connect an AI (MCP) in the console shows the
-address and a config per client; each reads the token from the environment variable `AI_ROUTER_ADMIN_TOKEN`.
+answers), so Claude Code, Codex, Cursor or any MCP client can check and change the gateway. It takes
+`Authorization: Bearer <MCP token>` or the admin token (no console cookie). Settings > Connect an AI (MCP) in the
+console makes MCP tokens and shows the address and a config per client; each reads the token from the environment
+variable `AI_ROUTER_MCP_TOKEN`.
 
-Every tool calls the admin API below, so validation and answers are the same as in the console.
+**MCP tokens** (`xmcp_...`, table `mcp_token`): one per AI client, shown once, only the SHA-256 kept. Each has a level
+per group, `none`, `read` or `write` (write includes read), and an expiry of 7, 30 or 90 days (default) or none.
+`tools/list` shows only the tools the token may use; `get_status` is always there. An MCP token reaches `/mcp` only,
+never the admin API, and no tool makes MCP tokens. The admin token gets every tool.
 
-| Kind | Tools |
-|---|---|
-| Read | `get_status`, `list_systems`, `list_providers`, `list_connections`, `test_connection`, `list_combos`, `list_models`, `list_aliases`, `test_model`, `usage_summary`, `usage_requests`, `usage_by_month`, `get_quota`, `get_logs`, `get_settings`, `list_pricing`, `list_custom_providers` |
-| Change | `save_combo`, `delete_combo`, `set_combo_settings`, `update_system`, `update_connection` (name, disabled, priority), `reorder_connections`, `set_provider_strategy`, `disable_models`, `enable_models`, `set_alias`, `delete_alias`, `add_custom_model`, `remove_custom_model`, `set_thinking_mode`, `set_token_saver` (no Headroom address), `set_timeouts`, `set_price`, `delete_price` |
+| Group | Read | Change |
+|---|---|---|
+| `combos` | `list_combos` | `save_combo`, `delete_combo`, `set_combo_settings` |
+| `models` | `list_models`, `list_aliases`, `test_model` | `disable_models`, `enable_models`, `set_alias`, `delete_alias`, `add_custom_model`, `remove_custom_model`, `set_thinking_mode` |
+| `systems` | `list_systems` | `update_system` |
+| `connections` | `list_providers`, `list_connections`, `test_connection`, `get_quota`, `list_custom_providers` | `update_connection`, `reorder_connections`, `set_provider_strategy` |
+| `usage` | `usage_summary`, `usage_requests`, `usage_by_month`, `get_logs` | (read only) |
+| `settings` | `get_settings`, `list_pricing` | `set_token_saver`, `set_timeouts`, `set_price`, `delete_price` |
+
+Every tool calls the admin API below (a copy of its routes with no auth of its own, reached only after `/mcp` has
+checked the token and its level), so validation and answers are the same as in the console.
 
 Not tools, and kept in the console: anything that carries or returns a secret (adding or changing a key, provider
 sign-ins, creating a system or turning its token, SSO, proxy pools, media and web-tool keys, backup import), and the
 Headroom address, which receives every conversation.
 
 ```toml
-# Claude Code: .mcp.json in a project ("type": "http", headers: {"Authorization": "Bearer ${AI_ROUTER_ADMIN_TOKEN}"})
+# Claude Code: .mcp.json in a project ("type": "http", headers: {"Authorization": "Bearer ${AI_ROUTER_MCP_TOKEN}"})
 # Codex: ~/.codex/config.toml
 [mcp_servers.ai-router]
 url = "https://<host>/mcp"
-bearer_token_env_var = "AI_ROUTER_ADMIN_TOKEN"
+bearer_token_env_var = "AI_ROUTER_MCP_TOKEN"
 ```
 
 ## Admin API
@@ -307,6 +318,10 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `GET /pricing` | | `[{target, input, output, cache_read, cache_write}]`, US dollars per million tokens |
 | `PUT /pricing` | `{target: "provider/model", input, output, cache_read?, cache_write?}` | the price. A target also prices every model whose name starts with it; the longest match wins |
 | `DELETE /pricing?target=` | | `204`; `404` |
+| `GET /mcp-tokens` | | MCP tokens: `{id, name, hint, scopes, created_at, expires_at, last_used_at}` (never the token) |
+| `POST /mcp-tokens` | `{name, scopes: {group: "none" \| "read" \| "write"}, expires_days?: 7 \| 30 \| 90 \| null}` (default 90) | `201` with `token`, once; `400` |
+| `PATCH /mcp-tokens/:id` | `{name?, scopes?}` | the token; `404` |
+| `DELETE /mcp-tokens/:id` | | `204`; `404`. Clients using it lose access at once |
 | `GET /custom-providers` | | `[{id, name, format, base_url, created_at, updated_at}]` |
 | `POST /custom-providers` | `{id, name, format: "openai" \| "anthropic", base_url}` (https, no credentials or query) | `201`; `400`; `409 taken` for a built-in id or prefix |
 | `PATCH /custom-providers/:id` | `{name?, format?, base_url?}` | the provider; `404` |
