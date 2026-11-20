@@ -249,6 +249,32 @@ Each usage row records `rtk_saved_bytes`, so the effect can be measured against 
 measured here; measure them before relying on them. [Inference] Caveman
 and Ponytail change how the model answers: fit for coding agents, not for systems that need full prose.
 
+## MCP
+
+`POST /mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP, stateless, JSON
+answers), so Claude Code, Codex, Cursor or any MCP client can check and change the gateway. It takes only
+`Authorization: Bearer <admin token>` (no console cookie). Settings > Connect an AI (MCP) in the console shows the
+address and a config per client; each reads the token from the environment variable `AI_ROUTER_ADMIN_TOKEN`.
+
+Every tool calls the admin API below, so validation and answers are the same as in the console.
+
+| Kind | Tools |
+|---|---|
+| Read | `get_status`, `list_systems`, `list_providers`, `list_connections`, `test_connection`, `list_combos`, `list_models`, `list_aliases`, `test_model`, `usage_summary`, `usage_requests`, `usage_by_month`, `get_quota`, `get_logs`, `get_settings`, `list_pricing`, `list_custom_providers` |
+| Change | `save_combo`, `delete_combo`, `set_combo_settings`, `update_system`, `update_connection` (name, disabled, priority), `reorder_connections`, `set_provider_strategy`, `disable_models`, `enable_models`, `set_alias`, `delete_alias`, `add_custom_model`, `remove_custom_model`, `set_thinking_mode`, `set_token_saver` (no Headroom address), `set_timeouts`, `set_price`, `delete_price` |
+
+Not tools, and kept in the console: anything that carries or returns a secret (adding or changing a key, provider
+sign-ins, creating a system or turning its token, SSO, proxy pools, media and web-tool keys, backup import), and the
+Headroom address, which receives every conversation.
+
+```toml
+# Claude Code: .mcp.json in a project ("type": "http", headers: {"Authorization": "Bearer ${AI_ROUTER_ADMIN_TOKEN}"})
+# Codex: ~/.codex/config.toml
+[mcp_servers.ai-router]
+url = "https://<host>/mcp"
+bearer_token_env_var = "AI_ROUTER_ADMIN_TOKEN"
+```
+
 ## Admin API
 
 All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev ID session cookie

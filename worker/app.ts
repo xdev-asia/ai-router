@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { mcpRoutes } from "./mcp";
 import { cors } from "hono/cors";
 import { adminRoutes } from "./admin";
 import { consoleAuthRoutes, type Idp } from "./console-auth";
@@ -48,7 +49,7 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*"]) app.use(path, logRequest);
   // The owner's providers (custom-providers.ts), read once per request so routing and the console see them.
   const timeouts = withTimeouts(deps.secondMs);
-  for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*", "/admin/*"]) {
+  for (const path of ["/v1", "/v1/*", "/v1beta/*", "/openai/*", "/anthropic/*", "/admin/*", "/mcp", "/mcp/*"]) {
     app.use(path, withCustomProviders);
     app.use(path, timeouts);
   }
@@ -71,7 +72,10 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   });
   const idp: Idp = deps.idp ?? ((req) => fetch(req));
   app.route("/auth", consoleAuthRoutes(idp));
-  app.route("/admin", adminRoutes(upstream, idp));
+  const admin = adminRoutes(upstream, idp);
+  app.route("/admin", admin);
+  // MCP (mcp.ts): the admin API as tools, for any AI client, with the admin token.
+  app.route("/mcp", mcpRoutes(admin));
   app.route("/skills", skillRoutes());
   const anthropic = anthropicRoutes(upstream);
   const openai = openaiRoutes(upstream);
