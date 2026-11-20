@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Banner, Button, Card, CodeBlock, Dialog, Field, FileDrop, Grid, Segmented, Select, SettingRow, Skeleton, Stack, StatusDot, Switch } from "@xdev-asia/ui";
+import { Banner, Button, Card, Dialog, Field, FileDrop, Grid, Segmented, Select, SettingRow, Skeleton, Stack, StatusDot, Switch } from "@xdev-asia/ui";
 import type { ThemePreference } from "@xdev-asia/ui";
 import { ApiError, COMBO_STRATEGIES, api, useLoad, type ComboStrategy } from "../api";
 import { t, useLang, type Lang, type StringKey } from "../i18n";
@@ -7,6 +7,7 @@ import { useNotify } from "../notify";
 import { useTheme } from "../theme";
 import { useTranslatorShown } from "../translator-pref";
 import { ui } from "../ui-labels";
+import { McpCard } from "./Mcp";
 
 /** What GET /admin/settings/info says: whether each Worker secret is set, never its value. */
 export interface SettingsInfo {
@@ -40,80 +41,6 @@ const STRATEGY_HINT: Record<ComboStrategy, StringKey> = {
 
 const MAX_BACKUP = 5 * 1024 * 1024;
 
-/** The environment variable the MCP snippets read the admin token from: no file below holds the token itself. */
-export const MCP_TOKEN_VAR = "AI_ROUTER_ADMIN_TOKEN";
-export type McpClient = "claude" | "codex" | "cursor" | "other";
-export interface McpSnippet {
-  where: StringKey;
-  language: string;
-  code: string;
-}
-
-/**
- * How each MCP client reaches this gateway's /mcp with the admin token from MCP_TOKEN_VAR (docs checked 2026-11-20:
- * code.claude.com/docs/en/mcp, learn.chatgpt.com/docs/extend/mcp, cursor.com/docs/context/mcp).
- */
-export function mcpSnippets(client: McpClient, origin: string): McpSnippet[] {
-  const url = `${origin.replace(/\/+$/, "")}/mcp`;
-  const v = MCP_TOKEN_VAR;
-  switch (client) {
-    case "claude":
-      return [
-        {
-          where: "prefs.mcp.where.claude",
-          language: "json",
-          code: JSON.stringify({ mcpServers: { "ai-router": { type: "http", url, headers: { Authorization: `Bearer \${${v}}` } } } }, null, 2),
-        },
-      ];
-    case "codex":
-      return [
-        { where: "prefs.mcp.where.codex", language: "toml", code: [`[mcp_servers.ai-router]`, `url = "${url}"`, `bearer_token_env_var = "${v}"`].join("\n") },
-        { where: "prefs.mcp.where.codexCli", language: "bash", code: `codex mcp add ai-router --url ${url} --bearer-token-env-var ${v}` },
-      ];
-    case "cursor":
-      return [
-        {
-          where: "prefs.mcp.where.cursor",
-          language: "json",
-          code: JSON.stringify({ mcpServers: { "ai-router": { url, headers: { Authorization: `Bearer \${env:${v}}` } } } }, null, 2),
-        },
-      ];
-    case "other":
-      return [{ where: "prefs.mcp.where.other", language: "text", code: [`URL: ${url}`, "Transport: Streamable HTTP", "Authorization: Bearer <admin token>"].join("\n") }];
-  }
-}
-
-const MCP_CLIENTS: { value: McpClient; label: string }[] = [
-  { value: "claude", label: "Claude Code" },
-  { value: "codex", label: "Codex" },
-  { value: "cursor", label: "Cursor" },
-  { value: "other", label: "" },
-];
-
-/** Settings card: the MCP address and a ready config per client. */
-function McpCard() {
-  const [lang] = useLang();
-  const [client, setClient] = useState<McpClient>("claude");
-  const origin = window.location.origin;
-  return (
-    <Card title={t("prefs.mcp")} subtitle={t("prefs.mcpHint")} headingLevel={2}>
-      <Stack gap={3}>
-        <Stack gap={1}>
-          <span className="muted">{t("prefs.mcpUrl")}</span>
-          <CodeBlock code={`${origin}/mcp`} language="text" labels={ui(lang).codeBlock} />
-        </Stack>
-        <Segmented label={t("prefs.mcpClient")} options={MCP_CLIENTS.map((c) => ({ value: c.value, label: c.label || t("prefs.mcp.other") }))} value={client} onChange={(v) => setClient(v as McpClient)} />
-        {mcpSnippets(client, origin).map((s, i) => (
-          <Stack key={i} gap={1}>
-            <span className="muted">{t(s.where)}</span>
-            <CodeBlock code={s.code} language={s.language} labels={ui(lang).codeBlock} />
-          </Stack>
-        ))}
-        <span className="muted">{t("prefs.mcpToken", { name: MCP_TOKEN_VAR })}</span>
-      </Stack>
-    </Card>
-  );
-}
 
 /** How long the gateway waits for a provider (GET /admin/timeouts, worker/timeouts.ts). */
 interface Timeouts {
@@ -635,8 +562,6 @@ export function Settings() {
 
         <SsoCard />
 
-        <McpCard />
-
         <Card title={t("prefs.gateway")} headingLevel={2}>
           {info.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
           {info.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reloadInfo}>{t("common.retry")}</Button>} />}
@@ -677,6 +602,7 @@ export function Settings() {
           </Stack>
         </Card>
       </Grid>
+      <McpCard />
       {backup && (
         <Dialog
           modal

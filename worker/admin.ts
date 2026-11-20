@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { mcpTokenRoutes } from "./mcp-tokens";
 import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { isLevel } from "./savers";
 import { consoleUser, sameOrigin, type Idp } from "./console-auth";
@@ -78,11 +79,13 @@ async function getSystem(db: D1Database, id: string): Promise<System | null> {
  * or the console's xDev ID session cookie (see console-auth.ts).
  * A system's plain token is returned once, on create and rotate, and stored only as its SHA-256.
  */
-export function adminRoutes(upstream: Upstream, idp: Idp): Hono<AppEnv> {
+export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: boolean } = {}): Hono<AppEnv> {
   const a = new Hono<AppEnv>();
 
   a.use("*", async (c, next) => {
     c.header("cache-control", "no-store");
+    // The copy /mcp calls after it has checked the token and its levels (mcp.ts). It is never mounted on a path.
+    if (opts.trusted) return next();
     const req = c.req.raw;
     if (req.headers.has("authorization")) {
       // A wrong token is refused even when a console cookie is also present.
@@ -97,6 +100,7 @@ export function adminRoutes(upstream: Upstream, idp: Idp): Hono<AppEnv> {
 
   basicChatRoutes(a, upstream);
   requestDetailRoutes(a);
+  mcpTokenRoutes(a);
 
   a.get("/systems", async (c) => {
     const r = await c.env.DB.prepare(`SELECT ${SYSTEM_COLUMNS} FROM system ORDER BY id`).all<SystemRow>();

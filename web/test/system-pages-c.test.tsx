@@ -264,6 +264,7 @@ describe("settings", () => {
     routes["GET /admin/combo-settings"] = () => json({ strategy: "fallback", sticky_limit: 3 });
     routes["GET /admin/timeouts"] = () => json({ first_byte_s: 300, idle_s: 300 });
     routes["GET /admin/sso"] = () => json(SSO_ENV);
+    routes["GET /admin/mcp-tokens"] = () => json([]);
   });
 
   async function openSettings() {
@@ -364,6 +365,42 @@ describe("settings", () => {
     await signIn();
     await screen.findByText(t("prefs.strategy"));
     await waitFor(() => expect(screen.getAllByRole("button", { name: t("common.retry") })).toHaveLength(2));
+  });
+
+  it("MCP tokens: lists access per group, creates one with its levels and expiry, and shows it once", async () => {
+    const day = Math.floor(Date.now() / 1000);
+    routes["GET /admin/mcp-tokens"] = () =>
+      json([{ id: "t1", name: "Laptop", hint: "Ab12", scopes: { combos: "write", models: "none", systems: "none", connections: "none", usage: "read", settings: "none" }, created_at: day, expires_at: null, last_used_at: null }]);
+    routes["POST /admin/mcp-tokens"] = () => json({ id: "t2", name: "CI", hint: "Zz99", token: "xmcp_onceonly", scopes: {}, created_at: day, expires_at: day + 7 * 86400, last_used_at: null }, 201);
+    await openSettings();
+    expect(await screen.findByText(`${t("mcp.group.combos")}: ${t("mcp.level.write")} · ${t("mcp.group.usage")}: ${t("mcp.level.read")}`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: t("mcp.add") }));
+    const dialog = await screen.findByRole("dialog", { name: t("mcp.addTitle") });
+    fireEvent.change(within(dialog).getByLabelText(t("mcp.name")), { target: { value: "CI" } });
+    fireEvent.change(within(dialog).getByLabelText(t("mcp.expiry")), { target: { value: "7" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("mcp.presetNone") }));
+    fireEvent.change(within(dialog).getByLabelText(t("mcp.group.combos")), { target: { value: "read" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("mcp.create") }));
+    await screen.findByRole("dialog", { name: t("mcp.shownTitle", { name: "CI" }) });
+    expect(calls.find((c) => c.method === "POST" && c.url === "/admin/mcp-tokens")!.body).toEqual({
+      name: "CI",
+      expires_days: 7,
+      scopes: { combos: "read", models: "none", systems: "none", connections: "none", usage: "none", settings: "none" },
+    });
+    expect(screen.getAllByText(/xmcp_onceonly/).length).toBeGreaterThan(0);
+  });
+
+  it("MCP tokens: revoke asks first, then deletes", async () => {
+    routes["GET /admin/mcp-tokens"] = () =>
+      json([{ id: "t1", name: "Laptop", hint: "Ab12", scopes: { combos: "read", models: "none", systems: "none", connections: "none", usage: "none", settings: "none" }, created_at: 1, expires_at: null, last_used_at: null }]);
+    routes["DELETE /admin/mcp-tokens/t1"] = () => new Response(null, { status: 204 });
+    await openSettings();
+    fireEvent.click(await screen.findByRole("button", { name: `${t("mcp.col.actions")}: Laptop` }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("mcp.revoke") }));
+    const dialog = await screen.findByRole("alertdialog", { name: t("mcp.revokeTitle", { name: "Laptop" }) });
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: t("mcp.revoke") }));
+    await waitFor(() => expect(calls.some((c) => c.method === "DELETE" && c.url === "/admin/mcp-tokens/t1")).toBe(true));
   });
 
   it("the sticky limit Save stays disabled until the value changed", async () => {

@@ -75,7 +75,7 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   const admin = adminRoutes(upstream, idp);
   app.route("/admin", admin);
   // MCP (mcp.ts): the admin API as tools, for any AI client, with the admin token.
-  app.route("/mcp", mcpRoutes(admin));
+  app.route("/mcp", mcpRoutes(adminRoutes(upstream, idp, { trusted: true })));
   app.route("/skills", skillRoutes());
   const anthropic = anthropicRoutes(upstream);
   const openai = openaiRoutes(upstream);
