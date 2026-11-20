@@ -7,7 +7,6 @@ import { useNotify } from "../notify";
 import { useTheme } from "../theme";
 import { useTranslatorShown } from "../translator-pref";
 import { ui } from "../ui-labels";
-import { McpCard } from "./Mcp";
 
 /** What GET /admin/settings/info says: whether each Worker secret is set, never its value. */
 export interface SettingsInfo {
@@ -602,7 +601,6 @@ export function Settings() {
           </Stack>
         </Card>
       </Grid>
-      <McpCard />
       {backup && (
         <Dialog
           modal

@@ -24,7 +24,7 @@ import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
 import { formatAgo } from "./Usage";
 
-/** The environment variable the snippets read the MCP token from: no file below holds the token itself. */
+/** The environment variable the snippets read the MCP token from: no config file holds the token itself. */
 export const MCP_TOKEN_VAR = "AI_ROUTER_MCP_TOKEN";
 export type McpClient = "claude" | "codex" | "cursor" | "other";
 export interface McpSnippet {
@@ -55,7 +55,10 @@ export function mcpSnippets(client: McpClient, origin: string): McpSnippet[] {
   }
 }
 
-// ---- Tokens --------------------------------------------------------------------------------------------------------
+/** The line that puts a token in the environment (a placeholder until one is made). */
+export const exportLine = (token: string) => `export ${MCP_TOKEN_VAR}=${token}`;
+
+// ---- Groups and levels ---------------------------------------------------------------------------------------------
 
 /** Same groups and levels as worker/mcp-tokens.ts. Usage has nothing to change: read at most. */
 export const GROUPS = ["combos", "models", "systems", "connections", "usage", "settings"] as const;
@@ -64,6 +67,16 @@ export type Level = "none" | "read" | "write";
 export type Scopes = Record<Group, Level>;
 const READ_ONLY: ReadonlySet<Group> = new Set(["usage"]);
 const EXPIRY = ["7", "30", "90", "never"] as const;
+
+/** The tools of each group (worker/mcp.ts), for the "what a token can do" table. */
+export const GROUP_TOOLS: Record<Group, { read: string[]; change: string[] }> = {
+  combos: { read: ["list_combos"], change: ["save_combo", "delete_combo", "set_combo_settings"] },
+  models: { read: ["list_models", "list_aliases", "test_model"], change: ["disable_models", "enable_models", "set_alias", "delete_alias", "add_custom_model", "remove_custom_model", "set_thinking_mode"] },
+  systems: { read: ["list_systems"], change: ["update_system"] },
+  connections: { read: ["list_providers", "list_connections", "test_connection", "get_quota", "list_custom_providers"], change: ["update_connection", "reorder_connections", "set_provider_strategy"] },
+  usage: { read: ["usage_summary", "usage_requests", "usage_by_month", "get_logs"], change: [] },
+  settings: { read: ["get_settings", "list_pricing"], change: ["set_token_saver", "set_timeouts", "set_price", "delete_price"] },
+};
 
 export interface McpToken {
   id: string;
@@ -77,7 +90,7 @@ export interface McpToken {
 
 const preset = (level: Level): Scopes => Object.fromEntries(GROUPS.map((g) => [g, level === "write" && READ_ONLY.has(g) ? "read" : level])) as Scopes;
 
-/** "Combos: write · Usage: read", or "No access". */
+/** "Combos: Read and change · Usage: Read", or "Status only". */
 export function scopeSummary(s: Scopes): string {
   const parts = GROUPS.filter((g) => s[g] !== "none").map((g) => `${t(`mcp.group.${g}` as StringKey)}: ${t(`mcp.level.${s[g]}` as StringKey)}`);
   return parts.length ? parts.join(" · ") : t("mcp.noAccess");
@@ -85,13 +98,46 @@ export function scopeSummary(s: Scopes): string {
 
 const formatDate = (at: number, lang: Lang) => new Date(at * 1000).toLocaleDateString(lang === "vi" ? "vi-VN" : "en-US", { year: "numeric", month: "short", day: "numeric" });
 
+const MCP_CLIENTS: { value: McpClient; label: string }[] = [
+  { value: "claude", label: "Claude Code" },
+  { value: "codex", label: "Codex" },
+  { value: "cursor", label: "Cursor" },
+  { value: "other", label: "" },
+];
+
+function ClientPicker({ client, onChange }: { client: McpClient; onChange: (c: McpClient) => void }) {
+  return (
+    <div className="mcp-clients">
+      <Segmented label={t("prefs.mcpClient")} options={MCP_CLIENTS.map((c) => ({ value: c.value, label: c.label || t("prefs.mcp.other") }))} value={client} onChange={(v) => onChange(v as McpClient)} />
+    </div>
+  );
+}
+
+function Snippets({ client }: { client: McpClient }) {
+  const [lang] = useLang();
+  return (
+    <>
+      {mcpSnippets(client, window.location.origin).map((s, i) => (
+        <Stack key={i} gap={1}>
+          <span className="muted">{t(s.where)}</span>
+          <CodeBlock code={s.code} language={s.language} labels={ui(lang).codeBlock} />
+        </Stack>
+      ))}
+    </>
+  );
+}
+
+// ---- The page ------------------------------------------------------------------------------------------------------
+
 type Pending = { kind: "create" } | { kind: "edit"; token: McpToken } | { kind: "revoke"; token: McpToken } | { kind: "shown"; name: string; token: string };
 
-function TokensSection() {
+/** MCP: connect an AI client in three steps, its tokens, and what each group lets it do. */
+export function Mcp() {
   const [lang] = useLang();
   const labels = ui(lang);
   const notify = useNotify();
   const [tokens, reload] = useLoad<McpToken[]>("/mcp-tokens");
+  const [client, setClient] = useState<McpClient>("claude");
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -101,6 +147,7 @@ function TokensSection() {
     setPending(null);
     setDialogError(null);
   };
+  const create = () => setPending({ kind: "create" });
 
   async function revoke(token: McpToken) {
     setBusy(true);
@@ -159,25 +206,83 @@ function TokensSection() {
     },
   ];
 
+  const canDo: DataTableColumn<Group>[] = [
+    {
+      key: "group",
+      header: t("mcp.col.group"),
+      cell: (g) => (
+        <Stack gap={0}>
+          <span>{t(`mcp.group.${g}` as StringKey)}</span>
+          <span className="muted">{t(`mcp.groupHint.${g}` as StringKey)}</span>
+        </Stack>
+      ),
+    },
+    { key: "read", header: t("mcp.level.read"), cell: (g) => <code className="mcp-tools">{GROUP_TOOLS[g].read.join(", ")}</code> },
+    { key: "change", header: t("mcp.level.write"), cell: (g) => (GROUP_TOOLS[g].change.length ? <code className="mcp-tools">{GROUP_TOOLS[g].change.join(", ")}</code> : <span className="muted">—</span>) },
+  ];
+
   return (
-    <Stack gap={3}>
-      <div className="page-actions">
-        <Button icon="plus" onClick={() => setPending({ kind: "create" })}>
-          {t("mcp.add")}
-        </Button>
-      </div>
-      {tokens.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
-      {tokens.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
-      {tokens.status === "ready" && (
-        <DataTable
-          caption={t("mcp.caption")}
-          columns={columns}
-          rows={tokens.data}
-          rowKey={(x) => x.id}
-          labels={labels.dataTable}
-          empty={<EmptyState size="center" icon="key" title={t("mcp.empty")} />}
-        />
-      )}
+    <Stack gap={4}>
+      <Card title={t("mcp.steps")} headingLevel={2}>
+        <ol className="mcp-steps">
+          <li>
+            <Stack gap={2}>
+              <h3 className="mcp-step-title">{t("mcp.step1")}</h3>
+              <span className="muted">{t("mcp.step1Body")}</span>
+              <div>
+                <Button variant="primary" icon="plus" onClick={create}>
+                  {t("mcp.add")}
+                </Button>
+              </div>
+            </Stack>
+          </li>
+          <li>
+            <Stack gap={2}>
+              <h3 className="mcp-step-title">{t("mcp.step2")}</h3>
+              <span className="muted">{t("mcp.step2Body", { name: MCP_TOKEN_VAR })}</span>
+              <CodeBlock code={exportLine(t("mcp.placeholder"))} language="bash" labels={labels.codeBlock} />
+            </Stack>
+          </li>
+          <li>
+            <Stack gap={2}>
+              <h3 className="mcp-step-title">{t("mcp.step3")}</h3>
+              <span className="muted">{t("mcp.step3Body")}</span>
+              <ClientPicker client={client} onChange={setClient} />
+              <Snippets client={client} />
+            </Stack>
+          </li>
+        </ol>
+      </Card>
+
+      <Card title={t("mcp.tokensTitle")} subtitle={t("mcp.tokensHint")} headingLevel={2} flush>
+        {tokens.status === "loading" && <Skeleton lines={2} announce labels={{ loading: t("loading") }} />}
+        {tokens.status === "error" && <Banner tone="danger" title={t("error.load")} action={<Button onClick={reload}>{t("common.retry")}</Button>} />}
+        {tokens.status === "ready" && (
+          <DataTable
+            caption={t("mcp.caption")}
+            columns={columns}
+            rows={tokens.data}
+            rowKey={(x) => x.id}
+            labels={labels.dataTable}
+            empty={
+              <EmptyState
+                size="center"
+                icon="bot"
+                title={t("mcp.empty")}
+                actions={
+                  <Button icon="plus" onClick={create}>
+                    {t("mcp.add")}
+                  </Button>
+                }
+              />
+            }
+          />
+        )}
+      </Card>
+
+      <Card title={t("mcp.canDo")} subtitle={t("mcp.canDoHint")} headingLevel={2} flush>
+        <DataTable caption={t("mcp.canDo")} columns={canDo} rows={[...GROUPS]} rowKey={(g) => g} labels={labels.dataTable} empty={<EmptyState size="center" icon="bot" title={t("mcp.noAccess")} />} />
+      </Card>
 
       {(pending?.kind === "create" || pending?.kind === "edit") && (
         <TokenForm
@@ -215,9 +320,11 @@ function TokensSection() {
         <Dialog modal size="wide" body="plain" title={t("mcp.shownTitle", { name: pending.name })} confirmLabel={t("common.close")} cancelLabel={null} labels={labels.dialog} onConfirm={close} onCancel={close}>
           <Stack gap={3}>
             <Banner tone="warn" title={t("token.once")} />
-            <CodeBlock code={pending.token} labels={labels.codeBlock} />
-            <p className="muted">{t("mcp.shownHint", { name: MCP_TOKEN_VAR })}</p>
-            <CodeBlock code={`export ${MCP_TOKEN_VAR}=${pending.token}`} language="bash" labels={labels.codeBlock} />
+            <h3 className="dialog-subheading">{t("mcp.step2")}</h3>
+            <CodeBlock code={exportLine(pending.token)} language="bash" labels={labels.codeBlock} />
+            <h3 className="dialog-subheading">{t("mcp.step3")}</h3>
+            <ClientPicker client={client} onChange={setClient} />
+            <Snippets client={client} />
           </Stack>
         </Dialog>
       )}
@@ -304,38 +411,5 @@ function TokenForm({ token, onCancel, onDone }: { token: McpToken | null; onCanc
         ))}
       </Stack>
     </FormDialog>
-  );
-}
-
-const MCP_CLIENTS: { value: McpClient; label: string }[] = [
-  { value: "claude", label: "Claude Code" },
-  { value: "codex", label: "Codex" },
-  { value: "cursor", label: "Cursor" },
-  { value: "other", label: "" },
-];
-
-/** Settings card: MCP tokens, the address, and a ready config per client. */
-export function McpCard() {
-  const [lang] = useLang();
-  const [client, setClient] = useState<McpClient>("claude");
-  const origin = window.location.origin;
-  return (
-    <Card title={t("prefs.mcp")} subtitle={t("prefs.mcpHint")} headingLevel={2}>
-      <Stack gap={4}>
-        <TokensSection />
-        <Stack gap={1}>
-          <span className="muted">{t("prefs.mcpUrl")}</span>
-          <CodeBlock code={`${origin}/mcp`} language="text" labels={ui(lang).codeBlock} />
-        </Stack>
-        <Segmented label={t("prefs.mcpClient")} options={MCP_CLIENTS.map((c) => ({ value: c.value, label: c.label || t("prefs.mcp.other") }))} value={client} onChange={(v) => setClient(v as McpClient)} />
-        {mcpSnippets(client, origin).map((s, i) => (
-          <Stack key={i} gap={1}>
-            <span className="muted">{t(s.where)}</span>
-            <CodeBlock code={s.code} language={s.language} labels={ui(lang).codeBlock} />
-          </Stack>
-        ))}
-        <span className="muted">{t("prefs.mcpToken", { name: MCP_TOKEN_VAR })}</span>
-      </Stack>
-    </Card>
   );
 }

@@ -286,11 +286,11 @@ describe("frame", () => {
     const system = screen.getByRole("navigation", { name: t("nav.system") });
     const links = [...within(gateway).getAllByRole("link"), ...within(insight).getAllByRole("link"), ...within(system).getAllByRole("link")];
     const name = (a: HTMLElement) => a.querySelector(".settings-nav-label")?.textContent;
-    expect(within(gateway).getAllByRole("link").map(name)).toEqual([t("nav.systems"), t("nav.providers"), t("nav.combos"), t("nav.cliTools")]);
+    expect(within(gateway).getAllByRole("link").map(name)).toEqual([t("nav.systems"), t("nav.providers"), t("nav.combos"), t("nav.cliTools"), t("nav.mcp")]);
     expect(within(insight).getAllByRole("link").map(name)).toEqual([t("nav.usage"), t("nav.quota"), t("nav.tokenSaver")]);
     expect(within(system).getAllByRole("link").map(name)).toEqual([t("nav.media"), t("nav.proxyPools"), t("nav.skills"), t("nav.logs"), t("nav.settings"), t("nav.pricing")]);
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/systems", "#/providers", "#/combos", "#/cli-tools",
+      "#/systems", "#/providers", "#/combos", "#/cli-tools", "#/mcp",
       "#/usage", "#/quota", "#/token-saver",
       "#/media", "#/proxy-pools", "#/skills", "#/logs", "#/settings", "#/pricing",
     ]);

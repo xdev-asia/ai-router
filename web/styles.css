@@ -676,3 +676,9 @@ body {
     height: calc(var(--x-space-8) * 8);
   }
 }
+
+/* MCP page: three numbered steps, the client picker at its own width, tool names that wrap. */
+.mcp-steps { display: grid; gap: var(--x-space-6); margin: 0; padding-inline-start: 0; list-style: none; }
+.mcp-step-title { margin: 0; font: var(--type-heading); }
+.mcp-clients { display: flex; }
+.mcp-tools { white-space: normal; overflow-wrap: anywhere; }
