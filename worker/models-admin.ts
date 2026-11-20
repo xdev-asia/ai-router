@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { syncModels, syncedModels } from "./model-sync";
 import type { System } from "./auth";
 import { candidatesFor } from "./connections";
 import type { AppEnv } from "./env";
@@ -51,22 +52,45 @@ export function modelRoutes(a: Hono<AppEnv>, upstream: Upstream): void {
     const off = (m: string) => disabled.has(`${id}/${m}`);
     const custom = await customModels(c.env.DB, id);
     const own = new Set(custom.map((m) => m.model));
+    // The provider's own list (model-sync.ts): it adds models the catalog lacks, and levels and context to known ones.
+    const sync = await syncedModels(c.env.DB, id);
+    const synced = new Map(sync.models.map((m) => [m.id, m]));
+    const fill = <T extends { id: string; thinking?: readonly string[]; context?: number }>(m: T) => {
+      const s = synced.get(m.id);
+      return s ? { ...m, synced: true, ...(!m.thinking && s.thinking ? { thinking: s.thinking } : {}), ...(!m.context && s.context ? { context: s.context } : {}) } : m;
+    };
+    const known = new Set([...own, ...(cat?.models ?? []).map((m) => m.id)]);
     const models = [
-      ...custom.map((m) => ({ id: m.model, name: m.name ?? m.model, custom: true, disabled: off(m.model) })),
+      ...sync.models
+        .filter((m) => !known.has(m.id))
+        .map((m) => ({ id: m.id, name: m.name, custom: false, disabled: off(m.id), synced: true, new: m.new, ...(m.thinking ? { thinking: m.thinking } : {}), ...(m.context ? { context: m.context } : {}) })),
+      ...custom.map((m) => fill({ id: m.model, name: m.name ?? m.model, custom: true, disabled: off(m.model) })),
       ...(cat?.models ?? [])
         .filter((m) => !own.has(m.id))
-        .map((m) => ({
-          id: m.id,
-          name: m.name,
-          custom: false,
-          disabled: off(m.id),
-          ...(m.thinking ? { thinking: [...m.thinking] } : {}),
-          ...(m.context ? { context: m.context } : {}),
-        })),
+        .map((m) =>
+          fill({
+            id: m.id,
+            name: m.name,
+            custom: false,
+            disabled: off(m.id),
+            ...(m.thinking ? { thinking: [...m.thinking] } : {}),
+            ...(m.context ? { context: m.context } : {}),
+          }),
+        ),
     ];
     const saved = (await getProviderThinking(c.env.DB))[id];
     const thinking = cat?.thinking ? { options: [...cat.thinking.options], mode: saved ?? cat.thinking.default } : null;
-    return c.json({ provider: id, alias: aliasOf(id), thinking, models });
+    return c.json({ provider: id, alias: aliasOf(id), thinking, models, sync: sync.state });
+  });
+
+  /** Fetches the provider's own model list now (model-sync.ts). 409 without a connection, 502 when it fails. */
+  a.post("/providers/:id/models/sync", async (c) => {
+    const id = c.req.param("id");
+    if (!isProvider(id)) return c.json({ error: "not_found" }, 404);
+    const r = await syncModels(c.env, upstream, id);
+    if (!r.ok) return c.json({ error: r.status === 400 ? "not_supported" : r.status === 409 ? "no_connection" : "sync_failed", message: r.message }, r.status);
+    const { ok: _ok, ...body } = r;
+    return c.json(body);
   });
 
   a.get("/models/aliases", async (c) => c.json({ aliases: await loadAliases(c.env.DB) }));

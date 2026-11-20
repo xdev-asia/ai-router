@@ -112,7 +112,7 @@ type CodexCall = { ok: true; res: Response } | { ok: false; status: number; mess
  * A call to chatgpt.com's /backend-api/wham/… with the account's token, through the relay when one is set.
  * A 401 renews the token once and asks again.
  */
-async function codexCall(env: Env, upstream: Fetch, conn: ConnectionAccess, path: string, init: { method: "GET" | "POST"; body?: string }): Promise<CodexCall> {
+export async function codexCall(env: Env, upstream: Fetch, conn: ConnectionAccess, path: string, init: { method: "GET" | "POST"; body?: string }): Promise<CodexCall> {
   const dest = await codexDestinationFor(env, conn.proxyPool);
   if (!dest.ok) return { ok: false, status: 0, message: dest.message };
   const url = dest.url.replace(/\/codex\/responses$/, "") + path;

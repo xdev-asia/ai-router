@@ -44,6 +44,21 @@ describe("codex relay", () => {
   const send = (headers = {}, body = '{"model":"gpt-5.2-codex"}', path = "/codex/responses", method = "POST") =>
     fetch(base + path, { method, headers: { "content-type": "application/json", ...headers }, body: method === "GET" ? undefined : body });
 
+  it("serves GET /codex/models with only client_version passed on in the query", async () => {
+    up.reply = (_req, res) => res.end('{"models":[]}');
+    const res = await send({ "x-relay-secret": SECRET, authorization: "Bearer at-fake" }, undefined, "/codex/models?client_version=0.169.1&evil=1&client_version=2", "GET");
+    assert.equal(res.status, 200);
+    assert.equal(up.calls.length, 1);
+    assert.equal(up.calls[0].method, "GET");
+    assert.equal(up.calls[0].url, "/backend-api/codex/models?client_version=0.169.1");
+  });
+
+  it("GET /codex/models without client_version sends no query", async () => {
+    const res = await send({ "x-relay-secret": SECRET }, undefined, "/codex/models", "GET");
+    assert.equal(res.status, 200);
+    assert.equal(up.calls[0].url, "/backend-api/codex/models");
+  });
+
   it("refuses a request without the secret, or with a wrong one, with 403 and x-relay-error, and sends nothing on", async () => {
     for (const headers of [{}, { "x-relay-secret": "wrong" }, { "x-relay-secret": SECRET + "x" }]) {
       const res = await send(headers);

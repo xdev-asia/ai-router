@@ -71,7 +71,7 @@ const EXPIRY = ["7", "30", "90", "never"] as const;
 /** The tools of each group (worker/mcp.ts), for the "what a token can do" table. */
 export const GROUP_TOOLS: Record<Group, { read: string[]; change: string[] }> = {
   combos: { read: ["list_combos"], change: ["save_combo", "delete_combo", "set_combo_settings"] },
-  models: { read: ["list_models", "list_aliases", "test_model"], change: ["disable_models", "enable_models", "set_alias", "delete_alias", "add_custom_model", "remove_custom_model", "set_thinking_mode"] },
+  models: { read: ["list_models", "list_aliases", "test_model"], change: ["disable_models", "enable_models", "set_alias", "delete_alias", "add_custom_model", "remove_custom_model", "set_thinking_mode", "sync_models"] },
   systems: { read: ["list_systems"], change: ["update_system"] },
   connections: { read: ["list_providers", "list_connections", "test_connection", "get_quota", "list_custom_providers"], change: ["update_connection", "reorder_connections", "set_provider_strategy"] },
   usage: { read: ["usage_summary", "usage_requests", "usage_by_month", "get_logs"], change: [] },

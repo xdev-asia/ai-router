@@ -118,6 +118,6 @@ describe("/mcp with an MCP token", () => {
   });
 
   it("the admin token still sees every tool", async () => {
-    expect((await toolNames(ADMIN_TOKEN)).length).toBe(35);
+    expect((await toolNames(ADMIN_TOKEN)).length).toBe(36);
   });
 });

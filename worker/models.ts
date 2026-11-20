@@ -2,6 +2,7 @@ import type { System } from "./auth";
 import { candidatesFor } from "./connections";
 import type { Env } from "./env";
 import { CATALOG } from "./model-catalog";
+import { allSynced } from "./model-sync";
 import { ANTHROPIC_VERSION, PROVIDERS, aliasOf, providerIds, allowedPatterns, allows, hasEnvKey, parseModel, targetName, type ProviderId, type Target } from "./providers";
 
 /**
@@ -13,7 +14,8 @@ import { ANTHROPIC_VERSION, PROVIDERS, aliasOf, providerIds, allowedPatterns, al
 type Json = Record<string, unknown>;
 
 /** The thinking levels and the token budget each stands for. */
-export const LEVEL_TO_BUDGET = { none: 0, minimal: 512, low: 1024, medium: 8192, high: 24576, xhigh: 32768, max: 128000 } as const;
+/** `ultra` (Codex, gpt-6.2): above max; its budget is a guess for providers that take a budget. [Inference] */
+export const LEVEL_TO_BUDGET = { none: 0, minimal: 512, low: 1024, medium: 8192, high: 24576, xhigh: 32768, max: 128000, ultra: 200000 } as const;
 export type Level = Exclude<keyof typeof LEVEL_TO_BUDGET, "none">;
 const LEVELS = (Object.keys(LEVEL_TO_BUDGET) as (keyof typeof LEVEL_TO_BUDGET)[]).filter((l): l is Level => l !== "none");
 const isLevel = (v: string): v is Level => (LEVELS as string[]).includes(v);
@@ -207,6 +209,7 @@ export async function listModels(env: Env, upstream: (req: Request) => Promise<R
 
   const active = await activeProviders(env);
   const custom = await customModels(env.DB);
+  const synced = await allSynced(env.DB);
   const ids = providerIds().filter((p) => active.size === 0 || active.has(p));
   for (const p of ids) {
     // Skips the providers the allow-list cannot reach (and Anthropic's call with them).
@@ -215,6 +218,8 @@ export async function listModels(env: Env, upstream: (req: Request) => Promise<R
     if (p === "anthropic" && active.has(p)) models = (await anthropicModels(env, upstream, system, now)) ?? models;
     for (const m of models) entry({ provider: p, model: m.id }, m);
     for (const m of custom) if (m.provider === p) entry({ provider: p, model: m.model });
+    // The provider's own list (model-sync.ts): models it added since the catalog was made.
+    for (const m of synced) if (m.provider === p) entry({ provider: p, model: m.model }, { id: m.model, ...(m.context ? { context: m.context } : {}), ...(m.thinking ? { thinking: m.thinking } : {}) });
   }
 
   for (const model of Object.values(await loadAliases(env.DB))) {

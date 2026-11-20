@@ -330,6 +330,16 @@ const TOOLS: Tool[] = [
     calls: (a) => ({ method: "DELETE", path: `/models/custom${query(a, ["provider", "id"])}` }),
   },
   {
+    name: "sync_models",
+    group: "models",
+    description: "Fetches a provider's own model list now (Codex: what Codex CLI sees; OpenAI-format providers: their /models) and keeps it, so models the provider added show up. Answers count, added and removed.",
+    properties: { provider: { ...str, description: "Provider id, such as codex or groq" } },
+    required: ["provider"],
+    readOnly: false,
+    openWorld: true,
+    calls: (a) => ({ method: "POST", path: `/providers/${enc(String(a.provider))}/models/sync` }),
+  },
+  {
     name: "set_thinking_mode",
     group: "models",
     description: "A provider's thinking mode for requests that set none; the modes are listed by list_models. auto clears it.",
