@@ -13,6 +13,7 @@ import { TokenSaver } from "./pages/TokenSaver";
 import { Quota } from "./pages/Quota";
 import { Usage } from "./pages/Usage";
 import { CliTools } from "./pages/CliTools";
+import { Mcp } from "./pages/Mcp";
 import { Logs } from "./pages/Logs";
 import { Media } from "./pages/Media";
 import { ProxyPools } from "./pages/ProxyPools";
@@ -28,7 +29,7 @@ import { ui } from "./ui-labels";
 import { hashRoute } from "./url-state";
 import { BUILD, buildLabel, useNewBuild } from "./version";
 
-export type Page = "systems" | "providers" | "combos" | "cli-tools" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
+export type Page = "systems" | "providers" | "combos" | "cli-tools" | "mcp" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
 
 /** Sidebar order, icons and the strings of each page's title in the top bar. */
 const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKey; icon: IconName }[] = [
@@ -36,6 +37,7 @@ const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKe
   { id: "providers", nav: "nav.providers", title: "providers.title", description: "providers.description", icon: "plug" },
   { id: "combos", nav: "nav.combos", title: "combos.title", description: "combos.description", icon: "layers" },
   { id: "cli-tools", nav: "nav.cliTools", title: "cli.title", description: "cli.description", icon: "terminal" },
+  { id: "mcp", nav: "nav.mcp", title: "mcp.title", description: "mcp.description", icon: "bot" },
   { id: "usage", nav: "nav.usage", title: "usage.title", description: "usage.description", icon: "activity" },
   { id: "quota", nav: "nav.quota", title: "quota.title", description: "quota.description", icon: "clock" },
   { id: "token-saver", nav: "nav.tokenSaver", title: "saver.title", description: "saver.description", icon: "zap" },
@@ -51,7 +53,7 @@ const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKe
 
 /** The sidebar's three groups: what the gateway routes, what it reports, and the gateway itself. */
 const GROUPS: { title: StringKey; pages: Page[] }[] = [
-  { title: "nav.title", pages: ["systems", "providers", "combos", "cli-tools"] },
+  { title: "nav.title", pages: ["systems", "providers", "combos", "cli-tools", "mcp"] },
   { title: "nav.insight", pages: ["usage", "quota", "token-saver"] },
   { title: "nav.system", pages: ["media", "proxy-pools", "skills", "logs", "translator", "settings", "pricing"] },
 ];
@@ -258,6 +260,8 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
             )}
             {page === "cli-tools" ? (
               <CliTools tool={cliToolFromHash(hash)} />
+            ) : page === "mcp" ? (
+              <Mcp />
             ) : page === "media" ? (
               <Media tab={/^#\/media\/([a-z-]+)$/.exec(hashRoute(hash))?.[1] ?? null} />
             ) : page === "proxy-pools" ? (

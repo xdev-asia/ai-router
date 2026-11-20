@@ -253,8 +253,8 @@ and Ponytail change how the model answers: fit for coding agents, not for system
 
 `POST /mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server (Streamable HTTP, stateless, JSON
 answers), so Claude Code, Codex, Cursor or any MCP client can check and change the gateway. It takes
-`Authorization: Bearer <MCP token>` or the admin token (no console cookie). Settings > Connect an AI (MCP) in the
-console makes MCP tokens and shows the address and a config per client; each reads the token from the environment
+`Authorization: Bearer <MCP token>` or the admin token (no console cookie). the MCP page of the console (sidebar,
+under CLI tools) makes MCP tokens and shows the three steps to connect a client, with a config per client; each reads the token from the environment
 variable `AI_ROUTER_MCP_TOKEN`.
 
 **MCP tokens** (`xmcp_...`, table `mcp_token`): one per AI client, shown once, only the SHA-256 kept. Each has a level

@@ -367,12 +367,18 @@ describe("settings", () => {
     await waitFor(() => expect(screen.getAllByRole("button", { name: t("common.retry") })).toHaveLength(2));
   });
 
+  async function openMcp() {
+    window.location.hash = "#/mcp";
+    await signIn();
+    await screen.findByText(t("mcp.steps"));
+  }
+
   it("MCP tokens: lists access per group, creates one with its levels and expiry, and shows it once", async () => {
     const day = Math.floor(Date.now() / 1000);
     routes["GET /admin/mcp-tokens"] = () =>
       json([{ id: "t1", name: "Laptop", hint: "Ab12", scopes: { combos: "write", models: "none", systems: "none", connections: "none", usage: "read", settings: "none" }, created_at: day, expires_at: null, last_used_at: null }]);
     routes["POST /admin/mcp-tokens"] = () => json({ id: "t2", name: "CI", hint: "Zz99", token: "xmcp_onceonly", scopes: {}, created_at: day, expires_at: day + 7 * 86400, last_used_at: null }, 201);
-    await openSettings();
+    await openMcp();
     expect(await screen.findByText(`${t("mcp.group.combos")}: ${t("mcp.level.write")} · ${t("mcp.group.usage")}: ${t("mcp.level.read")}`)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: t("mcp.add") }));
     const dialog = await screen.findByRole("dialog", { name: t("mcp.addTitle") });
@@ -394,7 +400,7 @@ describe("settings", () => {
     routes["GET /admin/mcp-tokens"] = () =>
       json([{ id: "t1", name: "Laptop", hint: "Ab12", scopes: { combos: "read", models: "none", systems: "none", connections: "none", usage: "none", settings: "none" }, created_at: 1, expires_at: null, last_used_at: null }]);
     routes["DELETE /admin/mcp-tokens/t1"] = () => new Response(null, { status: 204 });
-    await openSettings();
+    await openMcp();
     fireEvent.click(await screen.findByRole("button", { name: `${t("mcp.col.actions")}: Laptop` }));
     fireEvent.click(await screen.findByRole("menuitem", { name: t("mcp.revoke") }));
     const dialog = await screen.findByRole("alertdialog", { name: t("mcp.revokeTitle", { name: "Laptop" }) });
