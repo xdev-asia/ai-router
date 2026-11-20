@@ -292,7 +292,7 @@ export function chatStreamToMessages(model: string, body: ReadableStream<Uint8Ar
   const it = chatEvents(body)[Symbol.asyncIterator]();
   let started = false;
   let next = 0;
-  let open: { index: number; kind: "thinking" | "text" | "tool"; key?: number } | null = null;
+  let open: { index: number; kind: "thinking" | "text" | "tool"; key?: number | string } | null = null;
   let finish: unknown = null;
   let hadTools = false;
   let usage: unknown = null;
@@ -309,7 +309,7 @@ export function chatStreamToMessages(model: string, body: ReadableStream<Uint8Ar
         send({ type: "content_block_stop", index: open.index });
         open = null;
       };
-      const start = (kind: "thinking" | "text" | "tool", block: Json, key?: number) => {
+      const start = (kind: "thinking" | "text" | "tool", block: Json, key?: number | string) => {
         close();
         open = { index: next++, kind, key };
         send({ type: "content_block_start", index: open.index, content_block: block });
@@ -362,7 +362,8 @@ export function chatStreamToMessages(model: string, body: ReadableStream<Uint8Ar
         }
         for (const tc of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
           if (!isObj(tc)) continue;
-          const key = typeof tc.index === "number" ? tc.index : -1;
+          // By chat `index`; else by id; a chunk with neither continues the open tool call.
+          const key: number | string = typeof tc.index === "number" ? tc.index : str(tc.id) || (open?.kind === "tool" ? (open.key ?? -1) : -1);
           const fn = isObj(tc.function) ? tc.function : {};
           if (open?.kind !== "tool" || open.key !== key) {
             hadTools = true;

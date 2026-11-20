@@ -37,10 +37,13 @@ Any other model or a combo on `/v1/messages` (Claude Code with `ANTHROPIC_MODEL=
 chat, routed like `/v1/chat/completions`, and answered as a Claude message or event stream
 (`worker/translate/anthropic-openai.ts`). Left out on the way: `cache_control`, thinking blocks of earlier turns, and
 server tools such as `web_search_*`, which only Anthropic runs. A combo with a Claude model goes this way too, so it
-loses prompt caching. `count_tokens` for these models is a local estimate, about four characters per token.
+loses prompt caching; an alias of a Claude model (without a `(level)` suffix) is forwarded as sent. `count_tokens` for
+translated models is a local estimate, about four characters per token. Thinking blocks with no signature, which a
+translated answer leaves in the client's history, are removed before a request is forwarded to Anthropic.
 
 A client that goes away before the provider answers ends the provider request: the answer is `499`, no account is set
-aside and no other one is tried.
+aside and no other one is tried. This needs the `enable_request_signal` compatibility flag (in `wrangler.jsonc`) while
+the compatibility date is before 2026-11-17.
 
 ## Secrets and setup
 

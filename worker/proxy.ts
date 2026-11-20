@@ -8,6 +8,7 @@ import { anyOn, applySavers, saversFor } from "./savers";
 import { getTokenSaver } from "./settings";
 import { clientGone } from "./timeouts";
 import { runMessages } from "./messages";
+import { resolveModel } from "./route";
 import { estimateTokens } from "./translate/anthropic-openai";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
@@ -212,6 +213,38 @@ function passthroughTarget(model: string): { provider: ProviderId; model: string
 }
 
 /**
+ * The model to forward as sent, or null to translate. A name that only an alias makes a Claude model (with no
+ * `(level)` suffix, which only the chat router applies) is forwarded too, as the model it stands for.
+ */
+async function forwardedModel(db: D1Database, model: string): Promise<string | null> {
+  if (passthroughTarget(model)) return model;
+  const r = await resolveModel(db, model);
+  const t = r?.ref.kind === "target" && !r.thinking ? r.ref.target : null;
+  if (!t || !passthroughTarget(targetName(t))) return null;
+  return t.provider === PROVIDER ? t.model : targetName(t);
+}
+
+/**
+ * Removes thinking blocks with no signature from earlier assistant turns. A translated turn (messages.ts) makes them;
+ * Anthropic checks the signatures it gets back, so an empty one would make it refuse the request. Signed blocks stay.
+ * True when something was removed.
+ */
+function dropUnsignedThinking(req: Record<string, unknown>): boolean {
+  let dropped = false;
+  for (const m of Array.isArray(req.messages) ? req.messages : []) {
+    if (!m || typeof m !== "object" || (m as { role?: unknown }).role !== "assistant") continue;
+    const content = (m as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    const kept = content.filter((b) => !(b && typeof b === "object" && (b as { type?: unknown }).type === "thinking" && !(b as { signature?: unknown }).signature));
+    if (kept.length !== content.length && kept.length > 0) {
+      (m as { content: unknown[] }).content = kept;
+      dropped = true;
+    }
+  }
+  return dropped;
+}
+
+/**
  * /anthropic forwards Claude models, and the models of the owner's Anthropic-compatible providers
  * (`<id>/<model>`, sent upstream as `<model>`), only those the system may call.
  * A body that is not JSON, or has no model, goes to Anthropic, which answers with its own 400.
@@ -235,10 +268,16 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages", async (c) => {
     const g = await gate(c, true);
     if (!g.ok) return g.res;
-    const raw = await c.req.arrayBuffer();
+    let raw = await c.req.arrayBuffer();
     // Another provider or a combo: translated to chat and back (messages.ts), metered by the chat router.
     const parsed = bodyWithModel(raw);
-    if (parsed && !passthroughTarget(parsed.model)) return runMessages(c, upstream, g.system, parsed);
+    if (parsed) {
+      const forwarded = await forwardedModel(c.env.DB, parsed.model);
+      if (forwarded === null) return runMessages(c, upstream, g.system, parsed);
+      const renamed = forwarded !== parsed.model;
+      if (renamed) parsed.model = forwarded;
+      if (dropUnsignedThinking(parsed) || renamed) raw = encode(parsed);
+    }
     const route = routeOf(c, g.system, raw);
     if ("res" in route) return route.res;
     const { provider } = route;
@@ -284,10 +323,16 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
   r.post("/v1/messages/count_tokens", async (c) => {
     const g = await gate(c, false);
     if (!g.ok) return g.res;
-    const raw = await c.req.arrayBuffer();
+    let raw = await c.req.arrayBuffer();
     // Another provider or a combo: a local estimate (FR-API-05), no provider call.
     const parsed = bodyWithModel(raw);
-    if (parsed && !passthroughTarget(parsed.model)) return Response.json({ input_tokens: estimateTokens(parsed) }, { headers: { "cache-control": "no-store" } });
+    if (parsed) {
+      const forwarded = await forwardedModel(c.env.DB, parsed.model);
+      if (forwarded === null) return Response.json({ input_tokens: estimateTokens(parsed) }, { headers: { "cache-control": "no-store" } });
+      const renamed = forwarded !== parsed.model;
+      if (renamed) parsed.model = forwarded;
+      if (dropUnsignedThinking(parsed) || renamed) raw = encode(parsed);
+    }
     const route = routeOf(c, g.system, raw);
     if ("res" in route) return route.res;
     const up = await sendWithAccounts(c, upstream, g.system, route.provider, "/v1/messages/count_tokens", route.body, false, 0);

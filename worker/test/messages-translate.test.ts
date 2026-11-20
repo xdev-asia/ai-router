@@ -265,6 +265,42 @@ describe("POST /v1/messages to a non-Anthropic model", () => {
   });
 });
 
+describe("POST /v1/messages to an Anthropic-format model", () => {
+  const MESSAGE = { id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage: { input_tokens: 2, output_tokens: 1 } };
+
+  it("an alias of a Claude model is forwarded as sent, with the model it stands for", async () => {
+    const token = await addSystem("chat");
+    await env.DB.prepare("INSERT INTO model_alias (alias, model, updated_at) VALUES ('opus', 'anthropic/claude-opus-5-5', 1)").run();
+    const up = fakeUpstream(() => json(MESSAGE));
+    const body = { model: "opus", max_tokens: 10, system: [{ type: "text", text: "Be brief.", cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: "hi" }] };
+    const { res, text } = await call(up, "/v1/messages", messagesInit(token, body));
+    expect(res.status, text).toBe(200);
+    expect(new URL(up.calls[0]!.url).pathname).toBe("/v1/messages");
+    expect(JSON.parse(up.bodies[0]!)).toEqual({ ...body, model: "claude-opus-5-5" });
+  });
+
+  it("drops thinking blocks with no signature (made by a translated turn) and keeps signed ones", async () => {
+    const token = await addSystem("chat");
+    const up = fakeUpstream(() => json(MESSAGE));
+    const turn = (signature: string) => ({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "plan", signature },
+        { type: "text", text: "ok" },
+      ],
+    });
+    const { res } = await call(
+      up,
+      "/v1/messages",
+      messagesInit(token, { model: "claude-opus-5-5", max_tokens: 10, messages: [{ role: "user", content: "a" }, turn(""), { role: "user", content: "b" }, turn("sig-1"), { role: "user", content: "c" }] }),
+    );
+    expect(res.status).toBe(200);
+    const sent = JSON.parse(up.bodies[0]!);
+    expect(sent.messages[1].content).toEqual([{ type: "text", text: "ok" }]);
+    expect(sent.messages[3].content).toEqual(turn("sig-1").content);
+  });
+});
+
 describe("POST /v1/messages/count_tokens to a non-Anthropic model", () => {
   it("estimates locally: about 4 characters per token, no provider call", async () => {
     const token = await addSystem("app");
