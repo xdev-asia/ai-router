@@ -11,6 +11,7 @@ import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
 import { headroomCompress } from "./headroom";
+import { clientGone } from "./timeouts";
 import { oauthRequestHeaders } from "./oauth";
 import { cloudCodeWire } from "./cloudcode";
 import { OFF, applySavers, saversFor, type Savers } from "./savers";
@@ -69,6 +70,12 @@ const gatewayFailure = (status: number, message: string, code: string, type = "s
   retryAfter: null,
   gateway: true,
 });
+
+/**
+ * The client went away (FR-SEL-18): 499, the nginx code for it. Not the account's fault, so it is not set aside, and
+ * nothing else is tried: no one is waiting for the answer.
+ */
+const clientClosed = (): Attempt => ({ ok: false, res: errorResponse(499, "client closed the request", "invalid_request_error", "client_closed"), status: 499, message: "client closed the request", retryable: false, retryAfter: null, gateway: true });
 
 /** Rebuilds an upstream error (Anthropic or OpenAI shape) as an OpenAI error with the same status. */
 async function failure(up: Response): Promise<Attempt> {
@@ -376,6 +383,7 @@ async function attemptTarget(run: Run, target: Target, req: Json): Promise<Attem
   // A catalog variant (`gpt-6-astra[1m]`) is sent as the model it stands for.
   target = { provider: target.provider, model: upstreamModel(target) };
   for (const cand of await candidatesFor(c.env, target.provider, run.keySystem ?? system.id, now, upstream)) {
+    if (clientGone()) return clientClosed();
     const key = await cand.key();
     if (!key) continue;
     if (typeof key !== "string") {
@@ -420,6 +428,7 @@ async function attemptTarget(run: Run, target: Target, req: Json): Promise<Attem
       }
     } catch (e) {
       if (e instanceof TranslateError) return { ok: false, res: errorResponse(400, e.message, "invalid_request_error"), status: 400, message: e.message, retryable: false, retryAfter: null };
+      if (clientGone()) return clientClosed();
       attempt = { ok: false, res: errorResponse(502, `could not reach ${target.provider}`, "api_error"), status: 502, message: `could not reach ${target.provider}`, retryable: true, retryAfter: null };
     }
     if (attempt.ok) {

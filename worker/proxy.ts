@@ -6,6 +6,7 @@ import { anthropicError } from "./errors";
 import { allowedPatterns, allows, anthropicBase, isCustomProvider, parseModel, providerDef, targetName, type ProviderId } from "./providers";
 import { anyOn, applySavers, saversFor } from "./savers";
 import { getTokenSaver } from "./settings";
+import { clientGone } from "./timeouts";
 import { EMPTY, recordUsage, tokensThisMonth, usageOfMessage, usageOfStream, type Usage } from "./usage";
 
 export type Upstream = (req: Request) => Promise<Response>;
@@ -79,6 +80,7 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
   let keyFailure: Response | null = null;
   const oauth = providerDef(provider).auth === "oauth";
   for (const cand of await candidatesFor(c.env, provider, system.id, now, upstream)) {
+    if (clientGone()) return clientClosed();
     const key = await cand.key();
     if (key && typeof key !== "string") {
       keyFailure ??= authFailure(key);
@@ -92,11 +94,18 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
       await noteFailure(c.env.DB, failed.cand, failed.up.status, await errorMessage(failed.up), retryAfterOf(failed.up), now);
     }
     c.set("connection", cand.connection);
-    let up = await upstream(upstreamRequest(c, provider, path, key, body, oauth));
-    // A subscription token refused before it expired (revoked, or renewed elsewhere): renew it once and send again.
-    if (up.status === 401 && oauth) {
-      const renewed = await cand.key(true);
-      if (typeof renewed === "string") up = await upstream(upstreamRequest(c, provider, path, renewed, body, oauth));
+    let up: Response;
+    try {
+      up = await upstream(upstreamRequest(c, provider, path, key, body, oauth));
+      // A subscription token refused before it expired (revoked, or renewed elsewhere): renew it once and send again.
+      if (up.status === 401 && oauth) {
+        const renewed = await cand.key(true);
+        if (typeof renewed === "string") up = await upstream(upstreamRequest(c, provider, path, renewed, body, oauth));
+      }
+    } catch {
+      if (clientGone()) return clientClosed();
+      // The provider could not be reached: like a 5xx, the account is set aside and the next one is tried.
+      up = Response.json({ type: "error", error: { type: "api_error", message: `could not reach ${provider}` } }, { status: 502 });
     }
     if (!accountFailure(up.status)) {
       c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now).catch(() => undefined));
@@ -117,6 +126,9 @@ async function sendWithAccounts(c: Context<AppEnv>, upstream: Upstream, system: 
   }
   return up;
 }
+
+/** The client went away (FR-SEL-18): no account is set aside and no other one is tried. */
+const clientClosed = () => Response.json({ type: "error", error: { type: "invalid_request_error", message: "client closed the request" } }, { status: 499 });
 
 /** 401: sign in again; 502: the sign-in service is down. The message never holds a token (oauth.ts). */
 const authFailure = (f: { error: string; status: number }) =>
@@ -225,6 +237,8 @@ export function anthropicRoutes(upstream: Upstream): Hono<AppEnv> {
     }
     const up = await sendWithAccounts(c, upstream, g.system, provider, "/v1/messages", body, true, rtkSaved);
     if (!up) return noKey(c, provider);
+    // The client is gone: nothing to meter, no one to answer.
+    if (up.status === 499) return up;
     const headers = responseHeaders(up);
 
     if (!up.body) {
