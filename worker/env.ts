@@ -32,6 +32,8 @@ export interface Env {
   GOOGLE_GEMINI_CLI_CLIENT_ID?: string;
   GOOGLE_GEMINI_CLI_CLIENT_SECRET?: string;
   /** Public and secret: the Google OAuth client Antigravity signs in with. Either unset: the Antigravity provider shows as unavailable. */
+  /** The Codex CLI version the Codex model list is asked for (model-sync.ts); a default is built in. */
+  CODEX_CLIENT_VERSION?: string;
   GOOGLE_ANTIGRAVITY_CLIENT_ID?: string;
   GOOGLE_ANTIGRAVITY_CLIENT_SECRET?: string;
   /** Public: the commit this gateway was built from, set by the Docker image (CI). Unset: a local build, `dev`. */

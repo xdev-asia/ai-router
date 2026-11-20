@@ -1,14 +1,18 @@
-import { useState } from "react";
-import { Banner, Button, Card, Dialog, Field, FormDialog, IconButton, ModelChip, ModelChipAdd, Select, Skeleton, Stack } from "@xdev-asia/ui";
+import { useEffect, useRef, useState } from "react";
+import { Badge, Banner, Button, Card, Dialog, Field, FormDialog, IconButton, ModelChip, ModelChipAdd, Select, Skeleton, Stack } from "@xdev-asia/ui";
 import { ApiError, api, useLoad, type ProviderModel, type ProviderModels as Models } from "../api";
 import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { ui } from "../ui-labels";
+import { formatAgo } from "./Usage";
+
+/** A synced list older than this is fetched again when the card opens. */
+const STALE_S = 6 * 3600;
 
 /** The name a model alias points at, without its `(level)` and `[1m]` markers. */
 const bare = (model: string) => model.replace(/\[1m\]$/i, "").replace(/\([^()]*\)\s*$/, "").replace(/\[1m\]$/i, "");
 
-const LEVELS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const LEVELS = ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const levelLabel = (mode: string) => (LEVELS.includes(mode) ? t(`models.level.${mode}` as StringKey) : mode);
 
 type Pending =
@@ -52,6 +56,32 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
     setDialogError(null);
   };
 
+  const [syncing, setSyncing] = useState(false);
+  /** Fetches the provider's own model list. `auto`: the card opened on a stale list; says nothing unless models were added. */
+  async function sync(auto = false) {
+    setSyncing(true);
+    setError(null);
+    try {
+      const r = await api<{ count: number; added: string[] }>(`/providers/${encodeURIComponent(provider)}/models/sync`, { method: "POST" });
+      if (!auto || r.added.length) notify(t("models.syncDone", { count: String(r.count), added: String(r.added.length) }));
+    } catch (e) {
+      // The failure is kept by the gateway and shown from the reloaded list.
+      if (!auto && !(e instanceof ApiError && (e.status === 401 || e.status === 502 || e.status === 409))) setError(t("error.generic"));
+    } finally {
+      setSyncing(false);
+      reload();
+    }
+  }
+  const autoSynced = useRef(false);
+  useEffect(() => {
+    if (data.status !== "ready" || autoSynced.current) return;
+    const s = data.data.sync;
+    if (!s?.supported || (s.synced_at !== null && Date.now() / 1000 - s.synced_at < STALE_S)) return;
+    autoSynced.current = true;
+    void sync(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   if (data.status !== "ready")
     return (
       <Card title={t("models.title")}>
@@ -62,7 +92,7 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
         )}
       </Card>
     );
-  const { alias, thinking, models } = data.data;
+  const { alias, thinking, models, sync: syncState } = data.data;
   const code = (m: ProviderModel) => `${alias}/${m.id}`;
   const mode = thinking?.mode ?? "auto";
   /** The name copied: with the `(level)` suffix when a Thinking mode is set and the model takes it (FR-MDL-11). */
@@ -135,6 +165,7 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
   return (
     <Card
       title={t("models.title")}
+      subtitle={syncState?.supported ? (syncState.synced_at === null ? t("models.neverSynced") : t("models.syncedAt", { ago: formatAgo(syncState.synced_at, lang) })) : undefined}
       titleAside={
         thinking && (
           <Select
@@ -148,6 +179,11 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
       }
       actions={
         <>
+          {syncState?.supported && (
+            <Button icon="refresh" disabled={syncing || busy} onClick={() => void sync()}>
+              {syncing ? t("models.syncing") : t("models.sync")}
+            </Button>
+          )}
           {off.length > 0 && (
             <Button icon="eye" disabled={busy} onClick={() => void activeAll()}>
               {t("models.activeAll")}
@@ -162,6 +198,7 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
       }
     >
       {error && <Banner tone="danger" title={error} />}
+      {syncState?.error && <Banner tone="warn" title={t("models.syncError", { error: syncState.error })} />}
       <div className="models-list" role="list" aria-label={t("models.title")}>
         {models.map((m) => {
           const a = aliasOf(m);
@@ -170,7 +207,17 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
               <ModelChip
                 code={code(m)}
                 dimmed={m.disabled}
-                name={a ? `${m.name} · ${a}` : m.name}
+                name={
+                  <>
+                    {a ? `${m.name} · ${a}` : m.name}
+                    {m.new && (
+                      <>
+                        {" "}
+                        <Badge status="new">{t("models.new")}</Badge>
+                      </>
+                    )}
+                  </>
+                }
                 codeAction={<IconButton size="sm" icon="copy" label={t("models.copy", { name: copyName(m) })} onClick={() => void copy(m)} />}
                 actions={
                   <>

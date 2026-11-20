@@ -87,6 +87,29 @@ describe("provider models", () => {
     routes["GET /admin/models/aliases"] = () => json({ aliases: { fast: "oa/gpt-x" } });
   });
 
+  it("syncs a stale list when it opens, marks new models, and syncs again on the button", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    let synced: number | null = now - 7 * 3600;
+    routes["GET /admin/providers/openai/models"] = () =>
+      json({ ...MODELS, models: [{ id: "gpt-7", name: "GPT 7", custom: false, disabled: false, synced: true, new: true }, ...MODELS.models], sync: { supported: true, synced_at: synced, error: null } });
+    routes["POST /admin/providers/openai/models/sync"] = () => {
+      synced = Math.floor(Date.now() / 1000);
+      return json({ provider: "openai", count: 3, added: [], removed: [], synced_at: synced });
+    };
+    render(<ProviderModelsCard provider="openai" />);
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST" && c.url === "/admin/providers/openai/models/sync")).toHaveLength(1));
+    expect(await screen.findByText(t("models.new"))).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: t("models.sync") }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST" && c.url === "/admin/providers/openai/models/sync")).toHaveLength(2));
+  });
+
+  it("does not sync a fresh list on its own, and shows the last failure", async () => {
+    routes["GET /admin/providers/openai/models"] = () => json({ ...MODELS, sync: { supported: true, synced_at: Math.floor(Date.now() / 1000) - 60, error: "openai answered 401" } });
+    render(<ProviderModelsCard provider="openai" />);
+    expect(await screen.findByText(t("models.syncError", { error: "openai answered 401" }))).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith("/models/sync"))).toBe(false);
+  });
+
   it("asks before removing a custom model, and names it", async () => {
     routes["DELETE /admin/models/custom"] = () => json({ ok: true });
     render(<ProviderModelsCard provider="openai" />);

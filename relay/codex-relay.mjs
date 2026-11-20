@@ -13,13 +13,19 @@ import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 export const CODEX_UPSTREAM = "https://chatgpt.com/backend-api/codex/responses";
-/** Relay path → method. The same path under the upstream's /backend-api. The `wham` ones feed the quota page. */
+/**
+ * Relay path → method. The same path under the upstream's /backend-api. The `wham` ones feed the quota page;
+ * codex/models the gateway's model sync (the list Codex CLI reads).
+ */
 const ROUTES = {
   "/codex/responses": "POST",
+  "/codex/models": "GET",
   "/wham/usage": "GET",
   "/wham/rate-limit-reset-credits": "GET",
   "/wham/rate-limit-reset-credits/consume": "POST",
 };
+/** Query parameters passed on, per path; every other one is dropped. */
+const QUERY = { "/codex/models": ["client_version"] };
 const SECRET_HEADER = "x-relay-secret";
 /** Request headers sent on: the ones the gateway's codexHeaders sets. Everything else stays here. */
 const REQUEST_HEADERS = ["authorization", "content-type", "accept", "originator", "user-agent", "version", "session_id", "chatgpt-account-id", "openai-beta"];
@@ -45,6 +51,13 @@ export function createRelay({ secret, upstream = CODEX_UPSTREAM, log = (line) =>
 
   return createServer(async (req, res) => {
     const path = (req.url ?? "/").split("?")[0];
+    const given = new URL(req.url ?? "/", "http://relay").searchParams;
+    const query = new URLSearchParams();
+    for (const name of Object.hasOwn(QUERY, path) ? QUERY[path] : []) {
+      const value = given.get(name);
+      if (value !== null) query.set(name, value);
+    }
+    const search = query.size ? `?${query}` : "";
     const started = Date.now();
     res.on("finish", () => log(`${req.method} ${path} ${res.statusCode} ${Date.now() - started}ms`));
 
@@ -73,7 +86,7 @@ export function createRelay({ secret, upstream = CODEX_UPSTREAM, log = (line) =>
 
     let up;
     try {
-      up = await fetch(base + path, { method, headers, body, signal: abort.signal });
+      up = await fetch(base + path + search, { method, headers, body, signal: abort.signal });
     } catch {
       if (!res.headersSent) json(res, 502, { error: "upstream_unreachable" });
       return;

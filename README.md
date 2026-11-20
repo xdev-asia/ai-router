@@ -136,8 +136,9 @@ chatgpt.com answers `403` with an HTML block page to any request that carries a 
 Worker adds that header to every request it sends. So the gateway cannot call Codex itself: it sends the request to
 `relay/codex-relay.mjs`, a small Node server (no dependencies) that runs outside Cloudflare and sends it on.
 
-- It serves `POST /codex/responses` (and `GET /health`), and sends only to
-  `https://chatgpt.com/backend-api/codex/responses`: not an open proxy.
+- It serves `POST /codex/responses`, `GET /codex/models` (model sync; only `client_version` is passed on in the
+  query), the quota page's `/wham/*` calls and `GET /health`, each sent only to the same path under
+  `https://chatgpt.com/backend-api`: not an open proxy.
 - It checks `x-relay-secret` against its `RELAY_SECRET` (at least 32 characters; it does not start without it). A
   wrong or missing secret gets `403` with `x-relay-error: relay_unauthorized`; the gateway reports that as
   `not_configured` and does not set the account aside.
@@ -151,6 +152,22 @@ Worker adds that header to every request it sends. So the gateway cannot call Co
 ([In Docker](#in-docker)); nothing to set. On its own: `RELAY_SECRET=... PORT=8790 node relay/codex-relay.mjs`, behind
 HTTPS when it is on another host (the access token and the secret travel in its headers), with the gateway's
 `CODEX_RELAY_URL` and `CODEX_RELAY_SECRET` pointing at it.
+
+## Model sync
+
+The model lists in `worker/model-catalog.ts` are fixed when the catalog is made. A provider's own list can be synced
+on top of it, so a model it adds (Codex `gpt-6.2-sol`) is listed without a new release (`worker/model-sync.ts`):
+
+- **Codex:** `codex/models?client_version=` on chatgpt.com with the first Codex connection that is on, the list Codex
+  CLI reads, through the Codex relay when one is set. It carries each model's name, thinking levels and context.
+  `CODEX_CLIENT_VERSION` (optional) sets the version asked for; the backend may hide models from older clients.
+- **OpenAI-format providers with a key:** `modelsUrl`, default `baseUrl/models`.
+- Others (Anthropic, which is already read live, and the other sign-ins) are not synced.
+
+The list is kept in D1 (`model_synced`, `model_sync`): models the provider stops listing are dropped, and a model the
+catalog lacks shows **New** for a week. The provider's Available Models card has **Sync from provider** and syncs by
+itself when the list is older than 6 hours; a failure keeps the last list and is shown on the card. Synced models are
+in `/v1/models` too. The `(ultra)` thinking suffix (gpt-6.2) is accepted.
 
 ## Connections: several accounts per provider
 
@@ -265,7 +282,7 @@ never the admin API, and no tool makes MCP tokens. The admin token gets every to
 | Group | Read | Change |
 |---|---|---|
 | `combos` | `list_combos` | `save_combo`, `delete_combo`, `set_combo_settings` |
-| `models` | `list_models`, `list_aliases`, `test_model` | `disable_models`, `enable_models`, `set_alias`, `delete_alias`, `add_custom_model`, `remove_custom_model`, `set_thinking_mode` |
+| `models` | `list_models`, `list_aliases`, `test_model` | `disable_models`, `enable_models`, `set_alias`, `delete_alias`, `add_custom_model`, `remove_custom_model`, `set_thinking_mode`, `sync_models` |
 | `systems` | `list_systems` | `update_system` |
 | `connections` | `list_providers`, `list_connections`, `test_connection`, `get_quota`, `list_custom_providers` | `update_connection`, `reorder_connections`, `set_provider_strategy` |
 | `usage` | `usage_summary`, `usage_requests`, `usage_by_month`, `get_logs` | (read only) |
@@ -322,6 +339,7 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `POST /mcp-tokens` | `{name, scopes: {group: "none" \| "read" \| "write"}, expires_days?: 7 \| 30 \| 90 \| null}` (default 90) | `201` with `token`, once; `400` |
 | `PATCH /mcp-tokens/:id` | `{name?, scopes?}` | the token; `404` |
 | `DELETE /mcp-tokens/:id` | | `204`; `404`. Clients using it lose access at once |
+| `POST /providers/:id/models/sync` | | `{provider, count, added, removed, synced_at}`; `400 not_supported`, `409 no_connection`, `502 sync_failed` with `message` (the last list stays) |
 | `GET /custom-providers` | | `[{id, name, format, base_url, created_at, updated_at}]` |
 | `POST /custom-providers` | `{id, name, format: "openai" \| "anthropic", base_url}` (https, no credentials or query) | `201`; `400`; `409 taken` for a built-in id or prefix |
 | `PATCH /custom-providers/:id` | `{name?, format?, base_url?}` | the provider; `404` |

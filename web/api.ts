@@ -194,6 +194,10 @@ export interface ProviderModel {
   /** The thinking levels the model takes. */
   thinking?: string[];
   context?: number;
+  /** In the provider's own list, as last synced. */
+  synced?: boolean;
+  /** Synced, not in the catalog, first seen within a week. */
+  new?: boolean;
 }
 
 /** A provider's Available Models card: its prefix, its Thinking mode and its models. */
@@ -202,6 +206,8 @@ export interface ProviderModels {
   alias: string;
   thinking: { options: string[]; mode: string } | null;
   models: ProviderModel[];
+  /** Whether the provider's own list can be synced, when it last was, and the last failure. */
+  sync?: { supported: boolean; synced_at: number | null; error: string | null };
 }
 
 /** One account at a provider. The key itself never reaches the console: only its last 4 characters. */
