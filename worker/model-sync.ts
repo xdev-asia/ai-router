@@ -6,6 +6,8 @@
  * - Codex: chatgpt.com's `codex/models?client_version=` with the account's token, the list Codex CLI reads
  *   (openai/codex, codex-rs/codex-api/src/endpoint/models.rs). Through the Codex relay when one is set.
  * - OpenAI-format providers with an API key: `modelsUrl` (default `baseUrl/models`) with the key.
+ * - GitHub Copilot: its `/models` with the Copilot token. Only the chat models the account may call through
+ *   `/chat/completions` (readCopilotModels).
  * Anything else (Anthropic has its own live list, sign-ins without a list) is not synced.
  */
 import { candidatesFor } from "./connections";
@@ -38,7 +40,7 @@ export interface SyncState {
 /** Whether `provider` has a model list this gateway can read. */
 export function syncSupported(provider: ProviderId): boolean {
   const def = providerDef(provider);
-  if (def.format === "codex") return true;
+  if (def.format === "codex" || provider === "github") return true;
   return def.format === "openai" && def.auth !== "oauth" && typeof (def.modelsUrl ?? def.baseUrl) === "string";
 }
 
@@ -71,6 +73,26 @@ export function readOpenAIModels(body: unknown): SyncedModel[] | null {
   return out;
 }
 
+/**
+ * Copilot's `{data: [...]}`: chat models (`capabilities.type`), not turned off for the account (`policy.state`), that
+ * `/chat/completions` serves (`supported_endpoints`, absent on older models). The gateway sends Copilot only there,
+ * so a model served on `/responses` alone would fail.
+ */
+export function readCopilotModels(body: unknown): SyncedModel[] | null {
+  if (!isObj(body) || !Array.isArray(body.data)) return null;
+  const out: SyncedModel[] = [];
+  for (const m of body.data) {
+    if (!isObj(m) || typeof m.id !== "string" || !isModelName(m.id)) continue;
+    const caps = isObj(m.capabilities) ? m.capabilities : {};
+    if (caps.type !== "chat") continue;
+    if (isObj(m.policy) && m.policy.state === "disabled") continue;
+    if (Array.isArray(m.supported_endpoints) && !m.supported_endpoints.includes("/chat/completions")) continue;
+    const context = num(isObj(caps.limits) ? caps.limits.max_context_window_tokens : undefined);
+    out.push({ id: m.id, name: typeof m.name === "string" && m.name.trim() ? m.name.trim().slice(0, 100) : m.id, ...(context ? { context } : {}) });
+  }
+  return out;
+}
+
 type Fetched = { ok: true; models: SyncedModel[] } | { ok: false; status: 400 | 409 | 502; message: string };
 
 async function fetchCodex(env: Env, upstream: Fetch): Promise<Fetched> {
@@ -96,7 +118,7 @@ async function fetchOpenAI(env: Env, upstream: Fetch, provider: ProviderId): Pro
       break;
     }
   }
-  if (!key) return { ok: false, status: 409, message: `no key for ${provider}: add a connection first` };
+  if (!key) return { ok: false, status: 409, message: provider === "github" ? "no GitHub Copilot sign-in that is on: sign in on the Providers page first" : `no key for ${provider}: add a connection first` };
   let res: Response;
   try {
     res = await upstream(new Request(url, { headers: { ...def.headers, authorization: `Bearer ${key}`, accept: "application/json" } }));
@@ -104,7 +126,8 @@ async function fetchOpenAI(env: Env, upstream: Fetch, provider: ProviderId): Pro
     return { ok: false, status: 502, message: `could not reach ${provider}` };
   }
   if (!res.ok) return { ok: false, status: 502, message: `${provider} answered ${res.status}` };
-  const models = readOpenAIModels(await res.json().catch(() => null));
+  const body: unknown = await res.json().catch(() => null);
+  const models = provider === "github" ? readCopilotModels(body) : readOpenAIModels(body);
   return models ? { ok: true, models } : { ok: false, status: 502, message: `${provider}'s model list was not in the expected shape` };
 }
 

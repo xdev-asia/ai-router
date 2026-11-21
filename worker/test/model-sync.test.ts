@@ -119,6 +119,75 @@ describe("model sync: OpenAI-format providers", () => {
   });
 });
 
+describe("model sync: GitHub Copilot", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+  const chatModel = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: id.toUpperCase(),
+    object: "model",
+    capabilities: { type: "chat", family: id, limits: { max_context_window_tokens: 128000 } },
+    ...extra,
+  });
+  // The shape of api.githubcopilot.com/models, as a free plan sees it: most models off by policy.
+  const COPILOT_MODELS = {
+    data: [
+      chatModel("gpt-4.1", { policy: { state: "enabled" } }),
+      chatModel("gpt-4o"),
+      chatModel("claude-haiku-4.5", { policy: { state: "enabled" }, supported_endpoints: ["/chat/completions", "/v1/messages"] }),
+      chatModel("claude-opus-5.5", { policy: { state: "disabled" }, supported_endpoints: ["/v1/messages", "/chat/completions"] }),
+      chatModel("gpt-6-luna", { policy: { state: "enabled" }, supported_endpoints: ["/responses", "ws:/responses"] }),
+      { id: "text-embedding-3-small", object: "model", capabilities: { type: "embeddings" } },
+    ],
+  };
+
+  /** GitHub's sign-in, then Copilot's model list. */
+  function copilot(list: () => Response = () => json(COPILOT_MODELS)): FakeUpstream {
+    return fakeUpstream((req) => {
+      if (req.url === "https://github.com/login/device/code") return json({ device_code: "fake-device", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 });
+      if (req.url === "https://github.com/login/oauth/access_token") return json({ access_token: "fake-gh-at-1", token_type: "bearer" });
+      if (req.url === "https://api.github.com/copilot_internal/v2/token") return json({ token: "fake-copilot-1", expires_at: now() + 1500 });
+      if (req.url === "https://api.github.com/user") return json({ id: 42, login: "octo" });
+      if (req.url === "https://api.githubcopilot.com/models") return list();
+      return json({ message: "unexpected" }, 404);
+    });
+  }
+  async function signIn(): Promise<void> {
+    const up = copilot();
+    const d = JSON.parse((await adminCall(up, "POST", "/oauth/github/start")).text) as { id: string };
+    const r = await adminCall(up, "POST", "/oauth/github/poll", { id: d.id });
+    expect(r.res.status, r.text).toBe(201);
+  }
+
+  it("reads Copilot's /models with the Copilot token, keeping the chat models the account may call", async () => {
+    await signIn();
+    expect((await models("github")).sync.supported).toBe(true);
+    const up = copilot();
+    const r = await adminCall(up, "POST", "/providers/github/models/sync");
+    expect(r.res.status, r.text).toBe(200);
+    const call = up.calls.find((c) => c.url === "https://api.githubcopilot.com/models")!;
+    expect(call.headers.get("authorization")).toBe("Bearer fake-copilot-1");
+    expect(call.headers.get("copilot-integration-id")).toBe("vscode-chat");
+    const synced = (await models("github")).models.filter((m: { synced?: boolean }) => m.synced);
+    expect(synced.map((m: { id: string }) => m.id).sort()).toEqual(["claude-haiku-4.5", "gpt-4.1", "gpt-4o"]);
+    expect(synced.find((m: { id: string }) => m.id === "gpt-4.1")).toMatchObject({ name: "GPT-4.1", context: 128000, new: true });
+  });
+
+  it("without a GitHub sign-in: 409", async () => {
+    const r = await adminCall(copilot(), "POST", "/providers/github/models/sync");
+    expect(r.res.status).toBe(409);
+  });
+
+  it("keeps the last list when Copilot refuses", async () => {
+    await signIn();
+    await adminCall(copilot(), "POST", "/providers/github/models/sync");
+    const r = await adminCall(copilot(() => json({ error: { message: "nope" } }, 500)), "POST", "/providers/github/models/sync");
+    expect(r.res.status).toBe(502);
+    const m = await models("github");
+    expect(m.sync.error).toContain("500");
+    expect(m.models.filter((x: { synced?: boolean }) => x.synced)).toHaveLength(3);
+  });
+});
+
 describe("synced models elsewhere", () => {
   it("/v1/models lists them for a system allowed the provider", async () => {
     await codexConnection();

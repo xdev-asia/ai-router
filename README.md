@@ -162,6 +162,8 @@ on top of it, so a model it adds (Codex `gpt-6.2-sol`) is listed without a new r
   CLI reads, through the Codex relay when one is set. It carries each model's name, thinking levels and context.
   `CODEX_CLIENT_VERSION` (optional) sets the version asked for; the backend may hide models from older clients.
 - **OpenAI-format providers with a key:** `modelsUrl`, default `baseUrl/models`.
+- **GitHub Copilot:** its `/models` with the Copilot token. Only chat models the account's plan does not turn off
+  (`policy.state`) and that `/chat/completions` serves: the gateway sends Copilot nothing else.
 - Others (Anthropic, which is already read live, and the other sign-ins) are not synced.
 
 The list is kept in D1 (`model_synced`, `model_sync`): models the provider stops listing are dropped, and a model the
