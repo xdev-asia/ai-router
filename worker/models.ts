@@ -2,7 +2,7 @@ import type { System } from "./auth";
 import { candidatesFor } from "./connections";
 import type { Env } from "./env";
 import { CATALOG } from "./model-catalog";
-import { allSynced } from "./model-sync";
+import { allSynced, staleCatalog } from "./model-sync";
 import { ANTHROPIC_VERSION, PROVIDERS, aliasOf, providerIds, allowedPatterns, allows, hasEnvKey, parseModel, targetName, type ProviderId, type Target } from "./providers";
 
 /**
@@ -214,7 +214,9 @@ export async function listModels(env: Env, upstream: (req: Request) => Promise<R
   for (const p of ids) {
     // Skips the providers the allow-list cannot reach (and Anthropic's call with them).
     if (!patterns.some((x) => x === "*" || x.startsWith(`${p}/`))) continue;
-    let models: readonly ModelInfo[] = CATALOG[p]?.models ?? [];
+    // Catalog models the provider's last sync no longer lists are left out (model-sync.ts, staleCatalog).
+    const stale = new Set(staleCatalog(p, new Set(synced.filter((m) => m.provider === p).map((m) => m.model))));
+    let models: readonly ModelInfo[] = (CATALOG[p]?.models ?? []).filter((m) => !stale.has(m.id));
     if (p === "anthropic" && active.has(p)) models = (await anthropicModels(env, upstream, system, now)) ?? models;
     for (const m of models) entry({ provider: p, model: m.id }, m);
     for (const m of custom) if (m.provider === p) entry({ provider: p, model: m.model });

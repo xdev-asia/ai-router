@@ -540,6 +540,7 @@ export const vi: Record<keyof typeof en, string> = {
   "models.syncing": "Đang đồng bộ…",
   "models.syncedAt": "Đồng bộ từ provider {ago}",
   "models.neverSynced": "Chưa đồng bộ từ provider",
+  "models.hiddenStale": "Đã ẩn {n} model cũ mà provider không còn cung cấp",
   "models.syncDone": "{count} model từ provider, {added} model mới",
   "models.syncError": "Lần đồng bộ trước lỗi: {error}",
   "models.new": "Mới",

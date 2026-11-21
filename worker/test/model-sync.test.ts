@@ -199,6 +199,51 @@ describe("synced models elsewhere", () => {
     expect(ids).toContain("cx/gpt-6.2-sol");
   });
 
+  describe("catalog models the provider no longer lists", () => {
+    async function groqSynced(data: { id: string }[]): Promise<string> {
+      const c = await adminCall(fakeUpstream(() => json({})), "POST", "/connections", { provider: "groq", name: "main", api_key: "gsk_test_000011112222" });
+      expect(c.res.status, c.text).toBe(201);
+      const r = await adminCall(fakeUpstream(() => json({ object: "list", data })), "POST", "/providers/groq/models/sync");
+      expect(r.res.status, r.text).toBe(200);
+      const token = await addSystem("app");
+      await env.DB.prepare("UPDATE system SET allowed_models = ? WHERE id = ?").bind(JSON.stringify(["groq/*"]), "app").run();
+      return token;
+    }
+    const listed = async (provider: string) => (await models(provider)).models.map((m: { id: string }) => m.id);
+    const v1 = async (token: string) => (JSON.parse((await call(fakeUpstream(() => json({})), "/v1/models", { headers: { authorization: `Bearer ${token}` } })).text).data as { id: string }[]).map((x) => x.id);
+
+    it("are listed in full before any sync", async () => {
+      expect(await listed("groq")).toEqual(expect.arrayContaining(["llama-3.3-70b-versatile", "qwen/qwen3-32b", "openai/gpt-oss-120b"]));
+    });
+
+    it("are hidden from the provider's card and /v1/models once a sync leaves them out", async () => {
+      const token = await groqSynced([{ id: "openai/gpt-oss-120b" }, { id: "qwen/qwen3.8-27b" }]);
+      const ids = await listed("groq");
+      expect(ids).toContain("openai/gpt-oss-120b");
+      expect(ids).toContain("qwen/qwen3.8-27b");
+      expect(ids).not.toContain("llama-3.3-70b-versatile");
+      expect(ids).not.toContain("qwen/qwen3-32b");
+      expect((await models("groq")).sync.hidden).toEqual(["llama-3.3-70b-versatile", "meta-llama/llama-4-maverick-17b-128e-instruct", "qwen/qwen3-32b"]);
+      const all = await v1(token);
+      expect(all).toContain("groq/openai/gpt-oss-120b");
+      expect(all).not.toContain("groq/llama-3.3-70b-versatile");
+    });
+
+    it("an empty list from the provider hides nothing", async () => {
+      await groqSynced([]);
+      expect(await listed("groq")).toContain("llama-3.3-70b-versatile");
+      expect((await models("groq")).sync.hidden).toEqual([]);
+    });
+
+    it("Codex keeps its catalog: its list leaves out variants that still answer", async () => {
+      await codexConnection();
+      await adminCall(fakeUpstream(() => json(CODEX_MODELS)), "POST", "/providers/codex/models/sync");
+      const ids = await listed("codex");
+      expect(ids).toContain("gpt-6-sol[1m]");
+      expect((await models("codex")).sync.hidden).toEqual([]);
+    });
+  });
+
   it("the (ultra) suffix is a thinking level", () => {
     expect(stripMarkers("codex/gpt-6.2-sol(ultra)")).toEqual({ model: "codex/gpt-6.2-sol", thinking: { mode: "level", level: "ultra" } });
   });

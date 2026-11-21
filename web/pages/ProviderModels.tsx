@@ -165,7 +165,13 @@ export function ProviderModelsCard({ provider }: { provider: string }) {
   return (
     <Card
       title={t("models.title")}
-      subtitle={syncState?.supported ? (syncState.synced_at === null ? t("models.neverSynced") : t("models.syncedAt", { ago: formatAgo(syncState.synced_at, lang) })) : undefined}
+      subtitle={
+        syncState?.supported
+          ? syncState.synced_at === null
+            ? t("models.neverSynced")
+            : [t("models.syncedAt", { ago: formatAgo(syncState.synced_at, lang) }), syncState.hidden?.length ? t("models.hiddenStale", { n: String(syncState.hidden.length) }) : null].filter(Boolean).join(" · ")
+          : undefined
+      }
       titleAside={
         thinking && (
           <Select

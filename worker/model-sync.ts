@@ -35,6 +35,21 @@ export interface SyncState {
   supported: boolean;
   synced_at: number | null;
   error: string | null;
+  /** Catalog models the last sync no longer lists, left out of the lists (staleCatalog). */
+  hidden: string[];
+}
+
+/** Providers whose own list leaves out models that still answer (Codex: the `[1m]` and `-review` variants). */
+const PARTIAL_LIST: ReadonlySet<string> = new Set(["codex"]);
+
+/**
+ * The catalog models of `provider` that its synced list (`synced`, model ids as the provider names them) no longer
+ * has: the provider retired them, so they are left out of the console's card and /v1/models. Nothing before a sync,
+ * after a sync that listed nothing, or for a provider whose list is partial.
+ */
+export function staleCatalog(provider: string, synced: ReadonlySet<string>): string[] {
+  if (synced.size === 0 || PARTIAL_LIST.has(provider)) return [];
+  return (CATALOG[provider as ProviderId]?.models ?? []).filter((m) => !synced.has(m.upstream ?? m.id)).map((m) => m.id);
 }
 
 /** Whether `provider` has a model list this gateway can read. */
@@ -184,7 +199,12 @@ export async function syncedModels(db: D1Database, provider: ProviderId): Promis
       ...(r.context ? { context: r.context } : {}),
       new: !catalog.has(r.model) && now - r.first_seen < NEW_FOR_S,
     })),
-    state: { supported: syncSupported(provider), synced_at: state?.synced_at ?? null, error: state?.error ?? null },
+    state: {
+      supported: syncSupported(provider),
+      synced_at: state?.synced_at ?? null,
+      error: state?.error ?? null,
+      hidden: staleCatalog(provider, new Set(rows.results.map((r) => r.model))),
+    },
   };
 }
 

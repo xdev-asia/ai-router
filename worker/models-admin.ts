@@ -60,13 +60,15 @@ export function modelRoutes(a: Hono<AppEnv>, upstream: Upstream): void {
       return s ? { ...m, synced: true, ...(!m.thinking && s.thinking ? { thinking: s.thinking } : {}), ...(!m.context && s.context ? { context: s.context } : {}) } : m;
     };
     const known = new Set([...own, ...(cat?.models ?? []).map((m) => m.id)]);
+    // Catalog models the provider no longer lists are left out (model-sync.ts, staleCatalog).
+    const hidden = new Set(sync.state.hidden);
     const models = [
       ...sync.models
         .filter((m) => !known.has(m.id))
         .map((m) => ({ id: m.id, name: m.name, custom: false, disabled: off(m.id), synced: true, new: m.new, ...(m.thinking ? { thinking: m.thinking } : {}), ...(m.context ? { context: m.context } : {}) })),
       ...custom.map((m) => fill({ id: m.model, name: m.name ?? m.model, custom: true, disabled: off(m.model) })),
       ...(cat?.models ?? [])
-        .filter((m) => !own.has(m.id))
+        .filter((m) => !own.has(m.id) && !hidden.has(m.id))
         .map((m) =>
           fill({
             id: m.id,

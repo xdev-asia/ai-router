@@ -110,6 +110,13 @@ describe("provider models", () => {
     expect(calls.some((c) => c.url.endsWith("/models/sync"))).toBe(false);
   });
 
+  it("says how many older catalog models the last sync hid", async () => {
+    routes["GET /admin/providers/openai/models"] = () =>
+      json({ ...MODELS, sync: { supported: true, synced_at: Math.floor(Date.now() / 1000) - 60, error: null, hidden: ["gpt-old", "gpt-older"] } });
+    render(<ProviderModelsCard provider="openai" />);
+    expect(await screen.findByText(t("models.hiddenStale", { n: "2" }), { exact: false })).toBeTruthy();
+  });
+
   it("asks before removing a custom model, and names it", async () => {
     routes["DELETE /admin/models/custom"] = () => json({ ok: true });
     render(<ProviderModelsCard provider="openai" />);

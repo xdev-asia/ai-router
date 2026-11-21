@@ -538,6 +538,7 @@ export const en = {
   "models.syncing": "Syncing…",
   "models.syncedAt": "Synced from the provider {ago}",
   "models.neverSynced": "Not synced from the provider yet",
+  "models.hiddenStale": "{n} older models the provider no longer lists are hidden",
   "models.syncDone": "{count} models from the provider, {added} new",
   "models.syncError": "Last sync failed: {error}",
   "models.new": "New",

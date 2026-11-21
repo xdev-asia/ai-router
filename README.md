@@ -171,6 +171,10 @@ catalog lacks shows **New** for a week. The provider's Available Models card has
 itself when the list is older than 6 hours; a failure keeps the last list and is shown on the card. Synced models are
 in `/v1/models` too. The `(ultra)` thinking suffix (gpt-6.2) is accepted.
 
+Once a sync lists at least one model, catalog models the provider no longer lists (retired, or off for the account's
+plan, as on Copilot) are left out of the card and of `/v1/models`; the card says how many (`sync.hidden`). Codex
+keeps its whole catalog: its list leaves out the `[1m]` and `-review` variants, which still answer.
+
 ## Connections: several accounts per provider
 
 A connection is one account at a provider, added
