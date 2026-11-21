@@ -234,6 +234,12 @@ describe("testing a connection", () => {
     expect(now() - Number(r!.last_error_at)).toBeLessThanOrEqual(2);
   });
 
+  it("reads a refusal Google wraps in an array", async () => {
+    const a = await connect("gemini", "a", "AIza-test-0001");
+    const up = fakeUpstream(() => json([{ error: { code: 400, message: "API key not valid.", status: "INVALID_ARGUMENT" } }], 400));
+    expect(JSON.parse((await test(up, a)).text)).toEqual({ ok: false, status: 400, message: "API key not valid." });
+  });
+
   it("tests an Anthropic key the Anthropic way", async () => {
     const a = await connect("anthropic", "a", "sk-ant-conn-0001");
     const up = fakeUpstream(() => json({ data: [] }));

@@ -3,6 +3,7 @@ import { ANTHROPIC_VERSION, anthropicBase, isProvider, providerDef, providerKey,
 import { oauthToken } from "./oauth";
 import { open, seal } from "./secret-box";
 import { checkRequest } from "./wire";
+import { errorBody } from "./errors";
 
 /**
  * Provider accounts managed from the console:
@@ -255,7 +256,7 @@ export async function checkKey(env: Env, upstream: (req: Request) => Promise<Res
     return { ok: false, status: 502, message: `could not reach ${provider}` };
   }
   if (up.ok) return { ok: true };
-  const body = (await up.json().catch(() => null)) as { error?: { message?: unknown } | string; message?: unknown } | null;
+  const body = errorBody(await up.json().catch(() => null)) as { error?: { message?: unknown } | string; message?: unknown } | null;
   const e = body?.error;
   const message = typeof e === "string" ? e : typeof e?.message === "string" ? e.message : typeof body?.message === "string" ? body.message : `upstream error ${up.status}`;
   // A provider that echoes the key back in its error must not get it into an answer.

@@ -141,6 +141,16 @@ describe("OpenAI-compatible providers", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(JSON.parse(text).error).toMatchObject({ message: "bad model", code: "model_not_found" });
   });
+
+  it("reads an error Google's OpenAI-compatible endpoint wraps in an array", async () => {
+    const token = await addSystem("chat");
+    await allow("chat", ["openai/*"]);
+    const gone = "This model models/gemini-2.5-flash is no longer available to new users.";
+    const up = fakeUpstream(() => json([{ error: { code: 404, message: gone, status: "NOT_FOUND" } }], 404));
+    const { res, text } = await call(up, "/openai/v1/chat/completions", chat(token, hi("openai/nope")));
+    expect(res.status).toBe(404);
+    expect(JSON.parse(text).error.message).toBe(gone);
+  });
 });
 
 describe("combos", () => {

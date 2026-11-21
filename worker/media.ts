@@ -8,6 +8,7 @@ import { PROVIDERS, allowedPatterns, allows, hasEnvKey, isModelName, parseModel,
 import { checkSystem, record, type GateFailure, type Upstream } from "./proxy";
 import { errorResponse } from "./route";
 import { EMPTY, type Usage } from "./usage";
+import { errorBody } from "./errors";
 
 /**
  * Media endpoints (embeddings, images, video, speech and transcription): passed through to an
@@ -56,7 +57,7 @@ function bodyFor(b: Body, model: string): { body: BodyInit; contentType: string 
 }
 
 async function errorMessage(up: Response): Promise<string> {
-  const body = (await up.clone().json().catch(() => null)) as { error?: { message?: unknown } | string } | null;
+  const body = errorBody(await up.clone().json().catch(() => null)) as { error?: { message?: unknown } | string } | null;
   const e = body?.error;
   return typeof e === "string" ? e : typeof e?.message === "string" ? e.message : `upstream error ${up.status}`;
 }

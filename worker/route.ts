@@ -17,6 +17,7 @@ import { cloudCodeWire } from "./cloudcode";
 import { OFF, applySavers, saversFor, type Savers } from "./savers";
 import { getTokenSaver } from "./settings";
 import { responsesBody, wireFor, type Wire } from "./wire";
+import { errorBody } from "./errors";
 import { appliesTo, audiosIn, describeRequest, getAdapter, imagesIn, replaceAudio, replaceImages, transcribeRequest, type AdapterKind } from "./vision";
 import {
   FUSION_DEFAULTS,
@@ -79,7 +80,7 @@ const clientClosed = (): Attempt => ({ ok: false, res: errorResponse(499, "clien
 
 /** Rebuilds an upstream error (Anthropic or OpenAI shape) as an OpenAI error with the same status. */
 async function failure(up: Response): Promise<Attempt> {
-  const body = (await up.json().catch(() => ({}))) as { error?: { type?: unknown; message?: unknown; code?: unknown } | string; detail?: unknown; message?: unknown };
+  const body = (errorBody(await up.json().catch(() => null)) ?? {}) as { error?: { type?: unknown; message?: unknown; code?: unknown } | string; detail?: unknown; message?: unknown };
   const e = typeof body.error === "object" && body.error ? body.error : {};
   // `detail`: how the ChatGPT backend (Codex) words its refusals; a top-level `message`: AWS (Bedrock).
   const message =
