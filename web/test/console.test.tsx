@@ -4,6 +4,7 @@ import { App, pageFromHash, providerFromHash } from "../App";
 import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
 import { apiOf } from "../pages/Endpoint";
+import { timeoutsBody, timeoutsDraft } from "../pages/Combos";
 import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
 import { clientLogo, providerLogo } from "../provider-logos";
@@ -546,6 +547,35 @@ describe("combos", () => {
     fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
     await waitFor(() =>
       expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/combos/fast", body: { name: "quick", targets: ["claude-haiku-5-5", "groq/llama"] } }),
+    );
+  });
+});
+
+describe("combo timeouts (FR-CTO-11)", () => {
+  it("timeoutsBody: empty is the gateway setting, 0 or 10 to 3600 are kept, anything else is refused", () => {
+    expect(timeoutsBody({ first_byte_s: "", idle_s: " " })).toEqual({ timeouts: null });
+    expect(timeoutsBody({ first_byte_s: "20", idle_s: "0" })).toEqual({ timeouts: { first_byte_s: 20, idle_s: 0 } });
+    expect(timeoutsBody({ first_byte_s: "3600", idle_s: "" })).toEqual({ timeouts: { first_byte_s: 3600 } });
+    expect(timeoutsBody({ first_byte_s: "5", idle_s: "1.5" })).toEqual({ bad: ["first_byte_s", "idle_s"] });
+    expect(timeoutsBody({ first_byte_s: "3601", idle_s: "-10" })).toEqual({ bad: ["first_byte_s", "idle_s"] });
+    expect(timeoutsDraft({ name: "x", targets: [], updated_at: 1, timeouts: { idle_s: 0 } })).toEqual({ first_byte_s: "", idle_s: "0" });
+    expect(timeoutsDraft(null)).toEqual({ first_byte_s: "", idle_s: "" });
+  });
+
+  it("the dialog shows a bad limit on its field and sends nothing, then sends the limits it was given", async () => {
+    window.location.hash = "#/combos";
+    await signIn();
+    await screen.findByText("fast");
+    fireEvent.click(await screen.findByRole("button", { name: t("combos.editOne", { name: "fast" }) }));
+    const first = screen.getByLabelText(t("combos.timeoutFirstByte"));
+    fireEvent.change(first, { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    expect(await screen.findByText(t("prefs.timeoutInvalid"))).toBeTruthy();
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    fireEvent.change(first, { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.save") }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PUT" && c.url === "/admin/combos/fast")).toMatchObject({ body: { timeouts: { first_byte_s: 20 } } }),
     );
   });
 });

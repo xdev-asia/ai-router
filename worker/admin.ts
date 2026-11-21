@@ -25,7 +25,7 @@ import { modelRoutes } from "./models-admin";
 import { visionAdapterRoutes } from "./vision";
 import { translatorRoutes } from "./translator";
 import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
-import { TIMEOUTS_HINT, getTimeouts, mergeTimeouts, saveTimeouts } from "./timeouts";
+import { COMBO_TIMEOUTS_HINT, TIMEOUTS_HINT, getTimeouts, mergeTimeouts, readTimeoutsPatch, saveTimeouts, timeoutsPatch } from "./timeouts";
 import { STRATEGIES, configError, getComboSettings, isStrategy as isComboStrategy, mergeComboSettings, readConfig, resetCombo, saveComboSettings } from "./combo-strategy";
 import { currentMonth, monthRange } from "./usage";
 import { QUOTA_PROVIDERS, consumeResetCredit, codexResetCredits, fetchQuota, getHiddenRows, isQuotaProvider, quotaConnection, setHiddenRows } from "./quota";
@@ -175,7 +175,14 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
    * `combo/<name>` or the bare name of another combo; a combo may be empty (calling it is a 400, FR-CMB-31).
    */
   a.get("/combos", async (c) => {
-    const r = await c.env.DB.prepare("SELECT name, targets, updated_at, strategy, config FROM combo ORDER BY name").all<{ name: string; targets: string; updated_at: number; strategy: string | null; config: string | null }>();
+    const r = await c.env.DB.prepare("SELECT name, targets, updated_at, strategy, config, timeouts FROM combo ORDER BY name").all<{
+      name: string;
+      targets: string;
+      updated_at: number;
+      strategy: string | null;
+      config: string | null;
+      timeouts: string | null;
+    }>();
     return c.json(
       r.results.map((x) => ({
         name: x.name,
@@ -183,6 +190,7 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
         updated_at: x.updated_at,
         strategy: isComboStrategy(x.strategy) ? x.strategy : null,
         config: x.config ? readConfig(x.config) : null,
+        timeouts: readTimeoutsPatch(x.timeouts),
       })),
     );
   });
@@ -201,6 +209,14 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
     return { strategy, config };
   };
 
+  /** A combo's own timeouts from a POST/PUT body, as the stored column. Absent keeps `current` (FR-CTO-07, 08). */
+  const timeoutsInput = (b: Record<string, unknown>, current: string | null): { timeouts: string | null } | { error: string } => {
+    if (!("timeouts" in b)) return { timeouts: current };
+    const p = timeoutsPatch(b.timeouts);
+    if (p === "bad") return { error: COMBO_TIMEOUTS_HINT };
+    return { timeouts: p ? JSON.stringify(p) : null };
+  };
+
   /** Creates a combo; a name already taken is `400 "Combo name already exists"` (FR-CMB-02). */
   a.post("/combos", async (c) => {
     const b = await readJson(c.req.raw);
@@ -211,9 +227,13 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
     if (bad) return c.json({ error: "invalid_input", hint: bad }, 400);
     const st = strategyInput(b!, { strategy: null, config: null });
     if ("error" in st) return c.json({ error: "invalid_input", hint: st.error }, 400);
+    const to = timeoutsInput(b!, null);
+    if ("error" in to) return c.json({ error: "invalid_input", hint: to.error }, 400);
     const now = Math.floor(Date.now() / 1000);
-    await c.env.DB.prepare("INSERT INTO combo (name, targets, updated_at, strategy, config) VALUES (?, ?, ?, ?, ?)").bind(name, JSON.stringify(b!.targets), now, st.strategy, st.config).run();
-    return c.json({ name, targets: b!.targets, updated_at: now, strategy: st.strategy, config: st.config ? readConfig(st.config) : null }, 201);
+    await c.env.DB.prepare("INSERT INTO combo (name, targets, updated_at, strategy, config, timeouts) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(name, JSON.stringify(b!.targets), now, st.strategy, st.config, to.timeouts)
+      .run();
+    return c.json({ name, targets: b!.targets, updated_at: now, strategy: st.strategy, config: st.config ? readConfig(st.config) : null, timeouts: readTimeoutsPatch(to.timeouts) }, 201);
   });
 
   /** Replaces a combo's members (creating it when missing). `name` in the body renames it; members of other combos follow. */
@@ -226,18 +246,22 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
     const bad = comboInputError(name, b?.targets, combos, old);
     if (bad) return c.json({ error: "invalid_input", hint: bad }, 400);
     const targets = b!.targets as string[];
-    const current = (await c.env.DB.prepare("SELECT strategy, config FROM combo WHERE name = ?").bind(old).first<{ strategy: string | null; config: string | null }>()) ?? { strategy: null, config: null };
+    const current = (await c.env.DB.prepare("SELECT strategy, config, timeouts FROM combo WHERE name = ?")
+      .bind(old)
+      .first<{ strategy: string | null; config: string | null; timeouts: string | null }>()) ?? { strategy: null, config: null, timeouts: null };
     const st = strategyInput(b!, current);
     if ("error" in st) return c.json({ error: "invalid_input", hint: st.error }, 400);
+    const to = timeoutsInput(b!, current.timeouts);
+    if ("error" in to) return c.json({ error: "invalid_input", hint: to.error }, 400);
     const now = Math.floor(Date.now() / 1000);
     // An edited combo starts its rotation and its sessions afresh (FR-CMB-11).
     resetCombo(old);
     resetCombo(name);
     if (name === old || !combos.has(old)) {
       await c.env.DB.prepare(
-        "INSERT INTO combo (name, targets, updated_at, strategy, config) VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET targets = excluded.targets, updated_at = excluded.updated_at, strategy = excluded.strategy, config = excluded.config",
+        "INSERT INTO combo (name, targets, updated_at, strategy, config, timeouts) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET targets = excluded.targets, updated_at = excluded.updated_at, strategy = excluded.strategy, config = excluded.config, timeouts = excluded.timeouts",
       )
-        .bind(name, JSON.stringify(targets), now, st.strategy, st.config)
+        .bind(name, JSON.stringify(targets), now, st.strategy, st.config, to.timeouts)
         .run();
     } else {
       const renames = [...combos]
@@ -245,9 +269,9 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
         .map(([n, ms]) =>
           c.env.DB.prepare("UPDATE combo SET targets = ? WHERE name = ?").bind(JSON.stringify(ms.map((m) => (memberCombo(m, combos) === old ? (m.startsWith("combo/") ? `combo/${name}` : name) : m))), n),
         );
-      await c.env.DB.batch([c.env.DB.prepare("UPDATE combo SET name = ?, targets = ?, updated_at = ?, strategy = ?, config = ? WHERE name = ?").bind(name, JSON.stringify(targets), now, st.strategy, st.config, old), ...renames]);
+      await c.env.DB.batch([c.env.DB.prepare("UPDATE combo SET name = ?, targets = ?, updated_at = ?, strategy = ?, config = ?, timeouts = ? WHERE name = ?").bind(name, JSON.stringify(targets), now, st.strategy, st.config, to.timeouts, old), ...renames]);
     }
-    return c.json({ name, targets, updated_at: now, strategy: st.strategy, config: st.config ? readConfig(st.config) : null });
+    return c.json({ name, targets, updated_at: now, strategy: st.strategy, config: st.config ? readConfig(st.config) : null, timeouts: readTimeoutsPatch(to.timeouts) });
   });
 
   a.delete("/combos/:name", async (c) => {

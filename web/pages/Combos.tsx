@@ -36,6 +36,7 @@ import {
   type Combo,
   type ComboConfig,
   type ComboStrategy,
+  type ComboTimeouts,
   type RouterPolicy,
 } from "../api";
 import { t, useLang, type StringKey } from "../i18n";
@@ -155,6 +156,34 @@ export function strategyBody(d: StrategyDraft): StrategyBody {
     return { strategy: "fusion", config: { judge_model: judge || null } };
   }
   return { strategy: d.strategy || null, config: null };
+}
+
+/** The combo's own upstream limits as typed, in seconds. "": the gateway setting (docs/srs/combo-timeouts.md). */
+export interface TimeoutsDraft {
+  first_byte_s: string;
+  idle_s: string;
+}
+type TimeoutKey = keyof TimeoutsDraft;
+const TIMEOUT_KEYS: readonly TimeoutKey[] = ["first_byte_s", "idle_s"];
+
+export function timeoutsDraft(combo: Combo | null): TimeoutsDraft {
+  const t = combo?.timeouts ?? {};
+  return { first_byte_s: t.first_byte_s === undefined ? "" : String(t.first_byte_s), idle_s: t.idle_s === undefined ? "" : String(t.idle_s) };
+}
+
+/** What the gateway is sent for the draft (null: none set), or the fields that are wrong: 0, or 10 to 3600. */
+export function timeoutsBody(d: TimeoutsDraft): { timeouts: ComboTimeouts | null } | { bad: TimeoutKey[] } {
+  const out: ComboTimeouts = {};
+  const bad: TimeoutKey[] = [];
+  for (const k of TIMEOUT_KEYS) {
+    const v = d[k].trim();
+    if (!v) continue;
+    const n = Number(v);
+    if (!/^\d+$/.test(v) || (n !== 0 && (n < 10 || n > 3600))) bad.push(k);
+    else out[k] = n;
+  }
+  if (bad.length) return { bad };
+  return { timeouts: Object.keys(out).length ? out : null };
 }
 
 /** The vision adapter (worker/vision.ts): a pool of models that describe images for models that cannot read them. */
@@ -447,6 +476,9 @@ function ComboDialog({
   const set = (patch: Partial<StrategyDraft>) => setDraft({ ...draft, ...patch });
   const body = strategyBody(draft);
   const bad = "bad" in body ? body.bad : null;
+  const [limits, setLimits] = useState<TimeoutsDraft>(() => timeoutsDraft(combo));
+  const limitsBody = timeoutsBody(limits);
+  const badLimits = "bad" in limitsBody ? limitsBody.bad : [];
 
   const trimmed = name.trim();
   const nameError = !trimmed ? t("combos.nameRequired") : !COMBO_NAME.test(trimmed) ? t("combos.nameHint") : taken ? t("combos.taken") : null;
@@ -461,16 +493,17 @@ function ComboDialog({
 
   async function submit() {
     setTried(true);
-    if (nameError || "bad" in body) return;
+    if (nameError || "bad" in body || "bad" in limitsBody) return;
     const { strategy, config } = body;
+    const { timeouts } = limitsBody;
     setBusy(true);
     setError(null);
     try {
       if (combo) {
-        const put = trimmed === combo.name ? { targets: models, strategy, config } : { targets: models, name: trimmed, strategy, config };
+        const put = trimmed === combo.name ? { targets: models, strategy, config, timeouts } : { targets: models, name: trimmed, strategy, config, timeouts };
         await api(`/combos/${encodeURIComponent(combo.name)}`, { method: "PUT", body: put });
       } else {
-        await api("/combos", { method: "POST", body: { name: trimmed, targets: models, strategy, config } });
+        await api("/combos", { method: "POST", body: { name: trimmed, targets: models, strategy, config, timeouts } });
       }
       onSaved(trimmed);
     } catch (e) {
@@ -626,6 +659,27 @@ function ComboDialog({
           error={tried && bad === "judge" ? t("combos.modelBad") : undefined}
         />
       )}
+      <div className="combo-timeouts" role="group" aria-labelledby="combo-timeouts-label" aria-describedby="combo-timeouts-hint">
+        <span id="combo-timeouts-label" className="settings-label">
+          {t("combos.timeouts")}
+        </span>
+        <FieldMessage tone="info" id="combo-timeouts-hint">
+          {t("combos.timeoutsHint")}
+        </FieldMessage>
+        {TIMEOUT_KEYS.map((k) => (
+          <Field
+            key={k}
+            label={t(k === "first_byte_s" ? "combos.timeoutFirstByte" : "combos.timeoutIdle")}
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder={t("combos.timeoutDefault")}
+            value={limits[k]}
+            disabled={busy}
+            onChange={(e) => setLimits({ ...limits, [k]: e.target.value })}
+            error={tried && badLimits.includes(k) ? t("prefs.timeoutInvalid") : undefined}
+          />
+        ))}
+      </div>
     </FormDialog>
   );
 }

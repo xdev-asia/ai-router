@@ -114,6 +114,13 @@ describe("MCP tools", () => {
     expect((await tool("list_combos")).data).toEqual([]);
   });
 
+  it("save_combo passes a combo's timeouts on; list_combos shows them (FR-CTO-10)", async () => {
+    const saved = await tool("save_combo", { name: "fast", targets: ["openai/gpt-5"], timeouts: { first_byte_s: 20 } });
+    expect(saved.isError, saved.text).toBe(false);
+    expect(saved.data).toMatchObject({ timeouts: { first_byte_s: 20 } });
+    expect((await tool("list_combos")).data).toEqual([expect.objectContaining({ name: "fast", timeouts: { first_byte_s: 20 } })]);
+  });
+
   it("a refused change comes back as a tool error with the gateway's reason", async () => {
     const r = await tool("save_combo", { name: "bad name!", targets: ["openai/gpt-5"] });
     expect(r.isError).toBe(true);

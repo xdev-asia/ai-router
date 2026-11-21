@@ -149,6 +149,13 @@ export interface Combo {
   /** Null: the gateway-wide strategy (Fallback unless changed). */
   strategy?: ComboStrategy | null;
   config?: ComboConfig | null;
+  /** The combo's own upstream limits in seconds; null or a field left out: the gateway setting. */
+  timeouts?: ComboTimeouts | null;
+}
+
+export interface ComboTimeouts {
+  first_byte_s?: number;
+  idle_s?: number;
 }
 
 /** A provider the gateway can reach. `env_key`: the environment holds a key for it. */

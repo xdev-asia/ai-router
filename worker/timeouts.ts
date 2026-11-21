@@ -44,6 +44,39 @@ export async function saveTimeouts(db: D1Database, value: Timeouts): Promise<voi
     .run();
 }
 
+// ---- A combo's own limits (docs/srs/combo-timeouts.md) -------------------------------------------------------
+
+/** The limits a combo sets; a field left out follows the gateway setting. */
+export type TimeoutsPatch = Partial<Timeouts>;
+export const COMBO_TIMEOUTS_HINT = "timeouts: null, or {first_byte_s, idle_s}, each 0 (off), 10 to 3600, or null (the gateway setting)";
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The patch to store from an API body: null when nothing is set, "bad" when a field is wrong (FR-CTO-01, 07). */
+export function timeoutsPatch(v: unknown): TimeoutsPatch | null | "bad" {
+  if (v === null || v === undefined) return null;
+  if (!isObj(v)) return "bad";
+  const out: TimeoutsPatch = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (k !== "first_byte_s" && k !== "idle_s") return "bad";
+    if (x === null) continue;
+    if (!isLimit(x)) return "bad";
+    out[k] = x as number;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** The stored column as a patch; a damaged value reads as none. */
+export function readTimeoutsPatch(raw: string | null | undefined): TimeoutsPatch | null {
+  if (!raw) return null;
+  try {
+    const p = timeoutsPatch(JSON.parse(raw));
+    return p === "bad" ? null : p;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Per request ---------------------------------------------------------------------------------------------
 
 interface Deadlines extends Timeouts {
@@ -59,6 +92,15 @@ const current = (): Deadlines => perRequest.getStore() ?? { ...TIMEOUTS_DEFAULT,
 /** Runs `fn` with these limits for every `withDeadlines` call inside it, and ties those calls to `client`. */
 export function runWithDeadlines<T>(t: Timeouts, secondMs: number, fn: () => T, client?: AbortSignal): T {
   return perRequest.run({ ...t, secondMs, client }, fn);
+}
+
+/**
+ * Runs `fn` with the current request's limits, each field of `patch` in place of the gateway one (FR-CTO-02). The
+ * second length and the client signal stay. With no patch, `fn` runs as it is.
+ */
+export function withTimeoutsPatch<T>(patch: TimeoutsPatch | null, fn: () => T): T {
+  if (!patch) return fn();
+  return perRequest.run({ ...current(), ...patch }, fn);
 }
 
 /** True when the client of the current request has gone away: its failure is not the provider's. */

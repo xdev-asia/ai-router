@@ -11,7 +11,7 @@ import { record, type Upstream } from "./proxy";
 import { chatToMessages, messageToChat, openaiErrorBody, streamToChat, TranslateError } from "./translate/openai-anthropic";
 import { EMPTY, usageOfMessage, usageOfStream, type Usage } from "./usage";
 import { headroomCompress } from "./headroom";
-import { clientGone } from "./timeouts";
+import { clientGone, readTimeoutsPatch, withTimeoutsPatch } from "./timeouts";
 import { oauthRequestHeaders } from "./oauth";
 import { cloudCodeWire } from "./cloudcode";
 import { OFF, applySavers, saversFor, type Savers } from "./savers";
@@ -660,7 +660,9 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
   combos ??= await loadCombos(c.env.DB);
   if (!combos.has(ref.name)) return errorResponse(404, `no combo named ${ref.name}`, "invalid_request_error", "model_not_found");
   const targets = expandCombo(combos, ref.name).filter((t) => !disabled.has(targetName(t)));
-  const row = await c.env.DB.prepare("SELECT strategy, config FROM combo WHERE name = ?").bind(ref.name).first<{ strategy: string | null; config: string | null }>();
+  const row = await c.env.DB.prepare("SELECT strategy, config, timeouts FROM combo WHERE name = ?")
+    .bind(ref.name)
+    .first<{ strategy: string | null; config: string | null; timeouts: string | null }>();
   const settings = await getComboSettings(c.env.DB);
   const strategy: Strategy = isStrategy(row?.strategy) ? row.strategy : settings.strategy;
   const config = readConfig(row?.config ?? null);
@@ -668,6 +670,23 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
     // The answers for a combo with no models (FR-CMB-31, FR-CMB-14).
     return strategy === "fusion" ? errorResponse(400, "Fusion combo has no models", "invalid_request_error", "invalid_model") : errorResponse(400, "Invalid model format", "invalid_request_error", "invalid_model");
   }
+  // Every provider request for this combo request uses the combo's own limits, where it sets them (FR-CTO-02, 03).
+  return withTimeoutsPatch(readTimeoutsPatch(row?.timeouts), () => runCombo(run, ref.name, name, disabled, targets, strategy, settings.sticky_limit, config, req));
+}
+
+/** The rest of a combo request in `runChat`, once its models, strategy and limits are known. */
+async function runCombo(
+  run: Run,
+  comboName: string,
+  name: string,
+  disabled: Set<string>,
+  targets: Target[],
+  strategy: Strategy,
+  stickyLimit: number,
+  config: ComboConfig,
+  req: Json,
+): Promise<Response> {
+  const { c, upstream, savers, now } = run;
   const adapted = await adaptMedia(run, name, disabled, req);
   if (adapted instanceof Response) return adapted;
   req = adapted;
@@ -678,14 +697,14 @@ export async function runChat(c: Context<AppEnv>, upstream: Upstream, system: Sy
 
   const session = c.req.header("x-session-id") ?? null;
   let order: Target[] = targets;
-  if (strategy === "round-robin") order = rotate(ref.name, targets, settings.sticky_limit);
-  else if (strategy === "smart") order = await smartOrder(run, ref.name, targets, config, req, session);
+  if (strategy === "round-robin") order = rotate(comboName, targets, stickyLimit);
+  else if (strategy === "smart") order = await smartOrder(run, comboName, targets, config, req, session);
   order = await coolLast(c.env.DB, order, now);
 
   const out = await runOrder(run, order, req, true);
   if (strategy === "smart" && session) {
-    if (out.target) holdModel(ref.name, session, targetName(out.target));
-    else for (const t of order) dropHeld(ref.name, session, targetName(t));
+    if (out.target) holdModel(comboName, session, targetName(out.target));
+    else for (const t of order) dropHeld(comboName, session, targetName(t));
   }
   return out.res;
 }

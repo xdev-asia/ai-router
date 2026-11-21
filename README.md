@@ -202,6 +202,10 @@ a 5xx or a network failure, or when a target's provider has no key, never after 
 failed is put aside for its `retry-after` (default 30 s, at most 10 min) and tried last until then. The answer carries
 `x-gateway-target`. Every attempt gets its own usage row.
 
+A combo may set its own upstream timeouts (`timeouts: {first_byte_s, idle_s}`, each 0 for off or 10-3600 s). They
+apply to every provider request made for that combo, and a limit it leaves out follows the gateway-wide setting
+([SRS](docs/srs/combo-timeouts.md)).
+
 Translation to Claude: text, images (https or base64 data URL), function tools and tool results, `tool_choice`,
 `parallel_tool_calls`, `stop`, `temperature` (clamped to 0-1), `max_tokens` / `max_completion_tokens` (default 8192),
 streaming with `stream_options.include_usage`. Refused with `400`: `n` other than 1, non-function tools, plain-http
@@ -326,8 +330,8 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `PUT /token-saver` | any of those fields | the settings; `400` |
 | `POST /oauth/:provider/start` | | `{authorize_url}`: the provider's sign-in page to open; `404` for a provider without a subscription login |
 | `POST /oauth/:provider/finish` | `{callback_url}` or `{code, state}` | `201` the connection; `400 invalid_state`; `502 provider_refused` with the provider's `message` |
-| `GET /combos` | | `[{name, targets, updated_at}]` |
-| `PUT /combos/:name` | `{targets: ["provider/model", ...]}` (1-10) | the combo |
+| `GET /combos` | | `[{name, targets, updated_at, strategy, config, timeouts}]` |
+| `PUT /combos/:name` | `{targets: ["provider/model", ...], timeouts?: {first_byte_s?, idle_s?} \| null}` (1-10) | the combo |
 | `DELETE /combos/:name` | | `204`; `404` |
 | `GET /usage?month=YYYY-MM` | | `{month, rows}` per system, provider and model |
 | `GET /usage/summary?period=` | `today`, `24h` (default), `7d`, `30d`, `60d`, `all` | `{period, from, totals, by_provider, by_model, by_system, recent}`; each group has its token sums and a `cost` (null without a price); `totals.unpriced_requests`; `recent`: the last 10 requests |

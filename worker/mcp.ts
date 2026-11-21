@@ -207,17 +207,23 @@ const TOOLS: Tool[] = [
   {
     name: "save_combo",
     group: "combos",
-    description: "Creates or replaces a combo. targets: 1 or more of provider/model, claude-*, combo/<name>, tried in order. new_name renames it (other combos follow). strategy null follows the gateway setting.",
+    description:
+      "Creates or replaces a combo. targets: 1 or more of provider/model, claude-*, combo/<name>, tried in order. new_name renames it (other combos follow). strategy null follows the gateway setting. timeouts: the combo's own upstream limits; left out keeps them, null clears them.",
     properties: {
       name: str,
       targets: strs,
       strategy: { type: ["string", "null"], enum: [...STRATEGIES, null] },
       config: { type: ["object", "null"], description: "Strategy settings (router_model, judge_model, ...); see the console" },
+      timeouts: {
+        type: ["object", "null"],
+        description: "first_byte_s, idle_s: seconds, 0 (off) or 10-3600; a field left out or null follows the gateway setting",
+        properties: { first_byte_s: { type: ["integer", "null"] }, idle_s: { type: ["integer", "null"] } },
+      },
       new_name: str,
     },
     required: ["name", "targets"],
     readOnly: false,
-    calls: (a) => ({ method: "PUT", path: `/combos/${enc(String(a.name))}`, body: { ...pick(a, ["targets", "strategy", "config"]), ...(a.new_name ? { name: a.new_name } : {}) } }),
+    calls: (a) => ({ method: "PUT", path: `/combos/${enc(String(a.name))}`, body: { ...pick(a, ["targets", "strategy", "config", "timeouts"]), ...(a.new_name ? { name: a.new_name } : {}) } }),
   },
   {
     name: "delete_combo",
