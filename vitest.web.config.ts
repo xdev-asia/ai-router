@@ -9,6 +9,8 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(version) },
   test: {
     environment: "jsdom",
+    // Node 25+ has its own global localStorage (undefined without --localstorage-file), which hides jsdom's.
+    execArgv: ["--no-experimental-webstorage"],
     include: ["web/test/**/*.test.{ts,tsx}"],
     // Tests read web/styles.css and the Roboto weights as text (?raw) to check what a DOM without layout or fonts
     // cannot measure; nothing is injected.
