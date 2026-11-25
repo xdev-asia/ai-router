@@ -11,4 +11,4 @@ minimumReleaseAgeExclude:
   - "@better-auth/telemetry@1.7.16"
   - better-auth@1.7.16
   - better-call@1.4.5
-  - "@xdev-asia/ui@4.15.0"
+  - "@xdev-asia/ui@4.15.1"
