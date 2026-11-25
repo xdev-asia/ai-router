@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   test:
@@ -23,12 +22,10 @@ jobs:
         with:
           node-version: 24
 
+      # @xdev-asia/ui comes from npmjs.com, so the install needs no token.
       - name: Install
-        env:
-          GH_PACKAGES_TOKEN: ${{ secrets.NPM_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           corepack enable
-          printf '//npm.pkg.github.com/:_authToken=%s\n' "$GH_PACKAGES_TOKEN" >> ~/.npmrc
           corepack pnpm install --frozen-lockfile
 
       - run: corepack pnpm run typecheck
@@ -86,8 +83,5 @@ jobs:
           build-args: |
             APP_VERSION=${{ github.sha }}
             APP_BUILT_AT=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
-          # The console's @xdev-asia/ui comes from GitHub Packages (Dockerfile, console-build).
-          secrets: |
-            npm_token=${{ secrets.NPM_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}

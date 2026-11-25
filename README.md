@@ -364,7 +364,7 @@ Rendering (`/accounts/{id}/browser-rendering/markdown`) with an account id and a
 
 ## Local development and tests
 
-The install needs a GitHub Packages token (`read:packages`) for `@xdev-asia/ui`, in `~/.npmrc`.
+`@xdev-asia/ui` comes from npmjs.com, so the install needs no token.
 
 ```sh
 corepack pnpm run typecheck
@@ -402,7 +402,7 @@ generated one; restart with `docker compose up -d` after a change. Keep `CODEX_R
 `RELAY_SECRET` in `.codex-relay.env` equal, or set neither. `docker compose down -v` deletes the volumes: the D1, and the
 generated `CONNECTIONS_KEY`, without which the stored connections cannot be read.
 
-From this checkout instead of ghcr.io (the console from the host's `dist/`, which needs the GitHub Packages token):
+From this checkout instead of ghcr.io (the console from the host's `dist/`):
 
 ```sh
 corepack pnpm run build

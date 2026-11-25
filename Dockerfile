@@ -3,9 +3,8 @@
 # main (ghcr.io/xdev-asia/ai-router) with APP_VERSION (the commit) and APP_BUILT_AT; compose.yaml runs it.
 # A local build is `dev` unless you pass them: --build-arg APP_VERSION=$(git rev-parse HEAD)
 #
-# The console needs @xdev-asia/ui from GitHub Packages, so a build from source takes a token (read:packages):
-#   NODE_AUTH_TOKEN=... docker build --secret id=npm_token,env=NODE_AUTH_TOKEN .
-# or, with dist/ already built on the host (`corepack pnpm run build`):
+# The console's @xdev-asia/ui comes from npmjs.com, so a build from source needs no token. With dist/ already built
+# on the host (`corepack pnpm run build`) the console step can be skipped:
 #   docker build --build-context console=dist .
 
 # The console (web/ -> dist/). Plain files, so built once on the build machine's platform.
@@ -13,14 +12,9 @@ FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS console-build
 WORKDIR /src
 ENV CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-# pnpm does not expand ${VAR} in a repository's .npmrc credentials, so the token goes in a user config on a tmpfs:
-# it is gone after this step and never in a layer. .npmrc still maps @xdev-asia to GitHub Packages.
-RUN --mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN \
-    --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    --mount=type=tmpfs,target=/run/npm \
-    printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > /run/npm/npmrc \
-    && NPM_CONFIG_USERCONFIG=/run/npm/npmrc corepack pnpm install --frozen-lockfile
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    corepack pnpm install --frozen-lockfile
 COPY tsconfig.json vite.config.ts ./
 COPY web ./web
 # The console keeps the build it came from and reloads when the gateway reports another (web/version.ts).
