@@ -173,8 +173,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       '@xdev-asia/ui':
-        specifier: 4.15.1
-        version: 4.15.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        specifier: 4.15.2
+        version: 4.15.2(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       hono:
         specifier: ^4.13.16
         version: 4.13.16
@@ -1370,8 +1370,8 @@ packages:
   '@vitest/utils@4.1.12':
     resolution: {integrity: sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==}
 
-  '@xdev-asia/ui@4.15.1':
-    resolution: {integrity: sha512-EhS3jPOaiYULN2HEVy2BuF2S3gD1okRhhpITLK84bMV76J+MQ1GKkio0cfAOZvTvfb9c2SJ09g2vXo4E9wfZnQ==}
+  '@xdev-asia/ui@4.15.2':
+    resolution: {integrity: sha512-yRsN0fyVG0jfnPuRWvMg1xifvvAna0TEyNhkaRobdEU4YeYf3vfXAUKmHbafXhP35oxGYVWRxkp1snG9bEQIKQ==}
     engines: {node: '>=24'}
     hasBin: true
     peerDependencies:
@@ -2678,7 +2678,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
 
-  '@xdev-asia/ui@4.15.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@xdev-asia/ui@4.15.2(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
