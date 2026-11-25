@@ -86,19 +86,22 @@ describe("build version", () => {
   });
 });
 
-describe("package token", () => {
-  const install = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8")
+describe("package source", () => {
+  const stage = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8")
     .split(/^FROM /m)
-    .find((s) => s.includes("AS console-build"))
-    .match(/^RUN [^\n]*(?:\\\n[^\n]*)*pnpm install[^\n]*/m)?.[0];
+    .find((s) => s.includes("AS console-build"));
+  const install = stage.match(/^RUN [^\n]*(?:\\\n[^\n]*)*pnpm install[^\n]*/m)?.[0];
 
-  // pnpm ignores ${VAR} in a repository's .npmrc credentials, so the token goes in a user config.
-  it("the install reads the token from a user config on tmpfs, never from a layer", () => {
+  // @xdev-asia/ui is on npmjs.com: the console build takes no token, no secret and no registry mapping.
+  it("installs from npmjs.com without a token", () => {
     assert.ok(install, "console-build has a pnpm install step");
-    assert.match(install, /--mount=type=secret,id=npm_token,env=NODE_AUTH_TOKEN/);
-    assert.match(install, /--mount=type=tmpfs,target=\/run\/npm/);
-    assert.match(install, /> \/run\/npm\/npmrc/);
-    assert.match(install, /NPM_CONFIG_USERCONFIG=\/run\/npm\/npmrc corepack pnpm install --frozen-lockfile/);
+    assert.match(install, /corepack pnpm install --frozen-lockfile/);
+    assert.doesNotMatch(stage, /secret|_authToken|\.npmrc|npm\.pkg\.github\.com/);
+  });
+
+  it("the lockfile takes @xdev-asia/ui from npmjs.com", () => {
+    const lock = readFileSync(new URL("../../pnpm-lock.yaml", import.meta.url), "utf8");
+    assert.doesNotMatch(lock, /npm\.pkg\.github\.com/);
   });
 });
 

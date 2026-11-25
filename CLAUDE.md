@@ -35,4 +35,4 @@ corepack pnpm run test:web    # console
 corepack pnpm run build
 ```
 
-The install needs a GitHub Packages token for `@xdev-asia/ui` in `~/.npmrc`.
+`@xdev-asia/ui` comes from npmjs.com; the install needs no token.
