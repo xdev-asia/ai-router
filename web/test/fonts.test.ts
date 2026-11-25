@@ -1,24 +1,29 @@
 import main from "../main.tsx?raw";
+import html from "../index.html?raw";
 import { describe, expect, it } from "vitest";
 
-// The tokens use 400 to 800 for interface text (@xdev-asia/ui --font-body is Roboto).
-const WEIGHTS = [400, 500, 600, 700, 800] as const;
-const robotoCss = import.meta.glob<string>("/node_modules/@fontsource/roboto/{400,500,600,700,800}.css", {
+// data-ground="ocean" sets --font-body to IBM Plex Sans; the tokens use 400 to 700 for interface text (Plex has no 800, the browser uses 700).
+const WEIGHTS = [400, 500, 600, 700] as const;
+const plexCss = import.meta.glob<string>("/node_modules/@fontsource/ibm-plex-sans/{400,500,600,700}.css", {
   query: "?raw",
   import: "default",
   eager: true,
 });
 
 describe("console fonts", () => {
-  it("serves Roboto itself at every weight the tokens use, and no longer Be Vietnam Pro", () => {
-    for (const w of WEIGHTS) expect(main).toContain(`import "@fontsource/roboto/${w}.css";`);
-    expect(main).not.toContain("be-vietnam-pro");
+  it("uses the ocean ground, whose body font is IBM Plex Sans", () => {
+    expect(html).toContain('data-ground="ocean"');
   });
 
-  it("gets the Vietnamese subset with each Roboto weight", () => {
+  it("serves IBM Plex Sans itself at every weight the tokens use, and no longer Roboto", () => {
+    for (const w of WEIGHTS) expect(main).toContain(`import "@fontsource/ibm-plex-sans/${w}.css";`);
+    expect(main).not.toContain("@fontsource/roboto");
+  });
+
+  it("gets the Vietnamese subset with each IBM Plex Sans weight", () => {
     for (const w of WEIGHTS) {
-      const css = robotoCss[`/node_modules/@fontsource/roboto/${w}.css`];
-      expect(css, `${w}`).toMatch(/roboto-vietnamese-\d+-normal\.woff2/);
+      const css = plexCss[`/node_modules/@fontsource/ibm-plex-sans/${w}.css`];
+      expect(css, `${w}`).toMatch(/ibm-plex-sans-vietnamese-\d+-normal\.woff2/);
     }
   });
 });

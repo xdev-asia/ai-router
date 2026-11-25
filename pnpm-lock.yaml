@@ -166,15 +166,15 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/ibm-plex-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
-      '@fontsource/roboto':
-        specifier: ^5.3.0
-        version: 5.3.0
       '@xdev-asia/ui':
-        specifier: 4.0.1
-        version: 4.0.1(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
+        specifier: 4.15.0
+        version: 4.15.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       hono:
         specifier: ^4.13.16
         version: 4.13.16
@@ -711,11 +711,11 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
+  '@fontsource/ibm-plex-sans@5.3.0':
+    resolution: {integrity: sha512-CbE4CbbEEZJX860XyUiRpsksXIQR8Rp2XDva2VO53NJox9tVNtusrysd2x5YkUEY3ErQ66W1IiiQL8/wihhw5w==}
+
   '@fontsource/jetbrains-mono@5.3.0':
     resolution: {integrity: sha512-fqDfB5I9f1p1TV486aUgB9t8zP84P0O1FtQR5Ol9vjwPy+S+EIGlVYm1cvj2W5shcZMTg2nZFdVMoH5wFu8a1A==}
-
-  '@fontsource/roboto@5.3.0':
-    resolution: {integrity: sha512-BapRJOWYP+LZ21zp+wBQjfpPYKRoxc4LspJ/RLuI+HSMBD5u/X4O+ESDrSvEqDSy0rAl7GwBJ+09mdc16cVQ1Q==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -1543,8 +1543,8 @@ packages:
   '@vitest/utils@4.1.12':
     resolution: {integrity: sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==}
 
-  '@xdev-asia/ui@4.0.1':
-    resolution: {integrity: sha512-QmcDlu9SR+EK+/sOzl3fViKRs9/+uxQxn1tdTHx96/NskgVbycq31CnrGqlsjqzxZP6hY/hRY6Kjhnl+vgcMqQ==, tarball: https://npm.pkg.github.com/download/@xdev-asia/ui/4.0.1/79b1c5baac4a45360a3e71df54d4a5470bf177af}
+  '@xdev-asia/ui@4.15.0':
+    resolution: {integrity: sha512-oKdMnPutGKxM+qZtFguJiD7O9exGZeC4TLaaAhoZhnbb3nhJnoeCFYCderxxX7LAYMvX37WXb3QeStW99rBUJw==, tarball: https://npm.pkg.github.com/download/@xdev-asia/ui/4.15.0/4ba5417b4db1d0cf2d3ef8d203650cf3a411cf2f}
     engines: {node: '>=24'}
     hasBin: true
     peerDependencies:
@@ -2476,9 +2476,9 @@ snapshots:
   '@floating-ui/utils@0.2.12':
     optional: true
 
-  '@fontsource/jetbrains-mono@5.3.0': {}
+  '@fontsource/ibm-plex-sans@5.3.0': {}
 
-  '@fontsource/roboto@5.3.0': {}
+  '@fontsource/jetbrains-mono@5.3.0': {}
 
   '@img/colour@1.1.0': {}
 
@@ -3105,7 +3105,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.2.0
 
-  '@xdev-asia/ui@4.0.1(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
+  '@xdev-asia/ui@4.15.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/extension-image@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0)))(@tiptap/extension-link@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/extensions@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/markdown@3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@tiptap/react@3.33.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))(@tiptap/pm@3.33.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@tiptap/starter-kit@3.33.0)(react-dom@19.3.1(react@19.3.1))(react-easy-crop@6.2.4(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@tiptap/core': 3.33.0(@tiptap/pm@3.33.0)
       '@tiptap/extension-image': 3.33.0(@tiptap/core@3.33.0(@tiptap/pm@3.33.0))

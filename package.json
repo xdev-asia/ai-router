@@ -12,9 +12,9 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
-    "@fontsource/roboto": "^5.3.0",
-    "@xdev-asia/ui": "4.0.1",
+    "@xdev-asia/ui": "4.15.0",
     "hono": "^4.13.16",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
