@@ -26,8 +26,12 @@ export interface QuotaWindow {
   currency?: string;
 }
 
+export type QuotaSeat = "standard" | "premium";
+
 export interface QuotaReport {
   plan: string | null;
+  /** ChatGPT Business (plan_type team/business): Standard seats have a 5-hour window, Premium seats do not. */
+  seat: QuotaSeat | null;
   windows: QuotaWindow[];
   limit_reached: boolean;
   /** Codex: reset credits the account can spend. */
@@ -48,7 +52,7 @@ const clamp = (n: number) => Math.min(100, Math.max(0, n));
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const nowS = () => Math.floor(Date.now() / 1000);
 
-const report = (p: Partial<QuotaReport>): QuotaReport => ({ plan: null, windows: [], limit_reached: false, reset_credits: null, message: null, error: null, ...p });
+const report = (p: Partial<QuotaReport>): QuotaReport => ({ plan: null, seat: null, windows: [], limit_reached: false, reset_credits: null, message: null, error: null, ...p });
 const failed = (status: number, message: string) => report({ error: { status, message } });
 
 /** Unix seconds from seconds, milliseconds (≥ 1e12) or an ISO date; null otherwise. */
@@ -64,21 +68,48 @@ export function toUnixSeconds(v: unknown): number | null {
 
 // --- Codex -------------------------------------------------------------------------------------------------
 
-function percentWindow(name: string, w: unknown): QuotaWindow | null {
+const SESSION_MAX_S = 6 * 3600;
+const WEEKLY_MIN_S = 2 * 86400;
+
+/** The window's length in seconds when the answer says it (limit_window_seconds or window_minutes). */
+function windowSeconds(w: Json): number | null {
+  const s = num(w.limit_window_seconds);
+  if (s !== null && s > 0) return s;
+  const m = num(w.window_minutes ?? w.limit_window_minutes);
+  return m !== null && m > 0 ? m * 60 : null;
+}
+
+function percentWindow(prefix: string, fallback: "session" | "weekly", w: unknown): { window: QuotaWindow; seconds: number | null } | null {
   if (!isObj(w)) return null;
   const raw = num(w.used_percent ?? w.percent_used);
   if (raw === null) return null;
   const used = clamp(raw);
-  return { name, kind: "percent", used, total: 100, remaining_percent: round2(100 - used), reset_at: toUnixSeconds(w.reset_at ?? w.resets_at ?? w.resetAt) };
+  const seconds = windowSeconds(w);
+  // Named by length when known: a Premium seat has no 5-hour window, so its weekly one can come as `primary`.
+  const base = seconds === null ? fallback : seconds <= SESSION_MAX_S ? "session" : seconds >= WEEKLY_MIN_S ? "weekly" : fallback;
+  const reset_at = toUnixSeconds(w.reset_at ?? w.resets_at ?? w.resetAt);
+  return { window: { name: `${prefix}${base}`, kind: "percent", used, total: 100, remaining_percent: round2(100 - used), reset_at }, seconds };
 }
 
-function snapshotWindows(prefix: string, snap: unknown): { windows: QuotaWindow[]; reached: boolean } {
-  if (!isObj(snap)) return { windows: [], reached: false };
+function snapshotWindows(prefix: string, snap: unknown): { windows: QuotaWindow[]; seconds: (number | null)[]; reached: boolean } {
+  if (!isObj(snap)) return { windows: [], seconds: [], reached: false };
   const body = isObj(snap.rate_limit) ? snap.rate_limit : snap;
-  const windows = [percentWindow(`${prefix}session`, body.primary_window ?? body.primary), percentWindow(`${prefix}weekly`, body.secondary_window ?? body.secondary)].filter(
-    (w): w is QuotaWindow => w !== null,
+  const parts = [percentWindow(prefix, "session", body.primary_window ?? body.primary), percentWindow(prefix, "weekly", body.secondary_window ?? body.secondary)].filter(
+    (p): p is NonNullable<typeof p> => p !== null,
   );
-  return { windows, reached: body.limit_reached === true };
+  return { windows: parts.map((p) => p.window), seconds: parts.map((p) => p.seconds), reached: body.limit_reached === true };
+}
+
+const BUSINESS_PLANS = new Set(["team", "business", "self_serve_business", "self_serve_business_prolite", "self_serve_business_usage_based"]);
+
+/**
+ * wham/usage has no seat field: both seats answer plan_type team (or business). A Standard seat has a 5-hour
+ * window; a Premium seat only a weekly one. Null when the plan is not Business or the windows' lengths are unknown.
+ */
+export function businessSeat(plan: string, main: { seconds: (number | null)[] }): QuotaSeat | null {
+  if (!BUSINESS_PLANS.has(plan.toLowerCase())) return null;
+  if (main.seconds.length === 0 || main.seconds.some((s) => s === null)) return null;
+  return main.seconds.some((s) => s! <= SESSION_MAX_S) ? "standard" : "premium";
 }
 
 function additional(data: Json, word: string): unknown {
@@ -101,7 +132,7 @@ export function parseCodexUsage(data: Json): QuotaReport {
   const summary = isObj(data.summary) ? data.summary : {};
   const plan = typeof data.plan_type === "string" && data.plan_type ? data.plan_type : typeof summary.plan === "string" && summary.plan ? summary.plan : "unknown";
   const credits = isObj(data.rate_limit_reset_credits) ? num(data.rate_limit_reset_credits.available_count) : null;
-  return report({ plan, windows: parts.flatMap((p) => p.windows), limit_reached: parts[0]!.reached || data.limit_reached === true, reset_credits: credits });
+  return report({ plan, seat: businessSeat(plan, parts[0]!), windows: parts.flatMap((p) => p.windows), limit_reached: parts[0]!.reached || data.limit_reached === true, reset_credits: credits });
 }
 
 const WHAM_HEADERS = { accept: "application/json", "openai-beta": "codex-1", originator: "codex_cli_rs" };

@@ -39,6 +39,8 @@ export interface QuotaWindow {
 /** worker/quota.ts QuotaReport: what a provider says is left on one account. */
 export interface QuotaReport {
   plan: string | null;
+  /** ChatGPT Business seat, read from the windows (a Premium seat has no 5-hour window). */
+  seat?: "standard" | "premium" | null;
   windows: QuotaWindow[];
   limit_reached: boolean;
   reset_credits: number | null;
@@ -452,7 +454,8 @@ function Account(props: {
   const { conn: c, provider: p, report: r, loading, hidden, now } = props;
   const state = accountState(c, r);
   const windows = (r?.windows ?? []).filter((w) => !hidden.includes(w.name));
-  const subtitle = [p?.name ?? c.provider, r?.plan && r.plan !== p?.name ? r.plan : null].filter(Boolean).join(" · ");
+  const seat = r?.seat ? t(r.seat === "premium" ? "quota.seat.premium" : "quota.seat.standard") : null;
+  const subtitle = [p?.name ?? c.provider, r?.plan && r.plan !== p?.name ? r.plan : null, seat].filter(Boolean).join(" · ");
   return (
     <Card
       title={

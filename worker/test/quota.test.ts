@@ -110,6 +110,32 @@ describe("Codex quota", () => {
     ]);
   });
 
+  it("tells a Business Standard seat (5-hour window) from a Premium one (weekly only)", async () => {
+    const id = await codex();
+    const H5 = 5 * 3600;
+    const WEEK = 7 * 86400;
+    const standard = { plan_type: "team", rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: H5 }, secondary_window: { used_percent: 20, limit_window_seconds: WEEK } } };
+    const q1 = JSON.parse((await adminCall(fakeUpstream(() => json(standard)), "GET", `/quota/${id}`)).text);
+    expect(q1).toMatchObject({ plan: "team", seat: "standard" });
+    expect(q1.windows.map((w: { name: string }) => w.name)).toEqual(["session", "weekly"]);
+
+    // A Premium seat has no 5-hour window; its weekly one comes as primary and must not be called a session.
+    const premium = { plan_type: "team", rate_limit: { primary_window: { used_percent: 30, limit_window_seconds: WEEK } } };
+    const q2 = JSON.parse((await adminCall(fakeUpstream(() => json(premium)), "GET", `/quota/${id}`)).text);
+    expect(q2).toMatchObject({ plan: "team", seat: "premium" });
+    expect(q2.windows.map((w: { name: string }) => w.name)).toEqual(["weekly"]);
+
+    const minutes = { plan_type: "business", rate_limit: { primary_window: { used_percent: 1, window_minutes: 10080 } } };
+    expect(JSON.parse((await adminCall(fakeUpstream(() => json(minutes)), "GET", `/quota/${id}`)).text).seat).toBe("premium");
+  });
+
+  it("says no seat when the plan is not Business or the windows' lengths are unknown", async () => {
+    const id = await codex();
+    expect(JSON.parse((await adminCall(fakeUpstream(() => json(USAGE)), "GET", `/quota/${id}`)).text).seat).toBeNull();
+    const team = { ...USAGE, plan_type: "team" };
+    expect(JSON.parse((await adminCall(fakeUpstream(() => json(team)), "GET", `/quota/${id}`)).text).seat).toBeNull();
+  });
+
   it("says the usage API is unavailable when it fails, without rows", async () => {
     const id = await codex();
     const q = JSON.parse((await adminCall(fakeUpstream(() => json({ detail: "x" }, 500)), "GET", `/quota/${id}`)).text);
