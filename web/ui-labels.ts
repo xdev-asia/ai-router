@@ -3,7 +3,9 @@ import type { Lang } from "./i18n";
 // Labels for the xdev-ui parts the console uses; the parts ship English defaults.
 const labels = {
   en: {
-    appShell: { openNav: "Open navigation", closeNav: "Close navigation", skipToContent: "Skip to content", nav: "Navigation" },
+    appShell: { openNav: "Open navigation", closeNav: "Close navigation", skipToContent: "Skip to content", nav: "Navigation", collapseNav: "Collapse sidebar", expandNav: "Expand sidebar" },
+    breadcrumb: { breadcrumb: "Breadcrumb" },
+    tabStrip: { skipped: "Skipped", unsaved: "Unsaved changes", newTab: "New tab", close: (name: string) => `Close ${name}` },
     navList: { nav: "Sections" },
     toast: { dismiss: "Dismiss" },
     dialog: { confirm: "OK", cancel: "Cancel" },
@@ -29,7 +31,9 @@ const labels = {
     },
   },
   vi: {
-    appShell: { openNav: "Mở điều hướng", closeNav: "Đóng điều hướng", skipToContent: "Chuyển đến nội dung", nav: "Điều hướng" },
+    appShell: { openNav: "Mở điều hướng", closeNav: "Đóng điều hướng", skipToContent: "Chuyển đến nội dung", nav: "Điều hướng", collapseNav: "Thu gọn thanh bên", expandNav: "Mở rộng thanh bên" },
+    breadcrumb: { breadcrumb: "Đường dẫn" },
+    tabStrip: { skipped: "Đã bỏ qua", unsaved: "Chưa lưu", newTab: "Tab mới", close: (name: string) => `Đóng ${name}` },
     navList: { nav: "Mục" },
     toast: { dismiss: "Đóng" },
     dialog: { confirm: "Đồng ý", cancel: "Hủy" },
