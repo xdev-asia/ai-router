@@ -614,6 +614,8 @@ export const vi: Record<keyof typeof en, string> = {
   "quota.state.off": "Đã tắt",
   "quota.state.error": "Lỗi",
   "quota.state.limit": "Hết hạn mức",
+  "quota.seat.premium": "Seat Premium",
+  "quota.seat.standard": "Seat Standard",
   "quota.window.session": "Phiên (5h)",
   "quota.window.weekly": "Hàng tuần",
   "quota.window.review": "Code review",
