@@ -251,7 +251,7 @@ describe("usage overview", () => {
     expect(screen.queryByRole("button", { name: t("usage.loadMore") })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: t("usage.filter.statusError") }));
     await waitFor(() => expect(calls.some((c) => c.url === "/admin/usage/requests?limit=100&status=error")).toBe(true));
-  });
+  }, 15_000); // renders 101 rows; near 5 s alone, past it when every test file runs at once
 
   it("sends the owner's offset for today only", async () => {
     render(<Usage />);

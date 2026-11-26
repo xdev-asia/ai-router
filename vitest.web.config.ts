@@ -12,6 +12,7 @@ export default defineConfig({
     // Node 25+ has its own global localStorage (undefined without --localstorage-file), which hides jsdom's.
     execArgv: ["--no-experimental-webstorage"],
     include: ["web/test/**/*.test.{ts,tsx}"],
+    setupFiles: ["web/test/setup.ts"],
     // Tests read web/styles.css and the Roboto weights as text (?raw) to check what a DOM without layout or fonts
     // cannot measure; nothing is injected.
     css: { include: [/styles\.css\?raw$/, /@fontsource\/roboto\/\d+\.css\?raw$/] },

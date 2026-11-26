@@ -1,7 +1,7 @@
 import { MenuButton } from "@xdev-asia/ui";
 import { t, useLang, type Lang } from "./i18n";
 
-const LANGS: { value: Lang; label: string }[] = [
+export const LANGS: { value: Lang; label: string }[] = [
   { value: "en", label: "English" },
   { value: "vi", label: "Tiếng Việt" },
 ];

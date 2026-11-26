@@ -1,13 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, pageFromHash, providerFromHash } from "../App";
-import { setAuth } from "../api";
+import { setAuth, type Connection } from "../api";
 import { resetLang, t } from "../i18n";
 import { apiOf } from "../pages/Endpoint";
 import { timeoutsBody, timeoutsDraft } from "../pages/Combos";
 import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
 import { attentionItems, capShare, monthUsed } from "../pages/Overview";
+import { HOME, closeTabs, readTabs, tabPathOf, visitTab } from "../tabs";
 import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 import { buildLabel } from "../version";
@@ -255,18 +256,36 @@ describe("sign in with xDev ID", () => {
 });
 
 describe("frame", () => {
-  const banner = () => screen.getByRole("banner");
+  // The top bar; a page header inside main is a <header> too.
+  const banner = () => screen.getAllByRole("banner").find((el) => !el.closest("main"))!;
 
-  it("the top bar holds the page's title and description; it is the page's only h1", async () => {
+  it("the page header holds the title and description, the page's only h1; the top bar holds the breadcrumb", async () => {
     await signIn();
     await screen.findByText("Chat");
-    const h1 = await within(banner()).findByRole("heading", { level: 1, name: t("systems.title") });
-    expect(h1).toBeTruthy();
+    const main = screen.getByRole("main");
+    expect(await within(main).findByRole("heading", { level: 1, name: t("systems.title") })).toBeTruthy();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(within(banner()).getByText(t("systems.description"))).toBeTruthy();
+    expect(within(main).getByText(t("systems.description"))).toBeTruthy();
+    const trail = within(banner()).getByRole("navigation", { name: ui("en").breadcrumb.breadcrumb });
+    expect(within(trail).getByText(t("nav.title"))).toBeTruthy();
+    expect(within(trail).getByText(t("nav.systems"))).toBeTruthy();
   });
 
-  it("each page puts its own title in the top bar", async () => {
+  it("opened pages become tabs after the pinned Overview tab; closing the open tab goes to its neighbour", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    window.location.hash = "#/usage";
+    fireEvent(window, new HashChangeEvent("hashchange"));
+    await within(screen.getByRole("main")).findByRole("heading", { level: 1, name: t("usage.title") });
+    // The strip's tabs are owned by its tablist (aria-owns), not nested in it.
+    expect(screen.getByRole("tablist", { name: t("shell.openPages") })).toBeTruthy();
+    expect([...document.querySelectorAll(".console-tabs [role=tab]")].map((x) => x.textContent)).toEqual([t("nav.overview"), t("nav.systems"), t("nav.usage")]);
+    fireEvent.click(screen.getByRole("button", { name: ui("en").tabStrip.close(t("nav.usage")) }));
+    await waitFor(() => expect(window.location.hash).toBe("#/systems"));
+    expect(screen.queryByRole("button", { name: ui("en").tabStrip.close(t("nav.overview")) })).toBeNull();
+  });
+
+  it("each page puts its own title in its header and the browser tab", async () => {
     await signIn();
     await screen.findByText("Chat");
     for (const [hash, title] of [
@@ -276,8 +295,9 @@ describe("frame", () => {
     ] as const) {
       window.location.hash = hash;
       fireEvent(window, new HashChangeEvent("hashchange"));
-      expect(await within(banner()).findByRole("heading", { level: 1, name: t(title) })).toBeTruthy();
+      expect(await within(screen.getByRole("main")).findByRole("heading", { level: 1, name: t(title) })).toBeTruthy();
       expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+      expect(document.title).toBe(`${t(title)} · ${t("app.name")}`);
     }
   });
 
@@ -335,7 +355,6 @@ describe("frame", () => {
     await screen.findByText("Chat");
     const side = screen.getByRole("complementary");
     expect(within(side).getByText(t("app.name"))).toBeTruthy();
-    expect(within(side).getByText(t("app.tagline"))).toBeTruthy();
     expect(within(side).getByText(t("shell.online"))).toBeTruthy();
     expect(within(side).getByText(buildLabel(__APP_VERSION__))).toBeTruthy();
     expect(screen.queryByText(t("build.newTitle"))).toBeNull();
@@ -410,7 +429,7 @@ describe("frame", () => {
     ]);
   });
 
-  it("the provider search sits in the top bar on the providers page only", async () => {
+  it("the provider search sits in the providers page toolbar only", async () => {
     routes["GET /admin/providers"] = () => json([]);
     routes["GET /admin/connections"] = () => json([]);
     await signIn();
@@ -418,16 +437,17 @@ describe("frame", () => {
     expect(screen.queryByRole("searchbox", { name: t("providers.search") })).toBeNull();
     window.location.hash = "#/providers";
     fireEvent(window, new HashChangeEvent("hashchange"));
-    const search = await within(banner()).findByRole("searchbox", { name: t("providers.search") });
+    const search = await within(screen.getByRole("main")).findByRole("searchbox", { name: t("providers.search") });
     expect(search.getAttribute("placeholder")).toBe(t("providers.searchPlaceholder"));
   });
 
-  it("the account menu holds the theme and sign out", async () => {
+  it("the account menu holds the theme, the language and sign out", async () => {
     await signIn();
     await screen.findByText("Chat");
     fireEvent.click(within(banner()).getByRole("button", { name: t("shell.account") }));
     expect(await screen.findByRole("menuitem", { name: t("shell.signOut") })).toBeTruthy();
     expect(screen.getByRole("menuitemcheckbox", { name: t("theme.dark") })).toBeTruthy();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Tiếng Việt" })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: t("shell.signOut") }));
     expect(await screen.findByLabelText(t("signin.token"))).toBeTruthy();
   });
@@ -441,7 +461,7 @@ describe("frame", () => {
     fireEvent.click(within(screen.getByRole("navigation", { name: t("nav.insight") })).getByRole("link", { name: t("nav.usage") }));
     expect(within(banner()).getByRole("button", { name: ui("en").appShell.openNav }).getAttribute("aria-expanded")).toBe("false");
     // Let the link's hash change land here, not in the next test.
-    expect(await within(banner()).findByRole("heading", { level: 1, name: t("usage.title") })).toBeTruthy();
+    expect(await within(screen.getByRole("main")).findByRole("heading", { level: 1, name: t("usage.title") })).toBeTruthy();
   });
 });
 
@@ -685,10 +705,10 @@ describe("providers", () => {
 
   it("the provider page names the provider, counts its accounts and links back", async () => {
     await openProvider();
-    const banner = screen.getByRole("banner");
-    expect(await within(banner).findByRole("heading", { level: 1, name: "OpenAI" })).toBeTruthy();
-    const trail = within(banner).getByRole("navigation", { name: `${t("providers.title")} / OpenAI` });
+    expect(await within(screen.getByRole("main")).findByRole("heading", { level: 1, name: "OpenAI" })).toBeTruthy();
+    const trail = within(screen.getAllByRole("banner").find((el) => !el.closest("main"))!).getByRole("navigation", { name: ui("en").breadcrumb.breadcrumb });
     expect(within(trail).getByRole("link", { name: t("providers.title") }).getAttribute("href")).toBe("#/providers");
+    expect(within(trail).getByText("OpenAI")).toBeTruthy();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByText(t("providers.connections", { n: "2" }))).toBeTruthy();
     expect(screen.getByRole("link", { name: t("providers.back") }).getAttribute("href")).toBe("#/providers");
@@ -1098,7 +1118,7 @@ describe("token saver", () => {
 
 describe("overview", () => {
   const now = 1_790_000_000;
-  const conn = (over: Record<string, unknown>) => ({
+  const conn = (over: Partial<Connection>): Connection => ({
     id: "a", provider: "openai", auth_type: "api_key", name: "work", hint: null, account: null, expires_at: null, priority: 1,
     disabled: false, cooldown_until: 0, last_error: null, last_error_at: null, last_used_at: null, created_at: 1, updated_at: 1, ...over,
   });
@@ -1166,6 +1186,34 @@ describe("overview", () => {
     expect(capShare({ ...SYSTEM, monthly_token_cap: 1000 }, 500)).toBe(50);
     expect(capShare({ ...SYSTEM, monthly_token_cap: null }, 500)).toBeNull();
     expect(capShare({ ...SYSTEM, monthly_token_cap: 0 }, 0)).toBe(100);
+  });
+});
+
+describe("page tabs", () => {
+  const paths = (tabs: { path: string }[]) => tabs.map((x) => x.path);
+  it("tabPathOf drops the query and maps an empty hash to Overview", () => {
+    expect(tabPathOf("#/usage?tab=details")).toBe("/usage");
+    expect(tabPathOf("")).toBe(HOME);
+    expect(tabPathOf("#/providers/openai")).toBe("/providers/openai");
+  });
+  it("visitTab keeps Overview first, each page once, at most the limit", () => {
+    let tabs = visitTab([], "/usage");
+    expect(paths(tabs)).toEqual([HOME, "/usage"]);
+    tabs = visitTab(tabs, "/usage");
+    expect(paths(tabs)).toEqual([HOME, "/usage"]);
+    tabs = ["/a", "/b", "/c"].reduce((acc, x) => visitTab(acc, x, 3), tabs);
+    expect(paths(tabs)).toEqual([HOME, "/b", "/c"]);
+  });
+  it("closeTabs never closes Overview and moves off a closed open page", () => {
+    const tabs = [HOME, "/a", "/b", "/c"].map((path) => ({ path }));
+    expect(closeTabs(tabs, "close", "/b", "/b")).toEqual({ tabs: [HOME, "/a", "/c"].map((path) => ({ path })), go: "/c" });
+    expect(paths(closeTabs(tabs, "others", "/b", "/b").tabs)).toEqual([HOME, "/b"]);
+    expect(closeTabs(tabs, "all", "/a", "/c")).toEqual({ tabs: [{ path: HOME }], go: HOME });
+    expect(paths(closeTabs(tabs, "left", "/b", "/c").tabs)).toEqual([HOME, "/b", "/c"]);
+  });
+  it("readTabs drops anything malformed", () => {
+    expect(readTabs('[{"path":"/usage"},{"path":3},"x",{"path":"usage"}]')).toEqual([{ path: "/usage" }]);
+    expect(readTabs("not json")).toEqual([]);
   });
 });
 

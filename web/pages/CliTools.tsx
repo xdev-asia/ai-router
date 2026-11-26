@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Badge, Banner, Button, Card, CodeBlock, Emblem, EmptyState, Grid, ResourceCard, SearchInput, Select, ShellTitle, Stack } from "@xdev-asia/ui";
+import { Badge, Banner, Button, Card, CodeBlock, Emblem, EmptyState, Grid, ResourceCard, SearchInput, Select, Stack } from "@xdev-asia/ui";
 import { useLoad, type Combo } from "../api";
 import { t, useLang, type StringKey } from "../i18n";
-import { useShellTitle } from "../shell";
+import { usePageHead } from "../shell";
 import { ui } from "../ui-labels";
 import { useHashParams } from "../url-state";
 import { baseUrl } from "./Endpoint";
@@ -746,12 +746,8 @@ function CliToolPage({ tool }: { tool: Tool }) {
   const [chosenModel, setChosenModel] = useState<string | null>(null);
   const [combos] = useLoad<Combo[]>("/combos");
 
-  useShellTitle(
-    <ShellTitle
-      parent={{ label: t("cli.title"), href: "#/cli-tools" }}
-      title={tool.name}
-      media={<Emblem name={tool.name} text={tool.mark} src={toolLogo(tool)} size="sm" />}
-    />,
+  usePageHead(
+    { parent: { label: t("cli.title"), href: "#/cli-tools" }, title: tool.name, media: <Emblem name={tool.name} text={tool.mark} src={toolLogo(tool)} size="sm" /> },
     `${tool.id}|${lang}`,
   );
 

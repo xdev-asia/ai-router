@@ -15,8 +15,8 @@ import {
   MenuButton,
   PairingCode,
   ResourceCard,
+  SearchInput,
   Select,
-  ShellTitle,
   Skeleton,
   SortableList,
   Stack,
@@ -31,7 +31,7 @@ import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { providerLogo } from "../provider-logos";
 import { ProviderModelsCard } from "./ProviderModels";
-import { useShellTitle } from "../shell";
+import { usePageHead } from "../shell";
 import { ui } from "../ui-labels";
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -143,8 +143,10 @@ function ProviderStatus({ provider, accounts }: { provider: Provider; accounts: 
  * Providers: a search field and a status filter, then one section per kind of
  * provider, each a grid of cards. A card opens the provider's connections; its switch turns them all off or on.
  */
-export function Providers({ query = "", onClearQuery }: { query?: string; onClearQuery?: () => void }) {
-  useLang();
+export function Providers() {
+  const [lang] = useLang();
+  const [query, setQuery] = useState("");
+  const onClearQuery = () => setQuery("");
   const [providers, reloadProviders] = useLoad<Provider[]>("/providers");
   const [connections, reloadConnections] = useLoad<Connection[]>("/connections");
   const [filter, setFilter] = useState<Filter>("all");
@@ -205,7 +207,17 @@ export function Providers({ query = "", onClearQuery }: { query?: string; onClea
 
   return (
     <Stack gap={4}>
-      <div className="page-actions">
+      <div className="page-toolbar">
+        <SearchInput
+          size="md"
+          className="console-search"
+          labels={ui(lang).searchInput}
+          aria-label={t("providers.search")}
+          placeholder={t("providers.searchPlaceholder")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onClear={onClearQuery}
+        />
         <Select
           aria-label={t("providers.filter")}
           icon="filter"
@@ -225,7 +237,7 @@ export function Providers({ query = "", onClearQuery }: { query?: string; onClea
           title={needle ? t("ux.providers.noMatchQuery", { query: query.trim() }) : t("providers.noMatch")}
           actions={
             <>
-              {needle && onClearQuery && <Button onClick={onClearQuery}>{t("ux.clearSearch")}</Button>}
+              {needle && <Button onClick={onClearQuery}>{t("ux.clearSearch")}</Button>}
               {filter !== "all" && <Button onClick={() => setFilter("all")}>{t("ux.clearFilter")}</Button>}
             </>
           }
@@ -356,12 +368,8 @@ export function ProviderDetail({ id }: { id: string }) {
   const accounts = order ? [...mine].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)) : mine;
   const name = provider?.name ?? id;
   // The top bar reads "Providers › logo + name" on a provider's detail page.
-  useShellTitle(
-    <ShellTitle
-      parent={{ label: t("providers.title"), href: "#/providers" }}
-      title={name}
-      media={<Emblem name={name} text={provider?.mark} color={provider?.color} src={providerLogo(id)} size="sm" />}
-    />,
+  usePageHead(
+    { parent: { label: t("providers.title"), href: "#/providers" }, title: name, media: <Emblem name={name} text={provider?.mark} color={provider?.color} src={providerLogo(id)} size="sm" /> },
     `${id}|${name}|${provider?.mark ?? ""}|${provider?.color ?? ""}|${lang}`,
   );
 

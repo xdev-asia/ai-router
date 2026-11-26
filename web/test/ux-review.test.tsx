@@ -340,11 +340,12 @@ describe("providers", () => {
   });
 
   it("names the search that matched nothing and offers to clear it", async () => {
-    const clear = vi.fn();
-    render(<Providers query="zzz" onClearQuery={clear} />);
+    render(<Providers />);
+    const search = (await screen.findByRole("searchbox", { name: t("providers.search") })) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "zzz" } });
     const empty = (await screen.findByText(t("ux.providers.noMatchQuery", { query: "zzz" }))).closest(".x-empty")!;
     fireEvent.click(within(empty as HTMLElement).getByRole("button", { name: t("ux.clearSearch") }));
-    expect(clear).toHaveBeenCalled();
+    expect(search.value).toBe("");
   });
 
   it("saves custom headers only once they changed, with a plain headline when the gateway refuses", async () => {
