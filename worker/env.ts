@@ -25,6 +25,10 @@ export interface Env {
   CODEX_RELAY_URL?: string;
   /** Secret: the shared secret the Codex relay checks (its RELAY_SECRET). Required when CODEX_RELAY_URL is set. */
   CODEX_RELAY_SECRET?: string;
+  /** Public: base URL of Clip Studio (`studio/`), `http://studio:8791` in compose. Unset: the Clips page says it is not set up. */
+  STUDIO_URL?: string;
+  /** Secret: the shared secret the studio checks (its STUDIO_SECRET). Made by compose's init service. */
+  STUDIO_SECRET?: string;
   /**
    * Public and secret: the Google OAuth client Gemini CLI signs in with (oauth.ts). Either unset: the Gemini CLI
    * provider shows as unavailable. Never kept in the code.

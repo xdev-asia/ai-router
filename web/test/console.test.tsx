@@ -311,11 +311,11 @@ describe("frame", () => {
     const name = (a: HTMLElement) => a.querySelector(".settings-nav-label")?.textContent;
     expect(within(gateway).getAllByRole("link").map(name)).toEqual([t("nav.overview"), t("nav.systems"), t("nav.providers"), t("nav.combos"), t("nav.cliTools"), t("nav.mcp")]);
     expect(within(insight).getAllByRole("link").map(name)).toEqual([t("nav.usage"), t("nav.quota"), t("nav.tokenSaver")]);
-    expect(within(system).getAllByRole("link").map(name)).toEqual([t("nav.media"), t("nav.proxyPools"), t("nav.skills"), t("nav.logs"), t("nav.settings"), t("nav.pricing")]);
+    expect(within(system).getAllByRole("link").map(name)).toEqual([t("nav.clips"), t("nav.media"), t("nav.proxyPools"), t("nav.skills"), t("nav.logs"), t("nav.settings"), t("nav.pricing")]);
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       "#/overview", "#/systems", "#/providers", "#/combos", "#/cli-tools", "#/mcp",
       "#/usage", "#/quota", "#/token-saver",
-      "#/media", "#/proxy-pools", "#/skills", "#/logs", "#/settings", "#/pricing",
+      "#/clips", "#/media", "#/proxy-pools", "#/skills", "#/logs", "#/settings", "#/pricing",
     ]);
     expect(name(within(gateway).getByRole("link", { current: "page" }))).toBe(t("nav.systems"));
     expect(within(insight).queryByRole("link", { current: "page" })).toBeNull();

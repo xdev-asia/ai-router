@@ -25,6 +25,7 @@ import { t, useLang, type StringKey } from "../i18n";
 import { useNotify } from "../notify";
 import { providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
+import { ImagePlayground } from "./ImagePlayground";
 
 export const MEDIA_TABS = ["embeddings", "images", "video", "speech", "transcription", "web"] as const;
 export type MediaTab = (typeof MEDIA_TABS)[number];
@@ -260,6 +261,7 @@ function MediaKindPanel({ kind }: { kind: MediaKind }) {
           <CodeBlock language="bash" code={mediaExample(kind, window.location.origin, path)} labels={ui(lang).codeBlock} />
         </Stack>
       </Card>
+      {kind === "images" && media.status === "ready" && <ImagePlayground mediaProviders={(media.data.media_providers ?? []).filter((p) => p.kinds.includes("images"))} />}
       <section className="providers-section" aria-labelledby="media-providers">
         <div className="providers-section-head">
           <h2 className="providers-section-title" id="media-providers">

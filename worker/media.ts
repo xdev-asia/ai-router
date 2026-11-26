@@ -85,6 +85,11 @@ export function sendEmbeddings(c: Context<AppEnv>, upstream: Upstream, system: S
   return send(c, upstream, system, MEDIA_KINDS[0], { kind: "json", data });
 }
 
+/** An OpenAI images request sent for `system` as /v1/images/generations sends it (the console's playground). */
+export function sendImages(c: Context<AppEnv>, upstream: Upstream, system: System, data: Record<string, unknown>): Promise<Response> {
+  return send(c, upstream, system, MEDIA_KINDS[1], { kind: "json", data });
+}
+
 async function send(c: Context<AppEnv>, upstream: Upstream, system: System, kind: Kind, body: Body): Promise<Response> {
   const raw = modelOf(body);
   const media = mediaTarget(raw, kind.kind);

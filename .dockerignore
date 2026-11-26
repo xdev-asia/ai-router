@@ -15,3 +15,4 @@ relay
 *.md
 docs
 compose*.yaml
+studio
