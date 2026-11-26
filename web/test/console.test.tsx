@@ -285,6 +285,26 @@ describe("frame", () => {
     expect(screen.queryByRole("button", { name: ui("en").tabStrip.close(t("nav.overview")) })).toBeNull();
   });
 
+  it("a right click on a tab opens its menu under that tab, at the pointer, and acts on that tab", async () => {
+    await signIn();
+    await screen.findByText("Chat");
+    window.location.hash = "#/usage";
+    fireEvent(window, new HashChangeEvent("hashchange"));
+    await within(screen.getByRole("main")).findByRole("heading", { level: 1, name: t("usage.title") });
+    const strip = document.querySelector<HTMLElement>(".console-tabs-strip")!;
+    const systems = [...document.querySelectorAll<HTMLElement>(".console-tabs [role=tab]")].find((x) => x.textContent === t("nav.systems"))!;
+    strip.getBoundingClientRect = () => ({ left: 100, top: 50, right: 900, bottom: 90, width: 800, height: 40, x: 100, y: 50, toJSON: () => ({}) });
+    systems.getBoundingClientRect = () => ({ left: 200, top: 50, right: 320, bottom: 86, width: 120, height: 36, x: 200, y: 50, toJSON: () => ({}) });
+    fireEvent.contextMenu(systems, { clientX: 250, clientY: 70 });
+    const anchor = await waitFor(() => document.querySelector<HTMLElement>(".console-tab-anchor")!);
+    // Pointer x and the tab's bottom edge, inside the strip: not the chevron at the strip's end.
+    expect(anchor.style.left).toBe("150px");
+    expect(anchor.style.top).toBe("36px");
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("shell.closeTab") }));
+    await waitFor(() => expect([...document.querySelectorAll(".console-tabs [role=tab]")].map((x) => x.textContent)).toEqual([t("nav.overview"), t("nav.usage")]));
+    expect(document.querySelector(".console-tab-anchor")).toBeNull();
+  });
+
   it("each page puts its own title in its header and the browser tab", async () => {
     await signIn();
     await screen.findByText("Chat");

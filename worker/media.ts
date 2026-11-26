@@ -122,6 +122,7 @@ async function send(c: Context<AppEnv>, upstream: Upstream, system: System, kind
     }
     if (up.ok) {
       c.executionCtx.waitUntil(noteSuccess(c.env.DB, cand, now));
+      if (kind.kind === "video") await rememberVideoJob(c.env.DB, up, system.id, provider, cand.connection, now);
       const usage: Promise<Usage> =
         kind.kind === "embeddings"
           ? up
@@ -220,9 +221,51 @@ async function sendMedia(c: Context<AppEnv>, upstream: Upstream, system: System,
   return last ?? errorResponse(500, `not_configured: no key for ${p.id}`, "server_error", "not_configured", { "x-should-retry": "false" });
 }
 
+const VIDEO_KEEP_S = 7 * 24 * 3600;
+const VIDEO_ID = /^[A-Za-z0-9_.-]{1,200}$/;
+
+/** A video job the provider answered: noted, so its status and content go to the same account (getVideo). */
+async function rememberVideoJob(db: D1Database, up: Response, systemId: string, provider: string, connection: string | null, now: number): Promise<void> {
+  if (!(up.headers.get("content-type") ?? "").includes("json")) return;
+  const id = ((await up.clone().json().catch(() => null)) as { id?: unknown } | null)?.id;
+  if (typeof id !== "string" || !VIDEO_ID.test(id)) return;
+  await db.batch([
+    db.prepare("INSERT OR REPLACE INTO video_job (id, system_id, provider, connection, created_at) VALUES (?, ?, ?, ?, ?)").bind(id, systemId, provider, connection, now),
+    db.prepare("DELETE FROM video_job WHERE created_at < ?").bind(now - VIDEO_KEEP_S),
+  ]);
+}
+
+/**
+ * GET /v1/videos/<id> and /v1/videos/<id>/content: to the provider and account that made the job, for the system
+ * that made it only (anyone else: 404, as for an unknown job). Not metered: the POST was.
+ */
+async function getVideo(c: Context<AppEnv>, upstream: Upstream, gateError: (g: GateFailure) => Response, content: boolean): Promise<Response> {
+  const g = await checkSystem(c.env, c.req.raw, false);
+  if (!g.ok) return gateError(g);
+  const id = c.req.param("id") ?? "";
+  const job = VIDEO_ID.test(id)
+    ? await c.env.DB.prepare("SELECT provider, connection FROM video_job WHERE id = ? AND system_id = ?").bind(id, g.system.id).first<{ provider: ProviderId; connection: string | null }>()
+    : null;
+  if (!job) return errorResponse(404, `no video job ${id}`, "invalid_request_error", "not_found");
+  const def = providerDef(job.provider);
+  if (!def.baseUrl) return errorResponse(404, `no video job ${id}`, "invalid_request_error", "not_found");
+  const cand = (await candidatesFor(c.env, job.provider, g.system.id, Math.floor(Date.now() / 1000), upstream)).find((x) => x.connection === job.connection);
+  const key = cand ? await cand.key() : null;
+  if (typeof key !== "string") return errorResponse(410, "the account that made this video is gone or cannot be used", "invalid_request_error", "not_found");
+  const query = new URL(c.req.url).search;
+  try {
+    const up = await upstream(new Request(`${def.baseUrl}/videos/${encodeURIComponent(id)}${content ? "/content" : ""}${query}`, { headers: { authorization: `Bearer ${key}` } }));
+    return passThrough(up);
+  } catch {
+    return errorResponse(502, `could not reach ${job.provider}`, "api_error");
+  }
+}
+
 /** Registers the media paths on the OpenAI surface (openai.ts), before its 404. */
 export function mediaRoutes(r: Hono<AppEnv>, upstream: Upstream, gateError: (g: GateFailure) => Response): void {
   for (const kind of MEDIA_KINDS) r.post(kind.path, (c) => handle(c, upstream, kind, gateError));
+  r.get("/v1/videos/:id", (c) => getVideo(c, upstream, gateError, false));
+  r.get("/v1/videos/:id/content", (c) => getVideo(c, upstream, gateError, true));
 }
 
 /** The console's Media page: the endpoints and the providers that can serve them. */

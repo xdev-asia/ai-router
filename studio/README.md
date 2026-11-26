@@ -41,12 +41,11 @@ the models it uses. `GET /api/models` lists them. Typical picks:
 | Voice | `openai/gpt-4o-mini-tts` with voice `alloy`; ElevenLabs or another provider with its own voice id |
 | Video | `openai/sora-2` |
 
-**Video is experimental.** The client follows the OpenAI videos API: `POST /v1/videos` (`{model, prompt, seconds:
+**Video.** The client follows the OpenAI videos API: `POST /v1/videos` (`{model, prompt, seconds:
 "4"|"8"|"12", size: "720x1280"}`), then `GET /v1/videos/{id}` until `status: completed`, then
-`GET /v1/videos/{id}/content`. ai-router passes `POST /v1/videos` through today but does not route the two GETs (its
-catch-all answers 404), so a provider that answers a job id needs ai-router to route them first. A provider that
-answers the video at once (`data[0].url`, `data[0].b64_json`, `url`, or the MP4 bytes) works now. Until then a
-failed video scene becomes a still.
+`GET /v1/videos/{id}/content`. ai-router routes the two GETs to the account that made the job. A provider that
+answers the video at once (`data[0].url`, `data[0].b64_json`, `url`, or the MP4 bytes) works too. A video scene
+that fails becomes a still, with the reason in the scene's `note`.
 
 ## Channels
 

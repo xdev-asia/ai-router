@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setAuth } from "../api";
 import { resetLang, t } from "../i18n";
@@ -60,7 +60,9 @@ describe("image playground", () => {
   it("asks for a prompt, then draws as the chosen system and shows the image", async () => {
     render(<Media tab="images" />);
     const card = (await screen.findByRole("heading", { name: t("imgplay.title") })).closest("section, article, div.x-card") as HTMLElement;
-    const drawButton = await within(card).findByRole("button", { name: t("imgplay.draw") });
+    const drawButton = (await within(card).findByRole("button", { name: t("imgplay.draw") })) as HTMLButtonElement;
+    // Off until the systems have loaded.
+    await waitFor(() => expect(drawButton.disabled).toBe(false));
     fireEvent.click(drawButton);
     expect(await within(card).findByText(t("imgplay.promptRequired"))).toBeTruthy();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
@@ -83,7 +85,9 @@ describe("image playground", () => {
     render(<Media tab="images" />);
     const prompt = await screen.findByLabelText(t("imgplay.prompt"));
     fireEvent.change(prompt, { target: { value: "x" } });
-    fireEvent.click(screen.getByRole("button", { name: t("imgplay.draw") }));
+    const draw = screen.getByRole("button", { name: t("imgplay.draw") }) as HTMLButtonElement;
+    await waitFor(() => expect(draw.disabled).toBe(false));
+    fireEvent.click(draw);
     expect(await screen.findByText("this system may not use this model")).toBeTruthy();
   });
 });

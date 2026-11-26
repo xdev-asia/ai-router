@@ -703,7 +703,9 @@ body {
 .x-shell[data-nav-collapsed] .console-nav-foot .x-service-status { display: none; }
 /* The tab row cancels main's side and top padding, so it runs from edge to edge under the top bar. */
 .console-tabs { display: flex; align-items: flex-end; gap: var(--x-space-2); margin: calc(-1 * var(--x-space-6)) calc(-1 * var(--x-space-6)) var(--x-space-4); padding-right: var(--x-space-2); border-bottom: 1px solid var(--line); background: var(--bg-1); }
-.console-tabs-strip { flex: 1; min-width: 0; }
+.console-tabs-strip { position: relative; flex: 1; min-width: 0; }
+/* Where a right-clicked tab's menu hangs from (App.tsx): a point, no box. */
+.console-tab-anchor { position: absolute; width: 0; height: 0; pointer-events: none; }
 .console-tabs-tools { display: flex; flex: none; align-items: center; gap: var(--x-space-1); padding-bottom: var(--x-space-1); }
 .console-page { display: flex; flex-direction: column; gap: var(--x-space-4); }
 /* The page's flex gap spaces the header from the content; the header's own bottom margin would double it. */
