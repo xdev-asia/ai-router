@@ -60,6 +60,8 @@ the compatibility date is before 2026-11-17.
 | `CONSOLE_EMAILS` | var | Comma-separated xDev account emails (verified) allowed into the console |
 | `CODEX_RELAY_URL` | var | Base URL of the Codex relay (`https://relay.example.com`). Unset: Codex requests go straight to chatgpt.com, which refuses them from a Worker ([Codex relay](#codex-relay)) |
 | `CODEX_RELAY_SECRET` | secret | The relay's `RELAY_SECRET` (`openssl rand -base64 32`). Required when `CODEX_RELAY_URL` is set |
+| `STUDIO_URL` | var | Base URL of [Clip Studio](#clip-studio) (`http://studio:8791` in compose). Unset: the Clips page says the studio is not set up |
+| `STUDIO_SECRET` | secret | The studio's `STUDIO_SECRET`. Required when `STUDIO_URL` is set |
 
 All of them go in `.dev.vars` next to `compose.yaml` on the server (git-ignored, one `NAME=value` per line), and
 all are optional. On the first `docker compose up`, the `init` service makes `CONNECTIONS_KEY`, the admin token
@@ -75,7 +77,7 @@ hostname, for one), then put the client id in `OIDC_CLIENT_ID` and the secret in
 
 ## Console
 
-`/` serves the console (`web/`, built into `dist/`). Hash routes: `#/systems`, `#/providers`, `#/providers/<id>`, `#/combos`, `#/usage`.
+`/` serves the console (`web/`, built into `dist/`). Hash routes: `#/systems`, `#/providers`, `#/providers/<id>`, `#/combos`, `#/usage`, `#/media/<tab>`, `#/clips`.
 
 Two ways in:
 
@@ -152,6 +154,32 @@ Worker adds that header to every request it sends. So the gateway cannot call Co
 ([In Docker](#in-docker)); nothing to set. On its own: `RELAY_SECRET=... PORT=8790 node relay/codex-relay.mjs`, behind
 HTTPS when it is on another host (the access token and the secret travel in its headers), with the gateway's
 `CODEX_RELAY_URL` and `CODEX_RELAY_SECRET` pointing at it.
+
+## Clip Studio
+
+`studio/` is a sidecar like the Codex relay: a Node service (Hono, SQLite, ffmpeg) in its own container that makes
+short vertical clips (9:16) from a topic and posts them to YouTube Shorts, TikTok, Facebook Reels, Instagram Reels,
+Telegram and Zalo OA. Every model call it makes goes through this gateway (script by chat, voice by
+`/v1/audio/speech`, scenes by `/v1/images/generations` or `/v1/videos`), so keys, fallbacks and usage stay here.
+[studio/README.md](studio/README.md) has its steps, channels and API.
+
+The console's **Clips** page (`#/clips`, `#/clips/channels`, `#/clips/<id>`) is its UI:
+
+| Gateway path | What |
+|---|---|
+| `GET /admin/studio/status` | Whether `STUDIO_URL`/`STUDIO_SECRET` are set, the studio answers, and it has a gateway token |
+| `POST /admin/studio/connect` | Makes the system `studio` (every model allowed; narrow it on the Systems page) or renews its token, and hands the token and `<this origin>/studio` (its public files address) to the studio. The token is never answered |
+| `/admin/studio/api/*` | The studio's `/api/*`, with `STUDIO_SECRET` added. Console access as for any `/admin` call |
+| `GET /studio/files/<id>.mp4`, `.jpg` | Public, no sign-in: a finished clip and its cover (`Range` passed on), for previews and for Instagram and Zalo, which fetch the file themselves. Nothing else of the studio is public |
+
+In compose, `init` makes `studio-secret` and `studio-channels-key` in the `secrets` volume (also for a stack made
+before the studio, on its next `up`) and gives the gateway `STUDIO_URL` and `STUDIO_SECRET`. The studio keeps its
+database and clips in the `studio` volume. Optional settings in `.studio.env` (git-ignored), such as
+`SUBTITLE_FONT`. Instagram needs the gateway on a public domain ([A public domain](#a-public-domain)).
+
+Video scenes: the gateway passes `POST /v1/videos` on but does not route `GET /v1/videos/<id>` and its content
+yet, so a provider that answers a job id (Sora) cannot finish; the studio then uses an image for that scene and
+says why.
 
 ## Model sync
 
@@ -387,12 +415,13 @@ docker compose exec ai-router cat /secrets/admin-token   # the console's admin t
 
 | Service | What it does |
 |---|---|
-| `init` | First run only: makes `CONNECTIONS_KEY`, the admin token (the gateway gets its SHA-256) and the relay secret, in the `secrets` volume |
+| `init` | First run only: makes `CONNECTIONS_KEY`, the admin token (the gateway gets its SHA-256), the relay secret and the studio's secret and channels key, in the `secrets` volume |
 | `ai-router` | The gateway, `ghcr.io/xdev-asia/ai-router`. Applies the D1 migrations on start; the local D1 lives in the `state` volume |
 | `codex-relay` | The [Codex relay](#codex-relay), `ghcr.io/xdev-asia/ai-router-relay`, reached as `http://codex-relay:8790`, no port on this machine |
-| `watchtower` | Checks ghcr.io every 5 minutes and restarts `ai-router` or `codex-relay` on a new image ([nicholas-fedor/watchtower](https://github.com/nicholas-fedor/watchtower), the maintained fork) |
+| `studio` | [Clip Studio](#clip-studio), `ghcr.io/xdev-asia/ai-router-studio`, reached as `http://studio:8791`, no port on this machine; its data in the `studio` volume |
+| `watchtower` | Checks ghcr.io every 5 minutes and restarts `ai-router`, `codex-relay` or `studio` on a new image ([nicholas-fedor/watchtower](https://github.com/nicholas-fedor/watchtower), the maintained fork) |
 
-CI builds both images on every push to `main` (job `image` in `.github/workflows/ci.yml`), tagged `latest` and
+CI builds the three images on every push to `main` (job `image` in `.github/workflows/ci.yml`), tagged `latest` and
 `sha-<commit>`, for amd64 and arm64. `docker compose up` pulls `latest` every time (`pull_policy: always`), and
 watchtower picks up later pushes. To stay on one build, set the image to a `sha-` tag and stop watchtower.
 

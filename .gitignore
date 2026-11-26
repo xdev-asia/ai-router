@@ -8,3 +8,5 @@ dist
 .codex-relay.env
 .claude/
 .env
+.studio.env
+studio/data

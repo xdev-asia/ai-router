@@ -23,5 +23,9 @@ services:
     build: ./relay
     image: ai-router-relay:dev
     pull_policy: build
+  studio:
+    build: ./studio
+    image: ai-router-studio:dev
+    pull_policy: build
   watchtower:
     profiles: [watchtower]

@@ -32,6 +32,16 @@ jobs:
       - run: corepack pnpm run test
       - run: corepack pnpm run test:web
       - run: node --test relay/test/codex-relay.test.mjs docker/test/docker.test.mjs
+
+      # Clip Studio (studio/) has its own lockfile, as its image builds from that folder alone. ffmpeg runs the
+      # whole render test.
+      - name: Studio
+        working-directory: studio
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm run typecheck
+          corepack pnpm run test
       - run: corepack pnpm run build
 
   # Docker images for compose.yaml, on ghcr.io: `latest` and `sha-<commit>`, for amd64 and arm64.
@@ -51,6 +61,8 @@ jobs:
             context: .
           - image: ai-router-relay
             context: relay
+          - image: ai-router-studio
+            context: studio
     steps:
       - uses: actions/checkout@v7
 

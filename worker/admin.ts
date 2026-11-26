@@ -14,6 +14,7 @@ import { finishLogin, oauthDef, oauthMissingEnv, pollLogin, startLogin } from ".
 import type { Upstream } from "./proxy";
 import { reportRoutes } from "./report";
 import { basicChatRoutes } from "./basic-chat";
+import { studioAdminRoutes } from "./studio";
 import { requestDetailRoutes } from "./request-details";
 import { backupRoutes } from "./backup";
 import { logRoutes } from "./logs";
@@ -79,7 +80,7 @@ async function getSystem(db: D1Database, id: string): Promise<System | null> {
  * or the console's xDev ID session cookie (see console-auth.ts).
  * A system's plain token is returned once, on create and rotate, and stored only as its SHA-256.
  */
-export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: boolean } = {}): Hono<AppEnv> {
+export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: boolean; studio?: Upstream } = {}): Hono<AppEnv> {
   const a = new Hono<AppEnv>();
 
   a.use("*", async (c, next) => {
@@ -99,6 +100,8 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
   });
 
   basicChatRoutes(a, upstream);
+  // Clip Studio, for the console only (not the MCP tools): without the provider deadlines, an upload may be long.
+  if (opts.studio) studioAdminRoutes(a, opts.studio);
   requestDetailRoutes(a);
   mcpTokenRoutes(a);
 
@@ -581,6 +584,7 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
       console_emails: (e.CONSOLE_EMAILS ?? "").split(",").filter((x) => x.trim() !== "").length,
       connections_key: set(e.CONNECTIONS_KEY),
       codex_relay: set(e.CODEX_RELAY_URL) && set(e.CODEX_RELAY_SECRET),
+      studio: set(e.STUDIO_URL) && set(e.STUDIO_SECRET),
     });
   });
   ssoRoutes(a);

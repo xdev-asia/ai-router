@@ -2,7 +2,8 @@
 #
 # Images come from ghcr.io, built by CI on every push to main. `up` pulls the latest ones, and watchtower
 # checks every 5 minutes and restarts a service on a new image. Data (local D1, first-run secrets) is in volumes.
-# Your own settings, both optional: .dev.vars for the gateway, .codex-relay.env for the relay (README, In Docker).
+# Your own settings, all optional: .dev.vars for the gateway, .codex-relay.env for the relay, .studio.env for the
+# studio (README, In Docker).
 # Build from source instead: compose.dev.yaml. The public domain: the tunnel profile (cloudflared, below).
 name: ai-router
 
@@ -61,6 +62,26 @@ services:
       init:
         condition: service_completed_successfully
 
+  # Clip Studio (studio/): makes short clips through the gateway and posts them to channels; the console's Clips page.
+  # Reached as http://studio:8791 from ai-router only: no port on the host. Clips and covers are public through
+  # the gateway at /studio/files/. Optional settings in .studio.env (README, Clip Studio).
+  studio:
+    <<: *updated
+    image: ghcr.io/xdev-asia/ai-router-studio:latest
+    environment:
+      STUDIO_SECRET_FILE: /secrets/studio-secret
+      CHANNELS_KEY_FILE: /secrets/studio-channels-key
+      AI_ROUTER_URL: http://ai-router:8787
+    env_file:
+      - path: .studio.env
+        required: false
+    volumes:
+      - secrets:/secrets:ro
+      - studio:/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
   # The public domain (README, A public domain): a Cloudflare Tunnel from this machine, so no port is opened.
   # Only with `docker compose --profile tunnel up -d`, and TUNNEL_TOKEN in .env next to this file.
   cloudflared:
@@ -92,3 +113,4 @@ services:
 volumes:
   state:
   secrets:
+  studio:

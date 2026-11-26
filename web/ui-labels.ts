@@ -13,6 +13,7 @@ const labels = {
     codeBlock: { copy: "Copy", copied: "Copied" },
     searchInput: { search: "Search", clear: "Clear search", count: (n: number) => (n === 1 ? "1 result" : `${n} results`) },
     searchPicker: { clear: "Clear search" },
+    field: { show: "Show", hide: "Hide" },
     combobox: { noResults: "No match", create: (text: string) => `Use “${text}”`, remove: (label: string) => `Remove ${label}`, clear: "Clear" },
     bulkBar: { region: "Bulk actions", selected: (n: number) => `${n} selected`, clear: "Clear selection" },
     sortableList: {
@@ -42,6 +43,7 @@ const labels = {
     codeBlock: { copy: "Sao chép", copied: "Đã sao chép" },
     searchInput: { search: "Tìm", clear: "Xóa tìm kiếm", count: (n: number) => `${n} kết quả` },
     searchPicker: { clear: "Xóa tìm kiếm" },
+    field: { show: "Hiện", hide: "Ẩn" },
     combobox: { noResults: "Không có kết quả", create: (text: string) => `Dùng “${text}”`, remove: (label: string) => `Bỏ ${label}`, clear: "Xóa" },
     bulkBar: { region: "Thao tác hàng loạt", selected: (n: number) => `Đã chọn ${n}`, clear: "Bỏ chọn" },
     sortableList: {

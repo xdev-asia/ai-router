@@ -16,6 +16,7 @@ import { Overview } from "./pages/Overview";
 import { CliTools } from "./pages/CliTools";
 import { Mcp } from "./pages/Mcp";
 import { Logs } from "./pages/Logs";
+import { Clips } from "./pages/Clips";
 import { Media } from "./pages/Media";
 import { ProxyPools } from "./pages/ProxyPools";
 import { Settings } from "./pages/Settings";
@@ -31,7 +32,7 @@ import { ui } from "./ui-labels";
 import { hashRoute } from "./url-state";
 import { BUILD, buildLabel, useNewBuild } from "./version";
 
-export type Page = "overview" | "systems" | "providers" | "combos" | "cli-tools" | "mcp" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
+export type Page = "overview" | "systems" | "providers" | "combos" | "cli-tools" | "mcp" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing" | "clips";
 
 /** Sidebar order, icons and the strings of each page's title in the top bar. */
 const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKey; icon: IconName }[] = [
@@ -44,6 +45,7 @@ const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKe
   { id: "usage", nav: "nav.usage", title: "usage.title", description: "usage.description", icon: "activity" },
   { id: "quota", nav: "nav.quota", title: "quota.title", description: "quota.description", icon: "clock" },
   { id: "token-saver", nav: "nav.tokenSaver", title: "saver.title", description: "saver.description", icon: "zap" },
+  { id: "clips", nav: "nav.clips", title: "clips.title", description: "clips.description", icon: "play" },
   { id: "media", nav: "nav.media", title: "media.title", description: "media.description", icon: "image" },
   { id: "proxy-pools", nav: "nav.proxyPools", title: "pools.title", description: "pools.description", icon: "server" },
   { id: "skills", nav: "nav.skills", title: "skills.title", description: "skills.description", icon: "book" },
@@ -58,7 +60,7 @@ const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKe
 const GROUPS: { title: StringKey; pages: Page[] }[] = [
   { title: "nav.title", pages: ["overview", "systems", "providers", "combos", "cli-tools", "mcp"] },
   { title: "nav.insight", pages: ["usage", "quota", "token-saver"] },
-  { title: "nav.system", pages: ["media", "proxy-pools", "skills", "logs", "translator", "settings", "pricing"] },
+  { title: "nav.system", pages: ["clips", "media", "proxy-pools", "skills", "logs", "translator", "settings", "pricing"] },
 ];
 
 /**
@@ -69,6 +71,7 @@ export function pageFromHash(full: string): Page {
   const hash = hashRoute(full);
   if (hash === "#/providers" || hash.startsWith("#/providers/")) return "providers";
   if (hash === "#/media" || hash.startsWith("#/media/")) return "media";
+  if (hash === "#/clips" || hash.startsWith("#/clips/")) return "clips";
   if (hash.startsWith("#/cli-tools/")) return "cli-tools";
   const id = hash.slice(2);
   return PAGES.some((p) => p.id === id) ? (id as Page) : "overview";
@@ -186,7 +189,7 @@ function useFullscreen(): [boolean, () => void] {
 /** The tab a route belongs to: a page's own sub-views (Media's tabs) share one tab. */
 const tabOf = (hash: string): string => {
   const path = tabPathOf(hashRoute(hash));
-  return path.startsWith("/media/") ? "/media" : path;
+  return path.startsWith("/media/") ? "/media" : path.startsWith("/clips/") ? "/clips" : path;
 };
 
 /**
@@ -432,6 +435,8 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
                 <CliTools tool={cliToolFromHash(hash)} />
               ) : page === "mcp" ? (
                 <Mcp />
+              ) : page === "clips" ? (
+                <Clips hash={hashRoute(hash)} />
               ) : page === "media" ? (
                 <Media tab={/^#\/media\/([a-z-]+)$/.exec(hashRoute(hash))?.[1] ?? null} />
               ) : page === "proxy-pools" ? (

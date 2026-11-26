@@ -1,7 +1,7 @@
 // Tests for the Docker helpers: first-run secrets and the .dev.vars wrangler reads. Fake values only.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -30,6 +30,32 @@ describe("first-run secrets", () => {
     const second = ensureSecrets(dir);
     assert.equal(second.created, false);
     assert.deepEqual(JSON.parse(readFileSync(join(dir, "gateway.json"), "utf8")), env, "kept on later runs");
+  });
+
+  it("gives the studio its secret and channels key, and the gateway STUDIO_URL and STUDIO_SECRET", () => {
+    const env = JSON.parse(readFileSync(join(dir, "gateway.json"), "utf8"));
+    const studio = readFileSync(join(dir, "studio-secret"), "utf8");
+    assert.ok(studio.length >= 32);
+    assert.equal(env.STUDIO_SECRET, studio);
+    assert.equal(env.STUDIO_URL, "http://studio:8791");
+    assert.equal(Buffer.from(readFileSync(join(dir, "studio-channels-key"), "utf8"), "base64").length, 32);
+  });
+});
+
+describe("an older stack's secrets", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ai-router-secrets-old-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("gets the studio's secrets added once, keeping what was there", () => {
+    const old = { CONNECTIONS_KEY: "kept", ADMIN_TOKEN_SHA256: "kept", CODEX_RELAY_URL: "http://codex-relay:8790", CODEX_RELAY_SECRET: "kept" };
+    writeFileSync(join(dir, "gateway.json"), JSON.stringify(old));
+    const first = ensureSecrets(dir);
+    assert.deepEqual(first, { created: false, studio: true });
+    const env = JSON.parse(readFileSync(join(dir, "gateway.json"), "utf8"));
+    assert.equal(env.CONNECTIONS_KEY, "kept");
+    assert.equal(env.STUDIO_SECRET, readFileSync(join(dir, "studio-secret"), "utf8"));
+    assert.deepEqual(ensureSecrets(dir), { created: false, studio: false });
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, "gateway.json"), "utf8")), env);
   });
 });
 

@@ -35,6 +35,9 @@ export default defineConfig({
             // .dev.vars is read too: keep a local relay out of the tests (worker/test/codex.test.ts sets its own).
             CODEX_RELAY_URL: "",
             CODEX_RELAY_SECRET: "",
+            // The same for a local studio (worker/test/studio.test.ts sets its own).
+            STUDIO_URL: "",
+            STUDIO_SECRET: "",
           },
         },
       };

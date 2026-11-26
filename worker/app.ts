@@ -12,6 +12,7 @@ import { openaiRoutes } from "./openai";
 import { logRequest } from "./logs";
 import { anthropicRoutes, type Upstream } from "./proxy";
 import { skillRoutes } from "./skills";
+import { studioFileRoutes } from "./studio";
 import { withDeadlines, withTimeouts } from "./timeouts";
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -72,11 +73,12 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   });
   const idp: Idp = deps.idp ?? ((req) => fetch(req));
   app.route("/auth", consoleAuthRoutes(idp));
-  const admin = adminRoutes(upstream, idp);
+  const admin = adminRoutes(upstream, idp, { studio: deps.upstream });
   app.route("/admin", admin);
   // MCP (mcp.ts): the admin API as tools, for any AI client, with the admin token.
   app.route("/mcp", mcpRoutes(adminRoutes(upstream, idp, { trusted: true })));
   app.route("/skills", skillRoutes());
+  studioFileRoutes(app, deps.upstream);
   const anthropic = anthropicRoutes(upstream);
   const openai = openaiRoutes(upstream);
   app.route("/anthropic", anthropic);

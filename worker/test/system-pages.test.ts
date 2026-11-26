@@ -165,7 +165,7 @@ describe("backup", () => {
 describe("settings info", () => {
   it("says which sign-in secrets are set, never their values", async () => {
     const r = await admin(fakeUpstream(() => json({})), "GET", "/settings/info");
-    expect(JSON.parse(r.text)).toEqual({ admin_token: true, oidc: true, console_emails: 2, connections_key: true, codex_relay: false });
+    expect(JSON.parse(r.text)).toEqual({ admin_token: true, oidc: true, console_emails: 2, connections_key: true, codex_relay: false, studio: false });
     expect(r.text).not.toContain("test-oidc-secret");
   });
 });
