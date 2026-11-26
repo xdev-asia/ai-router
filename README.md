@@ -177,9 +177,10 @@ before the studio, on its next `up`) and gives the gateway `STUDIO_URL` and `STU
 database and clips in the `studio` volume. Optional settings in `.studio.env` (git-ignored), such as
 `SUBTITLE_FONT`. Instagram needs the gateway on a public domain ([A public domain](#a-public-domain)).
 
-Video scenes: the gateway passes `POST /v1/videos` on but does not route `GET /v1/videos/<id>` and its content
-yet, so a provider that answers a job id (Sora) cannot finish; the studio then uses an image for that scene and
-says why.
+Video scenes go through `POST /v1/videos`, then `GET /v1/videos/<id>` until done and `GET /v1/videos/<id>/content`
+for the MP4. The gateway notes which provider and account made each job (`video_job`, 7 days), so the two GETs go to
+that account, for the system that made the job only (any other: 404). A scene whose video fails becomes an image,
+and the studio says why.
 
 ## Model sync
 
