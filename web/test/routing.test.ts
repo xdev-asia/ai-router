@@ -19,4 +19,8 @@ describe("wrangler routing", () => {
     const missed = API_FORMATS.flatMap((f) => API_PATHS[f]).filter((path) => !patterns.some((p) => reaches(p, path)));
     expect(missed).toEqual([]);
   });
+
+  it("sends the studio's public clips to the worker (worker/studio.ts), so Instagram and Zalo get the file", () => {
+    expect(workerFirst().some((p) => reaches(p, "/studio/files/0f8fad5b-d9cb-469f-a165-70867728950e.mp4"))).toBe(true);
+  });
 });

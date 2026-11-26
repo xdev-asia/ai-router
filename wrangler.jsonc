@@ -18,7 +18,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/admin/*", "/anthropic/*", "/openai/*", "/auth/*", "/health", "/api/health", "/v1", "/v1/*", "/v1beta/*", "/skills", "/skills/*", "/mcp", "/mcp/*"]
+    "run_worker_first": ["/admin/*", "/anthropic/*", "/openai/*", "/auth/*", "/health", "/api/health", "/v1", "/v1/*", "/v1beta/*", "/skills", "/skills/*", "/mcp", "/mcp/*", "/studio/*"]
   },
   // Other Workers can also reach the gateway through a service binding.
   "routes": [{ "pattern": "ai-router.xdev.asia", "custom_domain": true }],
