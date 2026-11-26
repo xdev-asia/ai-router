@@ -213,6 +213,8 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
   const [head, setHead] = useState<PageHead | null>(null);
   const [tabs, setTabs] = useState<OpenPage[]>(() => readTabs(readStored(TABS_KEY)));
   const [tabMenu, setTabMenu] = useState<string | null>(null);
+  // A right click opens the menu under the pointer, on the tab clicked; the chevron keeps its own menu.
+  const [tabContext, setTabContext] = useState<{ path: string; x: number; y: number } | null>(null);
   const [reload, setReload] = useState(0);
   /** Names of the detail pages seen this session (a provider, a CLI tool), so their tabs keep them. */
   const [names, setNames] = useState<Record<string, string>>({});
@@ -276,6 +278,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
   };
   const act = (action: TabAction, target: string) => {
     setTabMenu(null);
+    setTabContext(null);
     const next = closeTabs(tabs, action, target, tabPath);
     setTabs(next.tabs);
     if (next.go) go(next.go);
@@ -284,14 +287,17 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
     const tab = (e.target as HTMLElement).closest('[role="tab"]');
     const at = tab ? Array.from(stripRef.current?.querySelectorAll('[role="tab"]') ?? []).indexOf(tab) : -1;
     const hit = tabs[at];
-    if (!hit) return;
+    const box = stripRef.current?.getBoundingClientRect();
+    if (!hit || !tab || !box) return;
     e.preventDefault();
-    setTabMenu(hit.path);
+    setTabMenu(null);
+    // Pointer's x, the tab's bottom edge: the menu opens down from the tab, where the click was.
+    setTabContext({ path: hit.path, x: e.clientX - box.left, y: tab.getBoundingClientRect().bottom - box.top });
   };
   const menuFor = (path: string) => {
     const at = tabs.findIndex((x) => x.path === path);
     return [
-      { label: t("shell.reloadPage"), disabled: path !== tabPath, onSelect: () => { setTabMenu(null); setReload((n) => n + 1); } },
+      { label: t("shell.reloadPage"), disabled: path !== tabPath, onSelect: () => { setTabMenu(null); setTabContext(null); setReload((n) => n + 1); } },
       { type: "separator" as const },
       { label: t("shell.closeTab"), disabled: at < 0 || path === HOME, onSelect: () => act("close", path) },
       { label: t("shell.closeLeft"), disabled: !tabs.slice(0, Math.max(at, 0)).some((x) => x.path !== HOME), onSelect: () => act("left", path) },
@@ -383,6 +389,13 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
                   onReorder={(ids) => setTabs((list) => ids.flatMap((id) => list.filter((x) => x.path === id)))}
                   onAdd={false}
                 />
+                {tabContext && (
+                  <div className="console-tab-anchor" style={{ left: tabContext.x, top: tabContext.y }}>
+                    <Popover open onClose={() => setTabContext(null)} placement="bottom-start" label={t("shell.tabActions")}>
+                      <Menu label={t("shell.tabActions")} items={menuFor(tabContext.path)} onClose={() => setTabContext(null)} />
+                    </Popover>
+                  </div>
+                )}
               </div>
               <div className="console-tabs-tools">
                 <IconButton icon="refresh" label={t("shell.reloadPage")} onClick={() => setReload((n) => n + 1)} />
@@ -392,7 +405,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
                   onClose={() => setTabMenu(null)}
                   placement="bottom-end"
                   label={t("shell.tabActions")}
-                  trigger={(a) => <IconButton icon="chevron" label={t("shell.tabActions")} onClick={() => setTabMenu(tabMenu === null ? tabPath : null)} {...a} />}
+                  trigger={(a) => <IconButton icon="chevron" label={t("shell.tabActions")} onClick={() => (setTabContext(null), setTabMenu(tabMenu === null ? tabPath : null))} {...a} />}
                 >
                   <Menu label={t("shell.tabActions")} items={menuFor(tabMenu ?? tabPath)} onClose={() => setTabMenu(null)} />
                 </Popover>
