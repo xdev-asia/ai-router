@@ -89,7 +89,7 @@ const formatCompact = (n: number, lang: Lang) => new Intl.NumberFormat(locale(la
 const formatMs = (ms: number | null | undefined) => (ms === null || ms === undefined ? "—" : `${formatNumber(ms)} ms`);
 
 /** The caller's offset in minutes east of UTC, so "today" and the chart's days follow the owner's calendar. */
-const tzMinutes = () => -new Date().getTimezoneOffset();
+export const tzMinutes = () => -new Date().getTimezoneOffset();
 
 /** Every token a group counted: input, output and both cache kinds. */
 export const allTokens = (r: UsageTokens): number => r.input_tokens + r.output_tokens + r.cache_creation_input_tokens + r.cache_read_input_tokens;
@@ -223,7 +223,7 @@ export function routeSide(ends: readonly RouteEnd[], limit = MAP_SIDE): FlowMapN
   });
 }
 
-function Status({ code }: { code: number }) {
+export function Status({ code }: { code: number }) {
   return <StatusDot tone={code < 400 ? "ok" : code === 429 || code >= 500 ? "warn" : "danger"} label={String(code)} />;
 }
 
@@ -281,7 +281,7 @@ function delta(now: number | null, before: number | null, upIs: "good" | "bad" |
   return { delta: text, deltaTrend: flat ? undefined : p > 0 ? ("up" as const) : ("down" as const), deltaTone: tone as "good" | "bad" | "neutral", hint: t("usage.vsPrevious") };
 }
 
-function Totals({ data, loading }: { data: UsageSummary | null; loading: boolean }) {
+export function Totals({ data, loading }: { data: UsageSummary | null; loading: boolean }) {
   const [lang] = useLang();
   const labels = ui(lang).statTile;
   const now = data?.totals;
@@ -440,7 +440,7 @@ function Overview({ onOpenDetails }: { onOpenDetails: (f: Partial<RequestFilters
 }
 
 /** The usage chart: one series over the period, as tokens, requests, cost or errors. */
-function OverTime({ period }: { period: UsagePeriod }) {
+export function OverTime({ period }: { period: UsagePeriod }) {
   const [lang] = useLang();
   const [metric, setMetric] = useState<Metric>("tokens");
   const [chart, reload] = useLoad<UsageChart>(`/usage/chart?period=${period}&tz=${tzMinutes()}`);
@@ -475,7 +475,7 @@ function OverTime({ period }: { period: UsagePeriod }) {
 }
 
 /** A ranked bar chart of groups (providers, models), by tokens or requests, largest first. */
-function BarsCard({
+export function BarsCard({
   title,
   chartLabel,
   rows,

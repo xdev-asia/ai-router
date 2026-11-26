@@ -683,3 +683,26 @@ body {
 .mcp-step-title { margin: 0; font: var(--type-heading); }
 .mcp-clients { display: flex; }
 .mcp-tools { white-space: normal; overflow-wrap: anywhere; }
+
+/* Overview (pages/Overview.tsx): the attention and failure lists, and one row per capped system. */
+.overview-list,
+.overview-caps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.overview-caps {
+  display: grid;
+  gap: var(--x-space-3);
+}
+.overview-cap {
+  display: grid;
+  grid-template-columns: minmax(6ch, 14ch) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--x-space-3);
+}
+.overview-cap-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

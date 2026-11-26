@@ -12,6 +12,7 @@ import { Systems } from "./pages/Systems";
 import { TokenSaver } from "./pages/TokenSaver";
 import { Quota } from "./pages/Quota";
 import { Usage } from "./pages/Usage";
+import { Overview } from "./pages/Overview";
 import { CliTools } from "./pages/CliTools";
 import { Mcp } from "./pages/Mcp";
 import { Logs } from "./pages/Logs";
@@ -29,10 +30,11 @@ import { ui } from "./ui-labels";
 import { hashRoute } from "./url-state";
 import { BUILD, buildLabel, useNewBuild } from "./version";
 
-export type Page = "systems" | "providers" | "combos" | "cli-tools" | "mcp" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
+export type Page = "overview" | "systems" | "providers" | "combos" | "cli-tools" | "mcp" | "usage" | "quota" | "token-saver" | "media" | "proxy-pools" | "skills" | "logs" | "translator" | "chat" | "settings" | "pricing";
 
 /** Sidebar order, icons and the strings of each page's title in the top bar. */
 const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKey; icon: IconName }[] = [
+  { id: "overview", nav: "nav.overview", title: "overview.title", description: "overview.description", icon: "home" },
   { id: "systems", nav: "nav.systems", title: "systems.title", description: "systems.description", icon: "key" },
   { id: "providers", nav: "nav.providers", title: "providers.title", description: "providers.description", icon: "plug" },
   { id: "combos", nav: "nav.combos", title: "combos.title", description: "combos.description", icon: "layers" },
@@ -53,7 +55,7 @@ const PAGES: { id: Page; nav: StringKey; title: StringKey; description: StringKe
 
 /** The sidebar's three groups: what the gateway routes, what it reports, and the gateway itself. */
 const GROUPS: { title: StringKey; pages: Page[] }[] = [
-  { title: "nav.title", pages: ["systems", "providers", "combos", "cli-tools", "mcp"] },
+  { title: "nav.title", pages: ["overview", "systems", "providers", "combos", "cli-tools", "mcp"] },
   { title: "nav.insight", pages: ["usage", "quota", "token-saver"] },
   { title: "nav.system", pages: ["media", "proxy-pools", "skills", "logs", "translator", "settings", "pricing"] },
 ];
@@ -68,7 +70,7 @@ export function pageFromHash(full: string): Page {
   if (hash === "#/media" || hash.startsWith("#/media/")) return "media";
   if (hash.startsWith("#/cli-tools/")) return "cli-tools";
   const id = hash.slice(2);
-  return PAGES.some((p) => p.id === id) ? (id as Page) : "systems";
+  return PAGES.some((p) => p.id === id) ? (id as Page) : "overview";
 }
 
 /** The provider of `#/providers/<id>`; null on any other page. */
@@ -185,7 +187,7 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
           drawerBelow="lg"
           toasts={toasts}
           brand={
-            <a className="console-brand" href="#/systems">
+            <a className="console-brand" href="#/overview">
               {/* A 36 px app tile, the name, what it is under it; the version moves to the sidebar foot. */}
               <BrandMark variant="tile" size={36} />
               <span className="console-brand-text">
@@ -292,8 +294,10 @@ function Console({ auth }: { auth: NonNullable<Auth> }) {
               ) : (
                 <Providers query={providerQuery} onClearQuery={() => setProviderQuery("")} />
               )
-            ) : (
+            ) : page === "systems" ? (
               <Systems />
+            ) : (
+              <Overview />
             )}
           </Container>
           {paletteOpen && <ConsolePalette pages={translatorShown ? PAGES : PAGES.filter((p) => p.id !== "translator")} onClose={() => setPaletteOpen(false)} />}

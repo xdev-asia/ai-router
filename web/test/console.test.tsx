@@ -7,6 +7,7 @@ import { apiOf } from "../pages/Endpoint";
 import { timeoutsBody, timeoutsDraft } from "../pages/Combos";
 import { redirectOrigin } from "../pages/Providers";
 import { parseCap } from "../pages/Systems";
+import { attentionItems, capShare, monthUsed } from "../pages/Overview";
 import { clientLogo, providerLogo } from "../provider-logos";
 import { ui } from "../ui-labels";
 import { buildLabel } from "../version";
@@ -88,12 +89,13 @@ let tokenSession: boolean;
 beforeEach(() => {
   localStorage.setItem("ai-router.lang", "en");
   resetLang();
+  // The console opens on Overview; most tests here start on Endpoint & Key.
   window.location.hash = "";
   calls = [];
   ssoUser = null;
   ssoConfigured = false;
   tokenSession = false;
-  window.history.replaceState({}, "", "/");
+  window.history.replaceState({}, "", "/#/systems");
   routes = {
     "GET /admin/systems": () => json([SYSTEM]),
     "GET /admin/usage": () => json(USAGE),
@@ -287,11 +289,11 @@ describe("frame", () => {
     const system = screen.getByRole("navigation", { name: t("nav.system") });
     const links = [...within(gateway).getAllByRole("link"), ...within(insight).getAllByRole("link"), ...within(system).getAllByRole("link")];
     const name = (a: HTMLElement) => a.querySelector(".settings-nav-label")?.textContent;
-    expect(within(gateway).getAllByRole("link").map(name)).toEqual([t("nav.systems"), t("nav.providers"), t("nav.combos"), t("nav.cliTools"), t("nav.mcp")]);
+    expect(within(gateway).getAllByRole("link").map(name)).toEqual([t("nav.overview"), t("nav.systems"), t("nav.providers"), t("nav.combos"), t("nav.cliTools"), t("nav.mcp")]);
     expect(within(insight).getAllByRole("link").map(name)).toEqual([t("nav.usage"), t("nav.quota"), t("nav.tokenSaver")]);
     expect(within(system).getAllByRole("link").map(name)).toEqual([t("nav.media"), t("nav.proxyPools"), t("nav.skills"), t("nav.logs"), t("nav.settings"), t("nav.pricing")]);
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/systems", "#/providers", "#/combos", "#/cli-tools", "#/mcp",
+      "#/overview", "#/systems", "#/providers", "#/combos", "#/cli-tools", "#/mcp",
       "#/usage", "#/quota", "#/token-saver",
       "#/media", "#/proxy-pools", "#/skills", "#/logs", "#/settings", "#/pricing",
     ]);
@@ -1094,6 +1096,79 @@ describe("token saver", () => {
   });
 });
 
+describe("overview", () => {
+  const now = 1_790_000_000;
+  const conn = (over: Record<string, unknown>) => ({
+    id: "a", provider: "openai", auth_type: "api_key", name: "work", hint: null, account: null, expires_at: null, priority: 1,
+    disabled: false, cooldown_until: 0, last_error: null, last_error_at: null, last_used_at: null, created_at: 1, updated_at: 1, ...over,
+  });
+
+  it("is the page the console opens on", async () => {
+    window.history.replaceState({}, "", "/");
+    await signIn();
+    expect(await screen.findByRole("heading", { name: t("overview.title") })).toBeTruthy();
+    expect(await screen.findByText(t("overview.caps.title"))).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith("/admin/usage/summary?period=today"))).toBe(true));
+    expect(calls.some((c) => c.url === "/admin/usage/requests?status=error&limit=5")).toBe(true);
+  });
+
+  it("lists what needs a look: a failing account first, then one cooling down and a system near its cap", async () => {
+    window.history.replaceState({}, "", "/#/overview");
+    const t0 = Date.now() / 1000;
+    routes["GET /admin/providers"] = () => json([{ id: "openai", name: "OpenAI", format: "openai", auth: ["api_key"], env_key: false, key_url: null, strategy: "fill-first", color: "#10a37f", mark: "OA" }]);
+    routes["GET /admin/connections"] = () =>
+      json([
+        conn({ id: "a", name: "cool", cooldown_until: t0 + 300 }),
+        conn({ id: "b", name: "broken", last_error: "401 invalid key", last_error_at: t0 - 60, last_used_at: t0 - 3600 }),
+        conn({ id: "c", name: "off", disabled: true, cooldown_until: t0 + 300 }),
+      ]);
+    routes["GET /admin/usage"] = () =>
+      json({ month: "2026-11", rows: [{ ...USAGE.rows[0], input_tokens: 800, output_tokens: 100 }] });
+    await signIn();
+    await screen.findByRole("heading", { name: t("overview.attn.titleN", { n: "3" }) });
+    // The attention list is the page's first list.
+    const list = screen.getByText("OpenAI · broken").closest("ul")!;
+    const rows = within(list).getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain("OpenAI · broken");
+    expect(rows[0]).toContain("401 invalid key");
+    expect(rows.some((r) => r.includes("OpenAI · cool"))).toBe(true);
+    expect(rows.some((r) => r.includes("Chat") && r.includes(t("overview.attn.nearCap", { n: "90" })))).toBe(true);
+    expect(rows.some((r) => r.includes("off"))).toBe(false);
+  });
+
+  it("says when nothing needs a look", async () => {
+    window.history.replaceState({}, "", "/#/overview");
+    routes["GET /admin/connections"] = () => json([conn({})]);
+    await signIn();
+    expect(await screen.findByText(t("overview.attn.none"))).toBeTruthy();
+  });
+
+  it("attentionItems: an error older than the last success or a day does not count; a reached cap is danger", () => {
+    const sys = { ...SYSTEM, monthly_token_cap: 1000 };
+    const items = attentionItems(
+      [
+        conn({ id: "old", last_error: "x", last_error_at: now - 2 * 86_400 }),
+        conn({ id: "fixed", last_error: "x", last_error_at: now - 600, last_used_at: now - 60 }),
+      ],
+      [sys, { ...sys, id: "off", disabled: true }],
+      new Map([["chat", 1000], ["off", 5000]]),
+      new Map(),
+      "en",
+      now,
+    );
+    expect(items.map((i) => [i.key, i.tone])).toEqual([["cap:chat", "danger"]]);
+  });
+
+  it("monthUsed and capShare count every token against the cap", () => {
+    const used = monthUsed(USAGE);
+    expect(used.get("chat")).toBe(500);
+    expect(capShare({ ...SYSTEM, monthly_token_cap: 1000 }, 500)).toBe(50);
+    expect(capShare({ ...SYSTEM, monthly_token_cap: null }, 500)).toBeNull();
+    expect(capShare({ ...SYSTEM, monthly_token_cap: 0 }, 0)).toBe(100);
+  });
+});
+
 describe("helpers", () => {
   it("parseCap: empty is no cap, digits are a cap, anything else is invalid", () => {
     expect(parseCap("")).toBeNull();
@@ -1106,16 +1181,17 @@ describe("helpers", () => {
   it("pageFromHash knows the three pages", () => {
     expect(pageFromHash("#/combos")).toBe("combos");
     expect(pageFromHash("#/usage")).toBe("usage");
-    expect(pageFromHash("#/whatever")).toBe("systems");
+    expect(pageFromHash("#/whatever")).toBe("overview");
   });
 
   it("pageFromHash knows the token saver page", () => {
     expect(pageFromHash("#/token-saver")).toBe("token-saver");
   });
 
-  it("pageFromHash: usage or systems", () => {
+  it("pageFromHash: Overview when the page is unknown or missing", () => {
     expect(pageFromHash("#/usage")).toBe("usage");
-    expect(pageFromHash("")).toBe("systems");
-    expect(pageFromHash("#/nope")).toBe("systems");
+    expect(pageFromHash("#/systems")).toBe("systems");
+    expect(pageFromHash("")).toBe("overview");
+    expect(pageFromHash("#/nope")).toBe("overview");
   });
 });
