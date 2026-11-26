@@ -612,6 +612,8 @@ export const en = {
   "quota.state.off": "Turned off",
   "quota.state.error": "Error",
   "quota.state.limit": "Limit reached",
+  "quota.seat.premium": "Premium seat",
+  "quota.seat.standard": "Standard seat",
   "quota.window.session": "Session (5h)",
   "quota.window.weekly": "Weekly",
   "quota.window.review": "Code review",
