@@ -126,7 +126,8 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
   (`n` 1 to 4). `size`, `quality`, `background` and `output_format` go to the tool; the answer is always `b64_json`
   (`response_format: "url"` is a 400). An answer with no image is a 502 that quotes what the model said instead.
   Images count against the ChatGPT plan's limits. Clip Studio can use it as its image model
-  (`worker/codex-images.ts`, tests with a fake upstream).
+  (`worker/codex-images.ts`, tests with a fake upstream). The backend ignores the tool's `size` and draws landscape, so
+  the gateway also says the size in the prompt. Tried live on 2026-11-27 with `codex/gpt-6-luna`.
 - Using a ChatGPT subscription outside OpenAI's own apps may be against its terms. The account can be limited or
   closed. The console says so on the provider's page.
 - Tried against the real service on 2026-11-12, through the relay, plain and `stream: true`, with `codex/gpt-5.6-luna`

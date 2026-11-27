@@ -55,12 +55,25 @@ function toolOf(data: Json): { prompt: string; n: number; tool: Json } {
   return { prompt, n, tool };
 }
 
+/**
+ * The backend leaves the tool's `size` to the model, which draws landscape unless told otherwise (tried
+ * 2026-11-27: 1024x1536 asked, 1536x1024 drawn). Saying the size in the prompt is followed.
+ */
+function sizeNote(size: unknown): string {
+  const m = typeof size === "string" ? /^(\d+)x(\d+)$/.exec(size) : null;
+  if (!m) return "";
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  const shape = h > w ? "a vertical portrait image, taller than wide" : w > h ? "a horizontal landscape image, wider than tall" : "a square image";
+  return `\n\nMake it ${shape}, ${w}x${h} pixels.`;
+}
+
 function codexImageRequest(model: string, prompt: string, tool: Json): Json {
   const { model: name, effort } = codexModel(model);
   const body: Json = {
     model: name,
     instructions: INSTRUCTIONS,
-    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: prompt }] }],
+    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: prompt + sizeNote(tool.size) }] }],
     tools: [tool],
     tool_choice: { type: "image_generation" },
     stream: true,
