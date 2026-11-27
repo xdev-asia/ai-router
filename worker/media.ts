@@ -6,6 +6,7 @@ import { MediaError, badRequest, scrub, type Call, type Result } from "./media-p
 import { MEDIA_PROVIDERS, UNSUPPORTED_MEDIA, keyFormatError, kindsOf, mediaProvider, mediaProviderOfPrefix, type MediaKindName, type MediaProvider } from "./media-providers/registry";
 import { PROVIDERS, allowedPatterns, allows, hasEnvKey, isModelName, parseModel, providerDef, targetName, usageOfOpenAI, type ProviderId } from "./providers";
 import { checkSystem, record, type GateFailure, type Upstream } from "./proxy";
+import { sendCodexImages } from "./codex-images";
 import { errorResponse } from "./route";
 import { EMPTY, type Usage } from "./usage";
 import { errorBody } from "./errors";
@@ -99,6 +100,8 @@ async function send(c: Context<AppEnv>, upstream: Upstream, system: System, kind
   if (!ref) return errorResponse(400, "model: <provider>/<model>", "invalid_request_error", "model_not_found");
   if (ref.kind !== "target") return errorResponse(400, `${kind.kind}: a combo cannot be used here, name a <provider>/<model>`, "invalid_request_error", "model_not_supported");
   const { provider, model } = ref.target;
+  // A ChatGPT account draws with the Codex backend's image_generation tool (codex-images.ts).
+  if (provider === "codex" && kind.kind === "images" && body.kind === "json") return sendCodexImages(c, upstream, system, body.data, model);
   const def = providerDef(provider);
   if (def.format !== "openai" || !def.baseUrl) return errorResponse(400, `${provider} does not offer an OpenAI-compatible ${kind.kind} endpoint here`, "invalid_request_error", "model_not_supported");
   if (!allows(allowedPatterns(system.allowed_models), targetName(ref.target))) return errorResponse(403, "this system may not use this model", "permission_error", "model_not_allowed");

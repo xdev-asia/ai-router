@@ -167,7 +167,7 @@ export const isBlockPage = (res: Response): boolean => res.status === 403 && (re
 export const BLOCKED_MESSAGE = "chatgpt.com refuses requests sent from a Cloudflare Worker: run the Codex relay and set CODEX_RELAY_URL and CODEX_RELAY_SECRET (README, Codex relay)";
 
 /** The JSON events of a Responses SSE stream, in order. Lines that are not JSON are skipped. */
-async function* codexEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Json> {
+export async function* codexEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Json> {
   const reader = body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
   const parse = (line: string): Json | null => {
