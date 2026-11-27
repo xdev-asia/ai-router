@@ -314,7 +314,10 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
   /** Who is signed in (with xDev ID), for the console; 401 otherwise. Also says whether sign-in is set up. */
   a.get("/me", async (c) => {
     const user = await consoleUser(c.env, c.req.raw, idp);
-    if (!user) return c.json({ error: "unauthorized", sso: (await ssoConfig(c.env)) !== null }, 401);
+    if (!user) {
+      const ssoName = (c.env.OIDC_NAME ?? "").trim().slice(0, 60) || "xDev ID";
+      return c.json({ error: "unauthorized", sso: (await ssoConfig(c.env)) !== null, sso_name: ssoName }, 401);
+    }
     return c.json(user);
   });
 

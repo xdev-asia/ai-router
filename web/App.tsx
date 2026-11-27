@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { AppShell, Banner, BrandMark, Breadcrumb, Button, Container, IconButton, Menu, MenuButton, NavList, PageHeader, PaletteTrigger, Popover, ServiceStatus, Spinner, TabStrip, ThemeSwitch, type BreadcrumbItem, type IconName } from "@xdev-asia/ui";
-import { checkSession, setAuth, signOut, useAuth, useLoad, type Auth, type Combo, type Connection } from "./api";
+import { DEFAULT_SSO_NAME, checkSession, setAuth, signOut, useAuth, useLoad, type Auth, type Combo, type Connection } from "./api";
 import { t, useLang, type StringKey } from "./i18n";
 import { LANGS, LangSelect } from "./LangSelect";
 import { NotifyContext, useToasts } from "./notify";
@@ -103,6 +103,7 @@ export function App() {
   const [lang] = useLang();
   const auth = useAuth();
   const [sso, setSso] = useState(false);
+  const [ssoName, setSsoName] = useState(DEFAULT_SSO_NAME);
   // False until the first /auth/me answers: a reload waits for the session instead of drawing the sign-in page.
   const [checked, setChecked] = useState(false);
 
@@ -111,14 +112,15 @@ export function App() {
     document.title = t("app.name");
   }, [lang]);
 
-  // A console session (cookie, from xDev ID or the admin token) signs the console in on load; otherwise the
-  // sign-in page offers xDev ID when the gateway has it set up, and the admin token.
+  // A console session (cookie, from the OpenID Connect provider or the admin token) signs the console in on load;
+  // otherwise the sign-in page offers that provider (by the name the gateway gives) when it is set up, and the admin token.
   useEffect(() => {
     if (auth) return;
     let live = true;
     void checkSession().then((r) => {
       if (!live) return;
       setSso(r.sso);
+      setSsoName(r.ssoName);
       if (r.user) setAuth(r.user);
       setChecked(true);
     });
@@ -135,7 +137,7 @@ export function App() {
       </div>
     );
   }
-  return <SignIn sso={sso} />;
+  return <SignIn sso={sso} ssoName={ssoName} />;
 }
 
 /**

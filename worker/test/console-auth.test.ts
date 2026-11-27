@@ -195,6 +195,14 @@ describe("OIDC discovery", () => {
     }
   });
 
+  it("names the provider for the sign-in page: OIDC_NAME, else xDev ID", async () => {
+    const name = async (bindings: Partial<Env>) => ((await (await send(null, "/auth/me", {}, bindings)).json()) as { sso_name?: unknown }).sso_name;
+    expect(await name({})).toBe("xDev ID");
+    expect(await name({ OIDC_NAME: "  Keycloak  " })).toBe("Keycloak");
+    expect(await name({ OIDC_NAME: "" })).toBe("xDev ID");
+    expect(await name({ OIDC_NAME: "x".repeat(200) })).toHaveLength(60);
+  });
+
   it("asks for the document once per issuer, not on every request", async () => {
     const issuer = "https://kc-once.test/realms/r";
     const idp = fakeDiscovering(OWNER, issuer);
@@ -313,10 +321,10 @@ describe("console session", () => {
   });
 
   it("/auth/me says whether xDev ID sign-in is set up", async () => {
-    expect(await (await send(null, "/auth/me")).json()).toEqual({ error: "unauthorized", sso: true });
-    expect(await (await send(null, "/auth/me", {}, { OIDC_CLIENT_ID: "" })).json()).toEqual({ error: "unauthorized", sso: false });
+    expect(await (await send(null, "/auth/me")).json()).toEqual({ error: "unauthorized", sso: true, sso_name: "xDev ID" });
+    expect(await (await send(null, "/auth/me", {}, { OIDC_CLIENT_ID: "" })).json()).toEqual({ error: "unauthorized", sso: false, sso_name: "xDev ID" });
     // The access list is optional: xDev ID can grant access itself.
-    expect(await (await send(null, "/auth/me", {}, { CONSOLE_EMAILS: "" })).json()).toEqual({ error: "unauthorized", sso: true });
+    expect(await (await send(null, "/auth/me", {}, { CONSOLE_EMAILS: "" })).json()).toEqual({ error: "unauthorized", sso: true, sso_name: "xDev ID" });
   });
 });
 
@@ -538,7 +546,7 @@ describe("xDev ID sign-in set in Settings", () => {
     expect(`${loc.origin}${loc.pathname}`).toBe(`${NEW.issuer}/oauth2/authorize`);
     expect(loc.searchParams.get("client_id")).toBe(NEW.client_id);
     expect((await callback(idp, state, loginCookie, "", NO_ENV)).headers.get("location")).toBe("/#/systems");
-    expect(await (await send(null, "/auth/me", {}, NO_ENV)).json()).toEqual({ error: "unauthorized", sso: true });
+    expect(await (await send(null, "/auth/me", {}, NO_ENV)).json()).toEqual({ error: "unauthorized", sso: true, sso_name: "xDev ID" });
     expect((await (await send(null, "/admin/settings/info", { headers: admin }, NO_ENV)).json<{ oidc: boolean }>()).oidc).toBe(true);
   });
 

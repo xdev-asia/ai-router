@@ -33,18 +33,25 @@ export function useAuth(): Auth {
   );
 }
 
-/** The console session of this browser, if any, and whether xDev ID sign-in is set up on the gateway. */
-export async function checkSession(): Promise<{ user: Auth; sso: boolean }> {
+/** The provider's name when the gateway does not say (an older gateway): its default, xDev ID. */
+export const DEFAULT_SSO_NAME = "xDev ID";
+
+/**
+ * The console session of this browser, if any, whether sign-in through the gateway's OpenID Connect provider is set
+ * up, and that provider's name for the sign-in page (OIDC_NAME on the gateway, e.g. Keycloak).
+ */
+export async function checkSession(): Promise<{ user: Auth; sso: boolean; ssoName: string }> {
   try {
     const res = await fetch("/auth/me");
-    const body = (await res.json()) as { email?: unknown; name?: unknown; sso?: unknown; admin?: unknown };
-    if (res.ok && body.admin === true) return { user: { kind: "token" }, sso: false };
+    const body = (await res.json()) as { email?: unknown; name?: unknown; sso?: unknown; sso_name?: unknown; admin?: unknown };
+    const ssoName = typeof body.sso_name === "string" && body.sso_name.trim() ? body.sso_name.trim() : DEFAULT_SSO_NAME;
+    if (res.ok && body.admin === true) return { user: { kind: "token" }, sso: false, ssoName };
     if (res.ok && typeof body.email === "string") {
-      return { user: { kind: "sso", email: body.email, name: typeof body.name === "string" ? body.name : body.email }, sso: true };
+      return { user: { kind: "sso", email: body.email, name: typeof body.name === "string" ? body.name : body.email }, sso: true, ssoName };
     }
-    return { user: null, sso: body.sso === true };
+    return { user: null, sso: body.sso === true, ssoName };
   } catch {
-    return { user: null, sso: false };
+    return { user: null, sso: false, ssoName: DEFAULT_SSO_NAME };
   }
 }
 

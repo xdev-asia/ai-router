@@ -56,6 +56,7 @@ the compatibility date is before 2026-11-17.
 | `OIDC_CLIENT_SECRET` | secret | This gateway's client secret at xDev ID |
 | `ANTHROPIC_BASE_URL` | var | `https://api.anthropic.com` |
 | `OIDC_ISSUER` | var | `https://id.xdev.asia/api/auth`. Any OpenID Connect provider that publishes a discovery document works too, e.g. Keycloak `https://<host>/realms/<realm>` (see Console) |
+| `OIDC_NAME` | var | The sign-in provider's name on the sign-in page ("Sign in with Keycloak"). Unset: `xDev ID` |
 | `OIDC_CLIENT_ID` | var | This gateway's client id at xDev ID. Empty: xDev ID sign-in is off |
 | `CONSOLE_EMAILS` | var | Comma-separated xDev account emails (verified) allowed into the console |
 | `CODEX_RELAY_URL` | var | Base URL of the Codex relay (`https://relay.example.com`). Unset: Codex requests go straight to chatgpt.com, which refuses them from a Worker ([Codex relay](#codex-relay)) |
@@ -90,7 +91,8 @@ Two ways in:
   minutes) when it names the same issuer and https endpoints, so another provider such as Keycloak works with
   `OIDC_ISSUER=https://<host>/realms/<realm>` and a confidential client whose redirect URI is
   `https://<host>/auth/callback`; without a document, xDev ID's `<issuer>/oauth2/*` paths. Such a provider sends no
-  `xdev_role`, so its users get in through `CONSOLE_EMAILS` (verified email).
+  `xdev_role`, so its users get in through `CONSOLE_EMAILS` (verified email). `OIDC_NAME=Keycloak` makes the
+  sign-in page say "Sign in with Keycloak" (`GET /auth/me` returns it as `sso_name`).
 - **The admin token**, sent once from the sign-in page to `POST /auth/token` (same-origin only), which opens
   the same kind of session cookie (12 hours). The row keeps a hash of `ADMIN_TOKEN_SHA256` in
   `console_session.admin_key`, so a new or removed admin token ends these sessions. The page never stores

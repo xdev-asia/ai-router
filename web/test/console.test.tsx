@@ -84,6 +84,9 @@ let routes: Record<string, (body?: unknown) => Response | Promise<Response>>;
 /** The xDev ID session the fake gateway sees (the cookie itself is invisible to the page). */
 let ssoUser: { email: string; name: string } | null;
 let ssoConfigured: boolean;
+/** The provider name /auth/me reports (sso_name); undefined: an older gateway that sends none. */
+let ssoName: string | undefined;
+const XDEV = { name: "xDev ID" };
 /** Whether the fake gateway holds a session opened with the admin token (POST /auth/token). */
 let tokenSession: boolean;
 
@@ -95,6 +98,7 @@ beforeEach(() => {
   calls = [];
   ssoUser = null;
   ssoConfigured = false;
+  ssoName = undefined;
   tokenSession = false;
   window.history.replaceState({}, "", "/#/systems");
   routes = {
@@ -123,7 +127,7 @@ beforeEach(() => {
     }
     if (url === "/auth/me") {
       if (tokenSession) return json({ admin: true });
-      return ssoUser ? json(ssoUser) : json({ error: "unauthorized", sso: ssoConfigured }, 401);
+      return ssoUser ? json(ssoUser) : json({ error: "unauthorized", sso: ssoConfigured, ...(ssoName ? { sso_name: ssoName } : {}) }, 401);
     }
     if (url === "/auth/logout") {
       ssoUser = null;
@@ -212,14 +216,25 @@ describe("sign in", () => {
 });
 
 describe("sign in with xDev ID", () => {
+  it("names the gateway's own provider (Keycloak) on the button, the intro and a refusal", async () => {
+    ssoConfigured = true;
+    ssoName = "Keycloak";
+    window.history.replaceState({}, "", "/?signin_error=not_allowed#/systems");
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Sign in with Keycloak" })).toBeTruthy();
+    expect(screen.getByText(/Use your Keycloak account/)).toBeTruthy();
+    expect(screen.getByText("This Keycloak account may not use the gateway console.")).toBeTruthy();
+    expect(screen.queryByText(/xDev ID/)).toBeNull();
+  });
+
   it("offers xDev ID only when the gateway has it set up", async () => {
     render(<App />);
     await waitFor(() => expect(calls.some((c) => c.url === "/auth/me")).toBe(true));
-    expect(screen.queryByRole("button", { name: t("signin.sso") })).toBeNull();
+    expect(screen.queryByRole("button", { name: t("signin.sso", XDEV) })).toBeNull();
     cleanup();
     ssoConfigured = true;
     render(<App />);
-    expect(await screen.findByRole("button", { name: t("signin.sso") })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: t("signin.sso", XDEV) })).toBeTruthy();
     expect(screen.getByText(t("signin.tokenTitle"))).toBeTruthy();
   });
 
@@ -238,7 +253,7 @@ describe("sign in with xDev ID", () => {
     await screen.findByText("Chat");
     fireEvent.click(screen.getByRole("button", { name: t("shell.account") }));
     fireEvent.click(await screen.findByRole("menuitem", { name: t("shell.signOut") }));
-    expect(await screen.findByRole("button", { name: t("signin.sso") })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: t("signin.sso", XDEV) })).toBeTruthy();
     expect(calls.some((c) => c.method === "POST" && c.url === "/auth/logout")).toBe(true);
   });
 
@@ -246,11 +261,11 @@ describe("sign in with xDev ID", () => {
     window.history.replaceState({}, "", "/?signin_error=not_allowed");
     ssoConfigured = true;
     render(<App />);
-    expect(await screen.findByText(t("signin.error.not_allowed"))).toBeTruthy();
+    expect(await screen.findByText(t("signin.error.not_allowed", XDEV))).toBeTruthy();
     cleanup();
     window.history.replaceState({}, "", "/?signin_error=<script>");
     render(<App />);
-    await screen.findByRole("button", { name: t("signin.sso") });
+    await screen.findByRole("button", { name: t("signin.sso", XDEV) });
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });
