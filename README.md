@@ -121,6 +121,12 @@ Metered, capped and refused exactly like `/anthropic`, whatever the provider.
 - **Sent** to `https://chatgpt.com/backend-api/codex/responses`, through the [Codex relay](#codex-relay), as an
   OpenAI Responses request, always as a stream; the answer comes back as a chat completion (text and function tool calls; reasoning is not returned).
   `temperature`, `max_tokens` and the other sampling settings are dropped: the backend refuses them.
+- **Images**: `POST /openai/v1/images/generations` with `model: "codex/<model>"` (a chat model such as
+  `codex/gpt-6-luna`) asks the same backend for its hosted `image_generation` tool, forced, one request per image
+  (`n` 1 to 4). `size`, `quality`, `background` and `output_format` go to the tool; the answer is always `b64_json`
+  (`response_format: "url"` is a 400). An answer with no image is a 502 that quotes what the model said instead.
+  Images count against the ChatGPT plan's limits. Clip Studio can use it as its image model
+  (`worker/codex-images.ts`, tests with a fake upstream).
 - Using a ChatGPT subscription outside OpenAI's own apps may be against its terms. The account can be limited or
   closed. The console says so on the provider's page.
 - Tried against the real service on 2026-11-12, through the relay, plain and `stream: true`, with `codex/gpt-5.6-luna`
