@@ -56,7 +56,8 @@ describe("images through a ChatGPT (Codex) account", () => {
       model: "gpt-6-luna",
       stream: true,
       store: false,
-      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "a red apple" }] }],
+      // The backend draws landscape unless the prompt says otherwise.
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "a red apple\n\nMake it a vertical portrait image, taller than wide, 1024x1536 pixels." }] }],
       tools: [{ type: "image_generation", size: "1024x1536", output_format: "png" }],
       tool_choice: { type: "image_generation" },
     });
@@ -79,6 +80,8 @@ describe("images through a ChatGPT (Codex) account", () => {
     expect(JSON.parse(text).data).toHaveLength(2);
     expect(up.calls).toHaveLength(2);
     expect(JSON.parse(up.bodies[0]!).tools).toEqual([{ type: "image_generation", quality: "low", background: "transparent", output_format: "webp" }]);
+    // No size asked: the prompt goes as it was.
+    expect(JSON.parse(up.bodies[0]!).input[0].content[0].text).toBe("logo");
   });
 
   it("refuses a request it cannot answer before sending anything", async () => {
