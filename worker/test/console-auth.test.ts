@@ -140,6 +140,70 @@ describe("sign-in start", () => {
   });
 });
 
+/**
+ * A provider that publishes OpenID Connect Discovery with its own endpoint paths (Keycloak's, here): the fake
+ * xDev ID behind it answers only on those paths, so a request to `/oauth2/*` fails the sign-in.
+ */
+function fakeDiscovering(user: User, issuer: string, doc: (issuer: string) => Record<string, unknown> = keycloakDoc) {
+  const inner = fakeIdp(user, { issuer });
+  const xdev = inner.fn; // replaced below: keep the original
+  const paths: Record<string, string> = { "/protocol/openid-connect/token": "/oauth2/token", "/protocol/openid-connect/userinfo": "/oauth2/userinfo" };
+  const seen: string[] = []; // what the gateway asked the provider (inner.calls also has the rewritten paths)
+  const fn = async (req: Request): Promise<Response> => {
+    seen.push(new URL(req.url).pathname);
+    if (req.url === `${issuer}/.well-known/openid-configuration`) return Response.json(doc(issuer));
+    for (const [from, to] of Object.entries(paths)) {
+      if (req.url === issuer + from) {
+        const body = req.method === "POST" ? await req.text() : undefined;
+        return xdev(new Request(issuer + to, { method: req.method, headers: req.headers, body }));
+      }
+    }
+    return new Response("not found", { status: 404 });
+  };
+  return Object.assign(inner, { fn, seen });
+}
+const keycloakDoc = (issuer: string) => ({
+  issuer,
+  authorization_endpoint: `${issuer}/protocol/openid-connect/auth`,
+  token_endpoint: `${issuer}/protocol/openid-connect/token`,
+  userinfo_endpoint: `${issuer}/protocol/openid-connect/userinfo`,
+});
+
+describe("OIDC discovery", () => {
+  it("signs in through the endpoints a provider publishes (Keycloak)", async () => {
+    const issuer = "https://kc.test/realms/ehospital";
+    const idp = fakeDiscovering(OWNER, issuer);
+    const { loc, state, loginCookie } = await login(idp, { OIDC_ISSUER: issuer });
+    expect(`${loc.origin}${loc.pathname}`).toBe(`${issuer}/protocol/openid-connect/auth`);
+    const res = await callback(idp, state, loginCookie, "", { OIDC_ISSUER: issuer });
+    expect(res.headers.get("location")).toBe("/#/systems");
+    expect(idp.seen).toContain("/realms/ehospital/protocol/openid-connect/token");
+    expect(idp.seen).toContain("/realms/ehospital/protocol/openid-connect/userinfo");
+    expect(idp.seen.some((p) => p.includes("/oauth2/"))).toBe(false);
+  });
+
+  it("ignores a discovery document for another issuer or with a non-https endpoint, and uses /oauth2/*", async () => {
+    const bad = [
+      (i: string) => ({ ...keycloakDoc(i), issuer: "https://evil.test" }),
+      (i: string) => ({ ...keycloakDoc(i), token_endpoint: "http://kc.test/token" }),
+      (i: string) => ({ ...keycloakDoc(i), authorization_endpoint: "javascript:alert(1)" }),
+    ];
+    for (const [n, doc] of bad.entries()) {
+      const issuer = `https://bad${n}.test/realms/r`;
+      const { loc } = await login(fakeDiscovering(OWNER, issuer, doc), { OIDC_ISSUER: issuer });
+      expect(`${loc.origin}${loc.pathname}`, `doc ${n}`).toBe(`${issuer}/oauth2/authorize`);
+    }
+  });
+
+  it("asks for the document once per issuer, not on every request", async () => {
+    const issuer = "https://kc-once.test/realms/r";
+    const idp = fakeDiscovering(OWNER, issuer);
+    await login(idp, { OIDC_ISSUER: issuer });
+    await login(idp, { OIDC_ISSUER: issuer });
+    expect(idp.seen.filter((p) => p.endsWith("/.well-known/openid-configuration"))).toHaveLength(1);
+  });
+});
+
 describe("callback", () => {
   it("signs an allowed, verified user in and the console session reaches /admin", async () => {
     const cookie = await signIn();

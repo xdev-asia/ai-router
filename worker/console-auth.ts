@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { isAdmin, sha256hex } from "./auth";
 import type { AppEnv, Env } from "./env";
 import { open, seal } from "./secret-box";
-import { ssoConfig, ssoKey, type SsoConfig } from "./sso";
+import { ssoConfig, ssoEndpoints, ssoKey, type SsoConfig } from "./sso";
 
 /** Sends a request to the OpenID provider (xDev ID). `fetch` in production; a fake in tests. */
 export type Idp = (req: Request) => Promise<Response>;
@@ -103,7 +103,8 @@ async function recheck(env: Env, idp: Idp, sso: SsoConfig, key: string, row: Ses
   if (accessToken === null) return end();
   let info: Record<string, unknown> | null = null;
   try {
-    const res = await idp(new Request(`${sso.issuer}/oauth2/userinfo`, { headers: { authorization: `Bearer ${accessToken}` } }));
+    const { userinfo } = await ssoEndpoints(sso, idp);
+    const res = await idp(new Request(userinfo, { headers: { authorization: `Bearer ${accessToken}` } }));
     if (res.ok) {
       const v: unknown = await res.json();
       info = v && typeof v === "object" ? (v as Record<string, unknown>) : null;
@@ -219,7 +220,7 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     });
     // Binds the sign-in to this browser: a callback link sent from elsewhere does not match.
     c.header("set-cookie", setCookie(LOGIN_COOKIE, state, LOGIN_TTL_S));
-    return c.redirect(`${sso.issuer}/oauth2/authorize?${q}`, 302);
+    return c.redirect(`${(await ssoEndpoints(sso, idp)).authorize}?${q}`, 302);
   });
 
   a.get("/callback", async (c) => {
@@ -237,10 +238,11 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
     const code = c.req.query("code");
     if (!code) return back(c, "failed");
 
+    const endpoints = await ssoEndpoints(sso, idp);
     let tokens: { access_token?: unknown; id_token?: unknown };
     try {
       const res = await idp(
-        new Request(`${sso.issuer}/oauth2/token`, {
+        new Request(endpoints.token, {
           method: "POST",
           headers: {
             "content-type": "application/x-www-form-urlencoded",
@@ -277,7 +279,7 @@ export function consoleAuthRoutes(idp: Idp): Hono<AppEnv> {
 
     let info: Record<string, unknown>;
     try {
-      const res = await idp(new Request(`${sso.issuer}/oauth2/userinfo`, { headers: { authorization: `Bearer ${tokens.access_token}` } }));
+      const res = await idp(new Request(endpoints.userinfo, { headers: { authorization: `Bearer ${tokens.access_token}` } }));
       if (!res.ok) return back(c, "failed");
       info = (await res.json()) as Record<string, unknown>;
     } catch {

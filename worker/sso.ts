@@ -50,6 +50,58 @@ export async function ssoConfig(env: Env): Promise<SsoConfig | null> {
 /** Which client granted a session: a sign-in through another issuer or client does not count. */
 export const ssoKey = (c: SsoConfig) => `${c.issuer} ${c.clientId}`;
 
+/** Where the console sends the browser, trades the code and asks who signed in. */
+export interface SsoEndpoints {
+  authorize: string;
+  token: string;
+  userinfo: string;
+}
+
+const DISCOVERY_TTL_MS = 10 * 60 * 1000;
+const discovered = new Map<string, { at: number; endpoints: SsoEndpoints }>();
+
+/** xDev ID's own paths, for an issuer without a discovery document. */
+const xdevPaths = (issuer: string): SsoEndpoints => ({
+  authorize: `${issuer}/oauth2/authorize`,
+  token: `${issuer}/oauth2/token`,
+  userinfo: `${issuer}/oauth2/userinfo`,
+});
+
+const httpsUrl = (v: unknown): string | null => {
+  if (typeof v !== "string") return null;
+  try {
+    return new URL(v).protocol === "https:" ? v : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The provider's endpoints from its OpenID Connect Discovery document (`<issuer>/.well-known/openid-configuration`),
+ * so any standard provider works (Keycloak: `/protocol/openid-connect/*`). A document is used only when its `issuer`
+ * is the configured one and its three endpoints are https (Discovery 1.0, 4.3); otherwise, or with no document,
+ * xDev ID's `/oauth2/*` paths. Kept per issuer for 10 minutes; a provider that cannot be reached is asked again.
+ */
+export async function ssoEndpoints(sso: SsoConfig, idp: (req: Request) => Promise<Response>): Promise<SsoEndpoints> {
+  const hit = discovered.get(sso.issuer);
+  if (hit && Date.now() - hit.at < DISCOVERY_TTL_MS) return hit.endpoints;
+  let endpoints = xdevPaths(sso.issuer);
+  try {
+    const res = await idp(new Request(`${sso.issuer}/.well-known/openid-configuration`, { headers: { accept: "application/json" } }));
+    if (res.ok) {
+      const doc = (await res.json()) as Record<string, unknown>;
+      const authorize = httpsUrl(doc.authorization_endpoint);
+      const token = httpsUrl(doc.token_endpoint);
+      const userinfo = httpsUrl(doc.userinfo_endpoint);
+      if (doc.issuer === sso.issuer && authorize && token && userinfo) endpoints = { authorize, token, userinfo };
+    }
+  } catch {
+    return endpoints; // unreachable or not JSON: this request uses xDev ID's paths; the next one asks again
+  }
+  discovered.set(sso.issuer, { at: Date.now(), endpoints });
+  return endpoints;
+}
+
 /** An https URL without query, fragment or credentials, without its trailing slashes; null otherwise. */
 function issuerOf(v: unknown): string | null {
   if (typeof v !== "string" || v.length > 500) return null;
