@@ -288,7 +288,8 @@ Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of
 ## Quota Tracker
 
 The console's **Quota Tracker** page (`#/quota`) shows, for each account, the plan, what is used and when each
-limit starts again. Accounts are grouped by provider. Only what the provider itself reports is shown:
+limit starts again. Each provider has a grid of account cards, three in a line at 1440px and one on a phone. Only
+what the provider itself reports is shown:
 
 | Provider | Asked | Plan | Limits and their cycle |
 |---|---|---|---|
