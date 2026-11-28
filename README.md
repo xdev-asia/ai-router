@@ -227,8 +227,9 @@ or more).
 
 For each request the gateway tries, for the target's provider:
 
-1. the enabled connections that are not set aside, lowest `priority` first ("fill-first"), or, when the provider
-   is set to "round-robin", the one that answered longest ago first;
+1. the enabled connections that are not set aside, in the provider's order: lowest `priority` first
+   ("fill-first", the default), the one that answered longest ago first ("round-robin"), or the one with the
+   largest share of its rate limit left first ("quota-left");
 2. the key in the environment (`ANTHROPIC_KEYS` for that system, `PROVIDER_KEYS`), when there is one;
 3. the connections that are set aside, the one that comes back soonest first.
 
@@ -236,6 +237,16 @@ It moves to the next one only after a 429, a 5xx, a network failure or a refused
 another request error. A connection that failed this way is set aside for the provider's `retry-after`, else
 30 s doubling with each failure in a row, at most 10 min; `last_error` keeps the status and the provider's message.
 A success clears that. A connection whose secret cannot be opened (the key changed) is skipped.
+
+**Limits the provider reports.** On the OpenAI-compatible chat path the gateway keeps the rate-limit headers of
+each answer (`x-ratelimit-limit-requests`, `-remaining-requests`, `-reset-requests` and the same for tokens), per
+connection and model (table `connection_limit`, `worker/limits.ts`). Providers that send none are routed as before.
+
+- A connection whose limit is at zero is set aside until that limit's reset, before any refusal. It is still tried
+  last when nothing else is left.
+- "quota-left" compares the share left of the tighter limit. A connection not heard from yet counts as full, so it
+  is asked and its limits become known. The numbers are as of each connection's last answer for that model.
+- Limits are per model: being out for one model does not set the connection aside for another.
 Every attempt gets its own usage row. Both `/anthropic` and `/openai/v1` work this way; on `/anthropic` the last
 account's answer is passed on as it came.
 
@@ -307,9 +318,11 @@ what the provider itself reports is shown:
 | `deepseek` | `/user/balance` | not reported | balance per currency |
 | `ollama` | `ollama.com/api/me` | plan | not reported |
 
-Groq sends its limits only in the headers of an inference answer, never on the model list. Reading them costs one
-request of the day, so the gateway keeps the answer (table `quota_snapshot`) and the page shows it with its age. The
-refresh buttons ask again; opening the page and auto-refresh do not. A kept limit whose reset time has passed is
+Groq sends its limits only in the headers of an inference answer, never on the model list. Once real requests go
+through a Groq account, the page shows what Groq said with the last answer (`connection_limit`), at no cost. Before
+that, reading them costs one request of the day, so the gateway keeps that answer (table `quota_snapshot`). The
+page shows whichever is newer, with its age. The refresh buttons ask again; opening the page and auto-refresh do
+not. A kept limit whose reset time has passed is
 shown as full again.
 
 The other connected providers are named under the list with their account counts. Checked on 2026-11-28 with real
@@ -402,7 +415,7 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `PATCH /connections/:id` | `{name?, disabled?, priority?, api_key?}` | the connection. A new `api_key` clears its cooldown and last error |
 | `DELETE /connections/:id` | | `204`; `404` |
 | `GET /providers` | | `[{id, name, format, auth, env_key, key_url, strategy}]`: the providers the gateway can reach; `env_key` says the environment holds a key |
-| `PUT /providers/:id/strategy` | `{strategy: "fill-first" \| "round-robin"}` | `{provider, strategy}`; `400`; `404` |
+| `PUT /providers/:id/strategy` | `{strategy: "fill-first" \| "round-robin" \| "quota-left"}` | `{provider, strategy}`; `400`; `404` |
 | `POST /connections/:id/test` | | `{ok: true}` or `{ok: false, status, message}`: the provider's answer to a model-list request with the connection's key; `404` |
 | `PUT /providers/:id/order` | `{ids: [...]}` (every connection of the provider, once each) | the provider's connections in the new order; `400`; `404` |
 | `GET /token-saver` | | `{rtk, caveman, ponytail, custom_prompt, headroom: {enabled, url}}` |

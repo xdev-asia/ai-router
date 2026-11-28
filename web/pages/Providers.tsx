@@ -91,6 +91,13 @@ export interface CustomProviderForm {
 }
 type CustomErrors = Partial<Record<"id" | "name" | "base_url", StringKey>>;
 
+/** What each account order means, under the accounts card's title. */
+const STRATEGY_HINT: Record<string, StringKey> = {
+  "fill-first": "providers.accountsHint",
+  "round-robin": "providers.strategyHint.roundRobin",
+  "quota-left": "providers.strategyHint.quotaLeft",
+};
+
 const CUSTOM_ID = /^[a-z][a-z0-9-]{1,31}$/;
 
 /** Loopback, a private IPv4 address, host.docker.internal or a one-label name, as the gateway takes it (worker/custom-providers.ts). */
@@ -457,9 +464,9 @@ export function ProviderDetail({ id }: { id: string }) {
       setPending({ kind: "oauth", url: r.authorize_url });
     });
 
-  const setRoundRobin = (on: boolean) =>
+  const setStrategy = (strategy: string) =>
     run(async () => {
-      await api(`/providers/${encodeURIComponent(id)}/strategy`, { method: "PUT", body: { strategy: on ? "round-robin" : "fill-first" } });
+      await api(`/providers/${encodeURIComponent(id)}/strategy`, { method: "PUT", body: { strategy } });
       reloadProviders();
     });
 
@@ -594,10 +601,20 @@ export function ProviderDetail({ id }: { id: string }) {
           )}
           <Card
             title={t("providers.accountsTitle")}
-            subtitle={accounts.length > 1 ? t("providers.accountsHint") : undefined}
+            subtitle={accounts.length > 1 ? t(STRATEGY_HINT[provider.strategy] ?? "providers.accountsHint") : undefined}
             actions={
               <>
-                <Switch label={t("providers.roundRobin")} checked={provider.strategy === "round-robin"} disabled={busy} onChange={(e) => void setRoundRobin(e.target.checked)} />
+                <Select
+                  aria-label={t("providers.strategy")}
+                  value={provider.strategy}
+                  disabled={busy}
+                  onChange={(e) => void setStrategy(e.target.value)}
+                  options={[
+                    { value: "fill-first", label: t("providers.strategy.fillFirst") },
+                    { value: "round-robin", label: t("providers.strategy.roundRobin") },
+                    { value: "quota-left", label: t("providers.strategy.quotaLeft") },
+                  ]}
+                />
                 <Button variant="primary" icon="plus" disabled={busy || !!provider.missing_env?.length} onClick={() => (isOAuth ? void startSignIn() : setPending({ kind: "edit", account: null }))}>
                   {t("providers.add")}
                 </Button>

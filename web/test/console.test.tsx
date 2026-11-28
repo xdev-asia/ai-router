@@ -831,13 +831,14 @@ describe("providers", () => {
     expect(link.getAttribute("rel")).toContain("noreferrer");
   });
 
-  it("the round robin switch shows the provider's strategy and saves a change", async () => {
-    routes["PUT /admin/providers/openai/strategy"] = () => json({ provider: "openai", strategy: "round-robin" });
+  it("the account order select shows the provider's strategy and saves a change", async () => {
+    routes["PUT /admin/providers/openai/strategy"] = () => json({ provider: "openai", strategy: "quota-left" });
     await openProvider();
-    const sw = screen.getByRole("switch", { name: t("providers.roundRobin") }) as HTMLInputElement;
-    expect(sw.checked).toBe(false);
-    fireEvent.click(sw);
-    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/providers/openai/strategy", body: { strategy: "round-robin" } }));
+    const select = screen.getByLabelText(t("providers.strategy")) as HTMLSelectElement;
+    expect(select.value).toBe("fill-first");
+    expect([...select.options].map((o) => o.value)).toEqual(["fill-first", "round-robin", "quota-left"]);
+    fireEvent.change(select, { target: { value: "quota-left" } });
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toMatchObject({ url: "/admin/providers/openai/strategy", body: { strategy: "quota-left" } }));
   });
 
   it("tests a connection's key and says what the provider answered", async () => {

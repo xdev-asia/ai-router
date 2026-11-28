@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { readLimits, saveLimits } from "./limits";
 import type { System } from "./auth";
 import { BLOCKED_MESSAGE, ENDED_EARLY, RELAY_ERROR_HEADER, RELAY_SECRET_HEADER, isBlockPage, type Step, chatToCodex, codexHeaders, codexSteps, codexToChatStream, readCodex } from "./codex";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess, type Candidate } from "./connections";
@@ -212,6 +213,15 @@ function meterOpenAIStream(body: ReadableStream<Uint8Array>, model: string, keep
   return { client, usage };
 }
 
+/** Remembers the rate limits in an answer's headers for the account that was asked. The key in the environment keeps none. */
+function noteLimits(c: Context<AppEnv>, model: string, headers: Headers): void {
+  const connection = c.get("connection");
+  if (!connection) return;
+  const now = Math.floor(Date.now() / 1000);
+  const limits = readLimits(headers, now);
+  if (limits) c.executionCtx.waitUntil(saveLimits(c.env.DB, connection, model, limits, now).catch(() => undefined));
+}
+
 async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json, savers: Savers, extra: Record<string, string> = {}, wire?: Wire): Promise<Attempt> {
   const p = providerDef(target.provider) as { baseUrl: string; headers?: Readonly<Record<string, string>> };
   const stream = req.stream === true;
@@ -229,6 +239,8 @@ async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, syst
           body: JSON.stringify(body),
         }),
   );
+  // What the provider says is left on this account for this model (limits.ts), from a good answer or a refusal.
+  noteLimits(c, target.model, up.headers);
   if (wire?.response) up = wire.response(up, stream);
   if (!up.ok || !up.body) {
     record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
@@ -383,7 +395,7 @@ async function attemptTarget(run: Run, target: Target, req: Json): Promise<Attem
   if (mode && req.reasoning_effort === undefined) req = { ...req, reasoning_effort: mode };
   // A catalog variant (`gpt-6-astra[1m]`) is sent as the model it stands for.
   target = { provider: target.provider, model: upstreamModel(target) };
-  for (const cand of await candidatesFor(c.env, target.provider, run.keySystem ?? system.id, now, upstream)) {
+  for (const cand of await candidatesFor(c.env, target.provider, run.keySystem ?? system.id, now, upstream, target.model)) {
     if (clientGone()) return clientClosed();
     const key = await cand.key();
     if (!key) continue;

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { forgetLimits } from "./limits";
 import { mcpTokenRoutes } from "./mcp-tokens";
 import { SYSTEM_COLUMNS, isAdmin, newToken, sha256hex, toSystem, type System } from "./auth";
 import { isLevel } from "./savers";
@@ -313,12 +314,12 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
     );
   });
 
-  /** "fill-first": connections in priority order. "round-robin": the one that answered longest ago first. */
+  /** "fill-first": connections in priority order. "round-robin": the one that answered longest ago first. "quota-left": the largest share of its limit left first (limits.ts). */
   a.put("/providers/:id/strategy", async (c) => {
     const provider = c.req.param("id");
     if (!isProvider(provider)) return c.json({ error: "not_found" }, 404);
     const b = await readJson(c.req.raw);
-    if (!b || !isStrategy(b.strategy)) return c.json({ error: "invalid_input", hint: "strategy: fill-first or round-robin" }, 400);
+    if (!b || !isStrategy(b.strategy)) return c.json({ error: "invalid_input", hint: "strategy: fill-first, round-robin or quota-left" }, 400);
     await (b.strategy === "fill-first"
       ? c.env.DB.prepare("DELETE FROM provider_setting WHERE provider = ?").bind(provider)
       : c.env.DB.prepare("INSERT INTO provider_setting (provider, strategy) VALUES (?, ?) ON CONFLICT (provider) DO UPDATE SET strategy = excluded.strategy").bind(provider, b.strategy)
@@ -544,6 +545,7 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
   a.delete("/connections/:id", async (c) => {
     const r = await c.env.DB.prepare("DELETE FROM connection WHERE id = ?").bind(c.req.param("id")).run();
     await forgetQuota(c.env.DB, c.req.param("id"));
+    await forgetLimits(c.env.DB, c.req.param("id"));
     if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);
     return c.body(null, 204);
   });
