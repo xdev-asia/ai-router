@@ -123,8 +123,8 @@ describe("admin: providers and account order", () => {
     expect(list.slice(0, 6).map((p) => p.id)).toEqual(["anthropic", "openai", "gemini", "openrouter", "deepseek", "groq"]);
     const rest = list.slice(6).map((p) => p.id);
     expect(rest).toEqual([...rest].sort());
-    expect(list).toHaveLength(74);
-    expect(new Set(list.map((p) => p.id)).size).toBe(74);
+    expect(list).toHaveLength(75);
+    expect(new Set(list.map((p) => p.id)).size).toBe(75);
     expect(list.find((p) => p.id === "anthropic")).toEqual({
       id: "anthropic", name: "Anthropic", format: "anthropic", auth: ["api_key"], env_key: true, key_url: "https://console.anthropic.com/settings/keys", strategy: "fill-first", color: "#D97757", mark: "AN", free_tier: false,
     });
@@ -146,7 +146,7 @@ describe("admin: providers and account order", () => {
   it("marks the providers that give a key with free use", async () => {
     const list = JSON.parse((await admin("GET", "/providers")).text) as { id: string; free_tier: unknown }[];
     expect(list.every((p) => typeof p.free_tier === "boolean")).toBe(true);
-    expect(list.filter((p) => p.free_tier).map((p) => p.id).sort()).toEqual(["api-airforce", "cloudflare-ai", "gemini", "groq", "kimchi", "ollama", "openrouter", "sambanova", "vertex"]);
+    expect(list.filter((p) => p.free_tier).map((p) => p.id).sort()).toEqual(["api-airforce", "cloudflare-ai", "gemini", "groq", "kimchi", "ollama", "openrouter", "pollinations", "sambanova", "vertex"]);
     expect(list.find((p) => p.id === "anthropic")?.free_tier).toBe(false);
     expect(list.find((p) => p.id === "codex")?.free_tier).toBe(false);
   });
