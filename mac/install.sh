@@ -17,7 +17,12 @@ daemon() { # <label>
   plutil -lint "$dst.tmp" >/dev/null
   chown root:wheel "$dst.tmp" && chmod 644 "$dst.tmp" && mv "$dst.tmp" "$dst"
   launchctl bootout "system/$1" 2>/dev/null || true
-  launchctl bootstrap system "$dst"
+  # bootout returns before the old process is gone; bootstrap meanwhile fails with "5: Input/output error".
+  i=0
+  until launchctl bootstrap system "$dst" 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -lt 10 ] || { launchctl bootstrap system "$dst"; exit 1; }
+    sleep 1
+  done
   echo "started $1 (log: $home/Library/Logs/${1#asia.xdev.}.log)"
 }
 
