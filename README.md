@@ -408,6 +408,7 @@ corepack pnpm run test        # Worker, in workerd with a fake upstream
 corepack pnpm run test:web    # console, jsdom
 corepack pnpm run build
 node --test relay/test/codex-relay.test.mjs docker/test/docker.test.mjs   # Codex relay, Docker helpers
+python3 -m unittest discover -s mac   # mac-tts, with a fake say and ffmpeg
 ```
 
 Local secrets go in `.dev.vars` (git-ignored).
@@ -526,3 +527,30 @@ Use `--profile tunnel` on every later `up`, or put `COMPOSE_PROFILES=tunnel` in 
 `https://ai-router.xdev.asia` as the origin of every request (`--upstream-protocol https`, `docker/start.mjs`): the
 console builds the xDev ID sign-in redirect from it. The Mac keeps its own local D1 (the `state` volume): keys,
 connections and usage stored in the Worker's D1 are not there.
+
+#### Local models and voices on the Mac
+
+Docker on a Mac has no GPU, so local models run on macOS itself, next to the stack. The gateway reaches them as
+custom providers at `http://host.docker.internal:<port>/v1`: a custom provider may use plain http when its host is
+local ([Admin API](#admin-api), `POST /custom-providers`). [mac/](mac/) has two launchd daemons. Both run as the
+user who installs them, listen on `127.0.0.1` only and start at boot, with no sign-in needed.
+
+| Daemon | What | Custom provider | Model |
+|---|---|---|---|
+| Ollama | `ollama serve` on the Metal GPU. One model loaded at a time, freed after 5 idle minutes | `local`, `http://host.docker.internal:11434/v1` | `local/<ollama model>`, such as `local/qwen3:8b` |
+| [mac-tts](mac/mac-tts.py) | `/v1/audio/speech` on macOS `say` and ffmpeg (mp3, wav, aac, opus, flac, pcm; `speed` 0.25 to 4). `voice` is any name `say -v '?'` lists. An OpenAI voice name means Linh (vi_VN) | `mac`, `http://host.docker.internal:8795/v1` | `mac/linh` |
+
+```sh
+brew install ollama ffmpeg
+sudo mac/install.sh                # both; or: sudo mac/install.sh mac-tts | ollama
+ollama pull qwen3:8b
+```
+
+Then in the console, Providers, add the two custom providers (format OpenAI). Give each a connection with any key,
+because neither checks it, and sync its models. In Clip Studio, `tts_model: mac/linh` and `voice: Linh` give a
+Vietnamese voice with no quota. Run `install.sh` again after pulling a new `mac-tts.py`. Logs are in
+`~/Library/Logs/ollama.log` and `~/Library/Logs/mac-tts.log`.
+
+On the M1 Mac mini (16 GB), measured 2026-11-28: `qwen3:8b` writes about 11 tokens a second, with about 6 s to load.
+It thinks before answering unless the request has `"reasoning_effort": "none"`. mac-tts speaks a sentence in about
+1 s.

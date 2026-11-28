@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- mac-tts as a launchd daemon. install.sh fills in __USER__ and __HOME__. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>asia.xdev.mac-tts</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/bin/python3</string><string>-I</string><string>__HOME__/ai-router/mac/mac-tts.py</string></array>
+  <key>UserName</key><string>__USER__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>MAC_TTS_PORT</key><string>8795</string>
+    <key>MAC_TTS_VOICE</key><string>Linh</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/mac-tts.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/mac-tts.log</string>
+</dict>
+</plist>
