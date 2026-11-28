@@ -4,7 +4,7 @@ import { BUILTIN_PREFIXES, isBuiltinProvider, runWithCustomProviders, setCustomP
 
 /**
  * The owner's providers (custom providers, OpenAI or Anthropic compatible). One is an id, a name, a
- * format and an https base URL; it then takes API-key connections and routes as `<id>/<model>` like a built-in one.
+ * format and an https base URL (plain http for a server on the local network); it then takes API-key connections and routes as `<id>/<model>` like a built-in one.
  *
  * Base URL, as each format's own SDK takes it:
  *   openai     the URL with its version path (`https://llm.example.com/v1`); the gateway adds /chat/completions, /models
@@ -56,7 +56,25 @@ export const withCustomProviders: MiddlewareHandler<AppEnv> = async (c, next) =>
 const isFormat = (v: unknown): v is Format => typeof v === "string" && (FORMATS as readonly string[]).includes(v);
 const name = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" && v.trim().length <= 100 ? v.trim() : null);
 
-/** An https URL with no credentials, query or fragment, without its trailing slashes; null otherwise. */
+/**
+ * A host on this machine or its local network: loopback, a private IPv4 address, host.docker.internal or a
+ * one-label name (a compose service such as `ollama`). Such a server (a local Ollama, LM Studio) speaks plain http.
+ */
+export function localHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1" || h === "host.docker.internal") return true;
+  if (/^[a-z0-9-]+$/.test(h) && !/^\d+$/.test(h)) return true;
+  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+  if (!ip) return false;
+  const a = Number(ip[1]);
+  const b = Number(ip[2]);
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+/**
+ * An https URL (or http to a local host, `localHost`) with no credentials, query or fragment, without its trailing
+ * slashes; null otherwise.
+ */
 export function baseUrl(v: unknown): string | null {
   if (typeof v !== "string" || v.length > 500) return null;
   let u: URL;
@@ -65,7 +83,8 @@ export function baseUrl(v: unknown): string | null {
   } catch {
     return null;
   }
-  if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash) return null;
+  const scheme = u.protocol === "https:" || (u.protocol === "http:" && localHost(u.hostname));
+  if (!scheme || u.username || u.password || u.search || u.hash) return null;
   return (u.origin + u.pathname).replace(/\/+$/, "");
 }
 

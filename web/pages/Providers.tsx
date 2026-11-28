@@ -93,12 +93,25 @@ type CustomErrors = Partial<Record<"id" | "name" | "base_url", StringKey>>;
 
 const CUSTOM_ID = /^[a-z][a-z0-9-]{1,31}$/;
 
-/** An https URL with no credentials, query or fragment, as the gateway takes it (worker/custom-providers.ts). */
+/** Loopback, a private IPv4 address, host.docker.internal or a one-label name, as the gateway takes it (worker/custom-providers.ts). */
+function localHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1" || h === "host.docker.internal") return true;
+  if (/^[a-z0-9-]+$/.test(h) && !/^\d+$/.test(h)) return true;
+  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+  if (!ip) return false;
+  const a = Number(ip[1]);
+  const b = Number(ip[2]);
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+/** An https URL (http for a local server) with no credentials, query or fragment, as the gateway takes it (worker/custom-providers.ts). */
 function httpsBase(v: string): boolean {
   if (v.length > 500) return false;
   try {
     const u = new URL(v.trim());
-    return u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash;
+    const scheme = u.protocol === "https:" || (u.protocol === "http:" && localHost(u.hostname));
+    return scheme && !u.username && !u.password && !u.search && !u.hash;
   } catch {
     return false;
   }

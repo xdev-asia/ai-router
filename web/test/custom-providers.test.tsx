@@ -62,6 +62,8 @@ describe("validateCustomProvider", () => {
   it("takes a slug, a name and an https URL", () => {
     expect(validateCustomProvider(ok, true)).toEqual({});
     expect(validateCustomProvider({ ...ok, base_url: "https://llm.corp.test:8443/v1/" }, true)).toEqual({});
+    // A local server (Ollama, LM Studio) speaks plain http.
+    for (const base_url of ["http://host.docker.internal:11434/v1", "http://localhost:1234/v1", "http://192.168.1.20:11434/v1", "http://ollama:11434/v1"]) expect(validateCustomProvider({ ...ok, base_url }, true), base_url).toEqual({});
   });
 
   it("names each bad field", () => {
@@ -71,6 +73,7 @@ describe("validateCustomProvider", () => {
     expect(validateCustomProvider({ ...ok, name: "  " }, true).name).toBe("providers.nameRequired");
     expect(validateCustomProvider({ ...ok, name: "x".repeat(101) }, true).name).toBe("providers.custom.nameLong");
     expect(validateCustomProvider({ ...ok, base_url: "http://llm.corp.test/v1" }, true).base_url).toBe("providers.custom.baseUrlBad");
+    expect(validateCustomProvider({ ...ok, base_url: "http://8.8.8.8/v1" }, true).base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "https://user:pw@llm.corp.test" }, true).base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "https://llm.corp.test/v1?x=1" }, true).base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "not a url" }, true).base_url).toBe("providers.custom.baseUrlBad");

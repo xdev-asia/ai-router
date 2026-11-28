@@ -1273,7 +1273,7 @@ export const en = {
   "providers.custom.baseUrl": "Base URL",
   "providers.custom.baseUrlHint.openai": "With its version path, such as https://llm.example.com/v1. The gateway adds /chat/completions.",
   "providers.custom.baseUrlHint.anthropic": "The host only, such as https://llm.example.com. The gateway adds /v1/messages.",
-  "providers.custom.baseUrlBad": "Enter an https URL with no user name, query or fragment.",
+  "providers.custom.baseUrlBad": "Enter an https URL (http only for a server on this machine or the local network, such as http://host.docker.internal:11434/v1 for Ollama) with no user name, query or fragment.",
   "providers.custom.createdNotice": "Added {name}.",
   "providers.custom.endpointTitle": "Endpoint",
   "providers.custom.edit": "Edit provider",

@@ -1275,7 +1275,7 @@ export const vi: Record<keyof typeof en, string> = {
   "providers.custom.baseUrl": "URL gốc",
   "providers.custom.baseUrlHint.openai": "Gồm cả phần phiên bản, ví dụ https://llm.example.com/v1. Gateway thêm /chat/completions.",
   "providers.custom.baseUrlHint.anthropic": "Chỉ phần host, ví dụ https://llm.example.com. Gateway thêm /v1/messages.",
-  "providers.custom.baseUrlBad": "Nhập URL https không có tên người dùng, query hay fragment.",
+  "providers.custom.baseUrlBad": "Nhập URL https (chỉ dùng http cho máy chủ trên máy này hoặc mạng nội bộ, ví dụ http://host.docker.internal:11434/v1 cho Ollama), không có tên người dùng, query hay fragment.",
   "providers.custom.createdNotice": "Đã thêm {name}.",
   "providers.custom.endpointTitle": "Endpoint",
   "providers.custom.edit": "Sửa nhà cung cấp",
