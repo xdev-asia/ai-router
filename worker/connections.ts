@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { exhaustedUntil, shareLeft, type Limits } from "./limits";
+import { exhaustedUntil, limitScope, shareLeft, type Limits } from "./limits";
 import { ANTHROPIC_VERSION, anthropicBase, isProvider, providerDef, providerKey, type ProviderId } from "./providers";
 import { oauthToken } from "./oauth";
 import { open, seal } from "./secret-box";
@@ -148,11 +148,11 @@ export async function candidatesFor(env: Env, provider: ProviderId, systemId: st
   const r = await env.DB.prepare(
     `SELECT c.id, c.secret, c.auth_type, c.account, c.proxy_pool, c.expires_at, c.cooldown_until, c.backoff_level, c.rr_at,
             (SELECT strategy FROM provider_setting WHERE provider = ?1) AS strategy,
-            l.requests_limit, l.requests_remaining, l.requests_reset_at, l.tokens_limit, l.tokens_remaining, l.tokens_reset_at
+            l.requests_limit, l.requests_remaining, l.requests_reset_at, l.tokens_limit, l.tokens_remaining, l.tokens_reset_at, l.seen_at
      FROM connection c LEFT JOIN connection_limit l ON l.connection = c.id AND l.model = ?2
      WHERE c.provider = ?1 AND c.disabled = 0 ORDER BY c.priority, c.created_at`,
   )
-    .bind(provider, model ?? "")
+    .bind(provider, model === undefined ? "" : limitScope(provider, model))
     .all<
       { id: string; secret: string; auth_type: string; account: string | null; proxy_pool: string | null; expires_at: number | null; cooldown_until: number; backoff_level: number; rr_at: number; strategy: string | null } & Limits
     >();

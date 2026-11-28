@@ -247,6 +247,9 @@ connection and model (table `connection_limit`, `worker/limits.ts`). Providers t
 - "quota-left" compares the share left of the tighter limit. A connection not heard from yet counts as full, so it
   is asked and its limits become known. The numbers are as of each connection's last answer for that model.
 - Limits are per model: being out for one model does not set the connection aside for another.
+- OpenRouter sends no such headers (checked 2026-11-28). For its `:free` models the gateway asks `/key` after each
+  answer and keeps the day's free requests, counted over all free models of the account together. OpenRouter gives
+  no reset time, so a count is trusted for an hour; after that the connection counts as full and is asked again.
 Every attempt gets its own usage row. Both `/anthropic` and `/openai/v1` work this way; on `/anthropic` the last
 account's answer is passed on as it came.
 

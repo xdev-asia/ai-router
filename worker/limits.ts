@@ -14,6 +14,42 @@ export interface Limits {
   tokens_limit: number | null;
   tokens_remaining: number | null;
   tokens_reset_at: number | null;
+  /** Unix seconds: when the provider said this. Absent on limits just read from an answer. */
+  seen_at?: number | null;
+}
+
+/** A limit with no reset time is trusted this long; after that the account counts as full, so it is asked again. */
+const NO_RESET_TRUST_S = 3600;
+
+/**
+ * What an account's limits are kept under (connection_limit.model): the model, as providers count limits per
+ * model. OpenRouter counts the free requests of a day over all its `:free` models together, so those share one.
+ */
+export function limitScope(provider: string, model: string): string {
+  return provider === "openrouter" && model.endsWith(":free") ? ":free" : model;
+}
+
+type Fetch = (req: Request) => Promise<Response>;
+
+/**
+ * An OpenRouter account's free-model requests of the day, from its /key (chat answers carry no limit headers).
+ * OpenRouter gives no reset time. Null when it cannot be read; an error body is never read (it may quote the key).
+ */
+export async function openrouterFreeLimits(upstream: Fetch, key: string): Promise<Limits | null> {
+  let res: Response;
+  try {
+    res = await upstream(new Request("https://openrouter.ai/api/v1/key", { headers: { authorization: `Bearer ${key}`, accept: "application/json" } }));
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { data?: { free_model_daily_requests?: { limit?: unknown; remaining?: unknown; used?: unknown } } } | null;
+  const f = body?.data?.free_model_daily_requests;
+  const limit = typeof f?.limit === "number" && f.limit > 0 ? Math.floor(f.limit) : null;
+  if (limit === null) return null;
+  const left = typeof f?.remaining === "number" ? f.remaining : typeof f?.used === "number" ? limit - f.used : null;
+  if (left === null) return null;
+  return { requests_limit: limit, requests_remaining: Math.max(0, Math.floor(left)), requests_reset_at: null, tokens_limit: null, tokens_remaining: null, tokens_reset_at: null };
 }
 
 /** A Go duration ("2m30s", "500ms", "1h") in seconds; null when there is none. */
@@ -115,13 +151,16 @@ export function exhaustedUntil(l: Limits | null, now: number): number {
 
 /**
  * The share of its tighter limit the account has left, 0 to 1. A limit past its reset is full again; an account
- * never heard from counts as full, so it is asked and its limits become known.
+ * never heard from counts as full, so it is asked and its limits become known. A limit with no reset time is
+ * trusted for an hour from when it was seen.
  */
 export function shareLeft(l: Limits | null, now: number): number {
   if (!l) return 1;
+  const seen = l.seen_at ?? null;
   const one = (limit: number | null, left: number | null, reset: number | null): number => {
     if (limit === null || left === null || limit <= 0) return 1;
     if (reset !== null && reset <= now) return 1;
+    if (reset === null && seen !== null && now - seen > NO_RESET_TRUST_S) return 1;
     return Math.min(1, Math.max(0, left / limit));
   };
   return Math.min(one(l.requests_limit, l.requests_remaining, l.requests_reset_at), one(l.tokens_limit, l.tokens_remaining, l.tokens_reset_at));

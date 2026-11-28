@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ADMIN_TOKEN, addSystem, call, fakeUpstream, reset } from "./helpers";
-import { exhaustedUntil, readLimits, shareLeft } from "../limits";
+import { exhaustedUntil, limitScope, readLimits, shareLeft } from "../limits";
 
 // Routing by what is left (limits.ts): the gateway remembers the rate-limit headers a provider sends with its
 // answers, sets an account that is out aside until its reset, and can order accounts by the share they have left.
@@ -88,6 +88,21 @@ describe("reading a provider's limit headers", () => {
     expect(shareLeft({ ...l, tokens_remaining: 800 }, 200)).toBe(0.25);
     expect(shareLeft(l, 600)).toBe(1);
     expect(shareLeft(null, 100)).toBe(1);
+  });
+
+  it("a limit with no reset time is trusted for an hour, then the account counts as full again", () => {
+    const l = { requests_limit: 50, requests_remaining: 0, requests_reset_at: null, tokens_limit: null, tokens_remaining: null, tokens_reset_at: null, seen_at: 1000 };
+    expect(shareLeft(l, 1000 + 3599)).toBe(0);
+    expect(shareLeft(l, 1000 + 3601)).toBe(1);
+    // With a reset time the provider's word stands until then, however old.
+    expect(shareLeft({ ...l, requests_reset_at: 90_000 }, 80_000)).toBe(0);
+  });
+
+  it("OpenRouter counts its free models together; everything else is per model", () => {
+    expect(limitScope("openrouter", "google/gemma-4-26b-a4b-it:free")).toBe(":free");
+    expect(limitScope("openrouter", "liquid/lfm-3-1.7b:free")).toBe(":free");
+    expect(limitScope("openrouter", "openai/gpt-6")).toBe("openai/gpt-6");
+    expect(limitScope("groq", "x:free")).toBe("x:free");
   });
 });
 
@@ -190,5 +205,66 @@ describe("Groq quota page", () => {
     expect(q).toMatchObject({ scope: "m1", limit_reached: false, error: null });
     expect(q.windows[0]).toMatchObject({ name: "Requests", kind: "count", used: 360, total: 1000, remaining_percent: 64, period_seconds: 86400 });
     expect(q.windows[1]).toMatchObject({ name: "Tokens", used: 1000, total: 8000, period_seconds: 60 });
+  });
+});
+
+describe("OpenRouter free models", () => {
+  const KEY_URL = "https://openrouter.ai/api/v1/key";
+  const who = (req: Request) => req.headers.get("authorization")!.replace("Bearer sk-or-", "");
+  const keyAnswer = (used: number, limit = 50) => json({ data: { is_free_tier: true, free_model_daily_requests: { used, limit, remaining: limit - used } } });
+  async function routers(names: string[]): Promise<{ token: string; ids: Record<string, string> }> {
+    const token = await addSystem("chat");
+    await allow("chat", ["openrouter/*"]);
+    const ids: Record<string, string> = {};
+    for (const n of names) {
+      const r = await admin("POST", "/connections", { provider: "openrouter", name: n, api_key: `sk-or-${n}` });
+      expect(r.res.status, r.text).toBe(201);
+      ids[n] = (JSON.parse(r.text) as { id: string }).id;
+    }
+    return { token, ids };
+  }
+  /** OpenRouter: chat answers carry no limit headers; /key says what each account has used today. */
+  const openrouter = (used: Record<string, number>) =>
+    fakeUpstream((req) => (req.url === KEY_URL ? (used[who(req)] === undefined ? json({ error: { message: `no ${who(req)}` } }, 401) : keyAnswer(used[who(req)]!)) : json(COMPLETION)));
+
+  it("asks /key after an answer and keeps today's free requests for all free models of the account", async () => {
+    const { token, ids } = await routers(["a"]);
+    const up = openrouter({ a: 12 });
+    await call(up, "/openai/v1/chat/completions", chat(token, "openrouter/google/gemma:free"));
+    expect(up.calls.map((r) => `${r.method} ${r.url}`)).toEqual(["POST https://openrouter.ai/api/v1/chat/completions", `GET ${KEY_URL}`]);
+    expect(up.calls[1]!.headers.get("authorization")).toBe("Bearer sk-or-a");
+    expect(await limitRow(ids.a!, ":free")).toMatchObject({ requests_limit: 50, requests_remaining: 38, requests_reset_at: null, tokens_limit: null });
+    expect(await limitRow(ids.a!, "google/gemma:free")).toBeNull();
+  });
+
+  it("does not ask /key for a paid model, and keeps nothing when /key refuses", async () => {
+    const { token, ids } = await routers(["a"]);
+    const paid = openrouter({ a: 12 });
+    await call(paid, "/openai/v1/chat/completions", chat(token, "openrouter/openai/gpt-6"));
+    expect(paid.calls.map((r) => r.url)).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
+    const refused = openrouter({});
+    const r = await call(refused, "/openai/v1/chat/completions", chat(token, "openrouter/google/gemma:free"));
+    expect(r.res.status).toBe(200);
+    expect(await limitRow(ids.a!, ":free")).toBeNull();
+    expect(r.text).not.toContain("sk-or-");
+  });
+
+  it("quota-left sends a free request to the account with the most free requests left today, whatever the free model", async () => {
+    const { token } = await routers(["a", "b", "c"]);
+    await admin("PUT", "/providers/openrouter/strategy", { strategy: "quota-left" });
+    const used: Record<string, number> = { a: 0, b: 0, c: 0 };
+    const up = fakeUpstream((req) => {
+      if (req.url === KEY_URL) return keyAnswer(used[who(req)]!);
+      used[who(req)]! += who(req) === "a" ? 30 : 10;
+      return json(COMPLETION);
+    });
+    const order: string[] = [];
+    for (const model of ["openrouter/x/one:free", "openrouter/y/two:free", "openrouter/x/one:free", "openrouter/y/two:free", "openrouter/z/three:free"]) {
+      const before = up.calls.length;
+      await call(up, "/openai/v1/chat/completions", chat(token, model));
+      order.push(who(up.calls[before]!));
+    }
+    // Unknown accounts first, in priority order (a: 20 left, b: 40, c: 40); then the one with the most left.
+    expect(order).toEqual(["a", "b", "c", "b", "c"]);
   });
 });
