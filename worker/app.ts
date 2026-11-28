@@ -15,6 +15,19 @@ import { skillRoutes } from "./skills";
 import { studioFileRoutes } from "./studio";
 import { withDeadlines, withTimeouts } from "./timeouts";
 
+/**
+ * Security response headers, on every Worker response (and, via dist/_headers, on the static console too).
+ * Only headers that stop framing, MIME sniffing and referrer leaks, and ask for HTTPS: never CORP/COOP/COEP,
+ * which would break the gateway's cross-origin use from other apps' SDKs.
+ */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+};
+
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 /** The page a provider's sign-in ends on: one sentence, no script, no token. */
@@ -44,6 +57,14 @@ export function makeApp(deps: Deps): Hono<AppEnv> {
   app.use("*", async (c, next) => {
     c.set("startedAt", Date.now());
     await next();
+    // A passed-through upstream response can have immutable headers; then rebuild around the same body.
+    try {
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) c.res.headers.set(k, v);
+    } catch {
+      const headers = new Headers(c.res.headers);
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
+      c.res = new Response(c.res.body, { status: c.res.status, statusText: c.res.statusText, headers });
+    }
   });
   // One log line per gateway request (logs.ts): never a body, a key or a token.
   // The logged path is the pathname only, so a Gemini `?key=<token>` never reaches the log.
