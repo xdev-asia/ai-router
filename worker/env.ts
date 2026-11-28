@@ -16,6 +16,8 @@ export interface Env {
   OIDC_CLIENT_ID?: string;
   /** Secret: this gateway's client secret at xDev ID. */
   OIDC_CLIENT_SECRET?: string;
+  /** Public: the sign-in provider's name on the sign-in page ("Sign in with <name>"), e.g. `Keycloak`. Unset: xDev ID. */
+  OIDC_NAME?: string;
   /** Public: comma-separated emails (verified at xDev ID) allowed into the console. */
   CONSOLE_EMAILS?: string;
   /**
