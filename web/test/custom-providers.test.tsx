@@ -74,6 +74,7 @@ describe("validateCustomProvider", () => {
     expect(validateCustomProvider({ ...ok, name: "x".repeat(101) }, true).name).toBe("providers.custom.nameLong");
     expect(validateCustomProvider({ ...ok, base_url: "http://llm.corp.test/v1" }, true).base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "http://8.8.8.8/v1" }, true).base_url).toBe("providers.custom.baseUrlBad");
+    for (const base_url of ["https://169.254.169.254/v1", "http://169.254.169.254/v1", "https://0.0.0.0/v1"]) expect(validateCustomProvider({ ...ok, base_url }, true).base_url, base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "https://user:pw@llm.corp.test" }, true).base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "https://llm.corp.test/v1?x=1" }, true).base_url).toBe("providers.custom.baseUrlBad");
     expect(validateCustomProvider({ ...ok, base_url: "not a url" }, true).base_url).toBe("providers.custom.baseUrlBad");
