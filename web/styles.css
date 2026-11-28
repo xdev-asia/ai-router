@@ -500,54 +500,148 @@ body {
   color: var(--text-2);
 }
 
-.quota-account {
+/* One provider's accounts: a row each (who, limits, state and controls), a line between rows. */
+.quota-group-title {
   display: inline-flex;
   align-items: center;
   gap: var(--x-space-2);
   min-width: 0;
 }
 
-.quota-account-name {
-  overflow-wrap: anywhere;
-}
-
-.quota-account-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--x-space-2);
-}
-
-/* One limit per line: bar, reset time, hide; the reset time drops under the bar on phones. */
-.quota-windows {
-  display: grid;
-  gap: var(--x-space-2);
+.quota-rows,
+.quota-tiles {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.quota-window {
+.quota-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(7rem, auto) auto;
-  align-items: center;
-  gap: var(--x-space-1) var(--x-space-3);
+  grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--x-space-3) var(--x-space-6);
+  padding: var(--x-space-4);
+  border-top: 1px solid var(--line);
 }
 
-.quota-reset,
-.quota-credits {
-  margin: 0;
+.quota-row:first-child {
+  border-top: 0;
+}
+
+/* A switched-off account is dimmed; its controls stay as they are. */
+.quota-row[data-off] > .quota-who,
+.quota-row[data-off] > .quota-body {
+  opacity: 0.55;
+}
+
+.quota-who {
+  display: grid;
+  gap: var(--x-space-1);
+  min-width: 0;
+}
+
+.quota-who-name {
+  font: var(--type-label);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.quota-who-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--x-space-1) var(--x-space-2);
   font: var(--type-status);
   color: var(--text-2);
 }
 
-@media (max-width: 479.98px) {
-  .quota-window {
+.quota-body {
+  display: grid;
+  gap: var(--x-space-2);
+  min-width: 0;
+}
+
+/* The limits side by side in equal columns, as many as fit. */
+.quota-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--x-space-3) var(--x-space-6);
+}
+
+.quota-tile {
+  display: grid;
+  gap: var(--x-space-1);
+  min-width: 0;
+}
+
+.quota-tile-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-1);
+  min-width: 0;
+}
+
+.quota-tile-bar > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The hide button shows when its limit is pointed at or focused; always on touch screens. */
+.quota-tile-hide {
+  display: inline-flex;
+  opacity: 0;
+}
+
+.quota-tile:hover .quota-tile-hide,
+.quota-tile-hide:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .quota-tile-hide {
+    opacity: 1;
+  }
+}
+
+.quota-tile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--x-space-3);
+  font: var(--type-status);
+  color: var(--text-2);
+}
+
+.quota-note,
+.quota-others {
+  margin: 0;
+  font: var(--type-status);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* As wide in every row, so the limits line up from one account to the next. */
+.quota-row-end {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--x-space-2);
+  min-width: 14rem;
+}
+
+/* Phones and tablets: who and controls on the first line, the limits under them. */
+@media (max-width: 767.98px) {
+  .quota-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .quota-window > :first-child {
+  .quota-body {
     grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .quota-row-end {
+    min-width: 0;
   }
 }
 

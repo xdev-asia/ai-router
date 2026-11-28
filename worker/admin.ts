@@ -29,7 +29,7 @@ import { getTokenSaver, mergeTokenSaver, saveTokenSaver } from "./settings";
 import { COMBO_TIMEOUTS_HINT, TIMEOUTS_HINT, getTimeouts, mergeTimeouts, readTimeoutsPatch, saveTimeouts, timeoutsPatch } from "./timeouts";
 import { STRATEGIES, configError, getComboSettings, isStrategy as isComboStrategy, mergeComboSettings, readConfig, resetCombo, saveComboSettings } from "./combo-strategy";
 import { currentMonth, monthRange } from "./usage";
-import { QUOTA_PROVIDERS, consumeResetCredit, codexResetCredits, fetchQuota, getHiddenRows, isQuotaProvider, quotaConnection, setHiddenRows } from "./quota";
+import { QUOTA_PROVIDERS, consumeResetCredit, codexResetCredits, fetchQuota, forgetQuota, getHiddenRows, isQuotaProvider, quotaConnection, setHiddenRows } from "./quota";
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
@@ -394,20 +394,26 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
    * console turns accounts off and on with PATCH /connections/:id; nothing here changes a connection.
    */
   a.get("/quota", async (c) => {
-    const connections = (await listConnections(c.env.DB)).filter((x) => isQuotaProvider(x.provider));
-    return c.json({ providers: QUOTA_PROVIDERS, connections, hidden: await getHiddenRows(c.env.DB) });
+    const all = await listConnections(c.env.DB);
+    const connections = all.filter((x) => isQuotaProvider(x.provider));
+    // The other connected providers, with how many accounts each has: they report neither a plan nor a quota.
+    const counts = new Map<string, number>();
+    for (const x of all) if (!isQuotaProvider(x.provider)) counts.set(x.provider, (counts.get(x.provider) ?? 0) + 1);
+    const others = [...counts].map(([provider, accounts]) => ({ provider, accounts }));
+    return c.json({ providers: QUOTA_PROVIDERS, connections, hidden: await getHiddenRows(c.env.DB), others });
   });
 
   /** Rows the owner hid, per provider: `{provider, names}`; an empty list shows them all again. */
   a.put("/quota/hidden", async (c) => {
     const b = await readJson(c.req.raw);
     const next = await setHiddenRows(c.env.DB, b?.provider, b?.names);
-    return next ? c.json(next) : c.json({ error: "invalid_input", hint: "provider: codex, groq or deepseek; names: up to 50 row names" }, 400);
+    return next ? c.json(next) : c.json({ error: "invalid_input", hint: `provider: one of ${QUOTA_PROVIDERS.join(", ")}; names: up to 50 row names` }, 400);
   });
 
   a.get("/quota/:id", async (c) => {
     const conn = await quotaConnection(c.env, upstream, c.req.param("id"));
-    return conn ? c.json(await fetchQuota(c.env, upstream, conn)) : c.json({ error: "not_found" }, 404);
+    // refresh=1 asks the provider even when asking costs a request (Groq); without it a kept answer is used.
+    return conn ? c.json(await fetchQuota(c.env, upstream, conn, c.req.query("refresh") === "1")) : c.json({ error: "not_found" }, 404);
   });
 
   a.get("/quota/:id/reset-credits", async (c) => {
@@ -537,6 +543,7 @@ export function adminRoutes(upstream: Upstream, idp: Idp, opts: { trusted?: bool
 
   a.delete("/connections/:id", async (c) => {
     const r = await c.env.DB.prepare("DELETE FROM connection WHERE id = ?").bind(c.req.param("id")).run();
+    await forgetQuota(c.env.DB, c.req.param("id"));
     if (r.meta.changes === 0) return c.json({ error: "not_found" }, 404);
     return c.body(null, 204);
   });
