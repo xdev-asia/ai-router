@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { limitScope, openrouterFreeLimits, readLimits, saveLimits, type Limits } from "./limits";
+import { countedLeft, keptLeft, limitScope, openrouterFreeLimits, readLimits, saveLimits, type Limits } from "./limits";
 import type { System } from "./auth";
 import { BLOCKED_MESSAGE, ENDED_EARLY, RELAY_ERROR_HEADER, RELAY_SECRET_HEADER, isBlockPage, type Step, chatToCodex, codexHeaders, codexSteps, codexToChatStream, readCodex } from "./codex";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess, type Candidate } from "./connections";
@@ -218,14 +218,20 @@ function meterOpenAIStream(body: ReadableStream<Uint8Array>, model: string, keep
  * answer's headers, or, for an OpenRouter free model, the day's free requests from its /key. The key in the
  * environment keeps none.
  */
-function noteLimits(c: Context<AppEnv>, upstream: Upstream, target: Target, key: string, headers: Headers): void {
+function noteLimits(c: Context<AppEnv>, upstream: Upstream, target: Target, key: string, headers: Headers, answered: boolean): void {
   const connection = c.get("connection");
   if (!connection) return;
   const now = Math.floor(Date.now() / 1000);
   const scope = limitScope(target.provider, target.model);
   const save = (limits: Limits | null) => (limits ? saveLimits(c.env.DB, connection, scope, limits, now) : Promise.resolve());
   if (target.provider === "openrouter" && scope === ":free") {
-    c.executionCtx.waitUntil(openrouterFreeLimits(upstream, key).then(save).catch(() => undefined));
+    // /key trails the requests just made, so the gateway's own count is kept beside it (limits.ts, countedLeft).
+    const counted = async () => {
+      const [reported, kept] = [await openrouterFreeLimits(upstream, key), await keptLeft(c.env.DB, connection, scope)];
+      if (reported?.requests_remaining == null) return;
+      await save({ ...reported, requests_remaining: countedLeft(reported.requests_remaining, kept, answered, now) });
+    };
+    c.executionCtx.waitUntil(counted().catch(() => undefined));
     return;
   }
   c.executionCtx.waitUntil(save(readLimits(headers, now)).catch(() => undefined));
@@ -249,7 +255,7 @@ async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, syst
         }),
   );
   // What the provider says is left on this account for this model (limits.ts), from a good answer or a refusal.
-  noteLimits(c, upstream, target, key, up.headers);
+  noteLimits(c, upstream, target, key, up.headers, up.ok);
   if (wire?.response) up = wire.response(up, stream);
   if (!up.ok || !up.body) {
     record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);

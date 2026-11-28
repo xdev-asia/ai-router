@@ -107,6 +107,25 @@ export function readLimits(h: Headers, now: number): Limits | null {
   };
 }
 
+/** A provider's count can trail the requests just made; within this long the gateway's own count is kept beside it. */
+const LAG_TRUST_S = 300;
+
+/**
+ * What is left when the provider's number may lag (OpenRouter's /key trails by up to a minute): the lower of what
+ * the provider says and what the gateway kept, less this request when it used one. After five minutes without an
+ * answer the provider's number stands alone: it has settled, or its day has turned.
+ */
+export function countedLeft(reported: number, kept: { left: number; seen_at: number } | null, used: boolean, now: number): number {
+  if (!kept || now - kept.seen_at > LAG_TRUST_S) return reported;
+  return Math.max(0, Math.min(reported, kept.left - (used ? 1 : 0)));
+}
+
+/** What is kept for one connection and scope; null when there is none. */
+export async function keptLeft(db: D1Database, connection: string, scope: string): Promise<{ left: number; seen_at: number } | null> {
+  const row = await db.prepare("SELECT requests_remaining AS left, seen_at FROM connection_limit WHERE connection = ? AND model = ?").bind(connection, scope).first<{ left: number | null; seen_at: number }>();
+  return row && row.left !== null ? { left: row.left, seen_at: row.seen_at } : null;
+}
+
 export async function saveLimits(db: D1Database, connection: string, model: string, l: Limits, now: number): Promise<void> {
   await db
     .prepare(
