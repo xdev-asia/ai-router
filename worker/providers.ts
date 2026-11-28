@@ -97,8 +97,8 @@ export const PROVIDERS = {
   nous: { name: "Nous Research", color: "#7C3AED", mark: "NR", format: "openai", auth: "oauth", baseUrl: "https://inference-api.nousresearch.com/v1", keyUrl: "https://portal.nousresearch.com" },
   nvidia: { name: "NVIDIA NIM", color: "#76B900", mark: "NV", format: "openai", baseUrl: "https://integrate.api.nvidia.com/v1", keyUrl: "https://build.nvidia.com/settings/api-keys" },
   perplexity: { name: "Perplexity", color: "#20808D", mark: "PP", format: "openai", baseUrl: "https://api.perplexity.ai", keyUrl: "https://www.perplexity.ai/settings/api" },
-  // Free, OpenAI-compatible. Anonymous works with any key; a free key from auth.pollinations.ai raises the limit.
-  pollinations: { name: "Pollinations", color: "#D6409F", mark: "PL", format: "openai", baseUrl: "https://text.pollinations.ai/openai", keyUrl: "https://auth.pollinations.ai" },
+  // Free, OpenAI-compatible. Anonymous works with any key; a free key from pollinations.ai raises the limit.
+  pollinations: { name: "Pollinations", color: "#D6409F", mark: "PL", format: "openai", baseUrl: "https://text.pollinations.ai/openai", keyUrl: "https://pollinations.ai" },
   poolside: { name: "Poolside", color: "#0EA5E9", mark: "PS", format: "openai", baseUrl: "https://inference.poolside.ai/v1", keyUrl: "https://platform.poolside.ai/api-keys" },
   runcrate: { name: "Runcrate", color: "#1A2B79", mark: "RC", format: "openai", baseUrl: "https://api.runcrate.ai/v1", modelsUrl: "https://www.runcrate.ai/api/v1/billing/balance", keyUrl: "https://www.runcrate.ai/dashboard/api-keys" },
   sambanova: { name: "SambaNova", color: "#F97316", mark: "SN", format: "openai", baseUrl: "https://api.sambanova.ai/v1", keyUrl: "https://cloud.sambanova.ai/apis" },
@@ -238,7 +238,7 @@ export const anthropicBase = (env: Env, provider: ProviderId): string =>
 // From an open-source provider registry (category "freeTier"), not checked against the providers' pages:
 //   api-airforce, kimchi, cloudflare-ai, ollama, vertex.
 // Checked live 2026-11-28, keyless: pollinations (OpenAI-compatible; the anonymous tier is 1 reply/45s per IP, a
-//   free key from auth.pollinations.ai raises it — a good last step in a Fallback combo).
+//   free key from pollinations.ai raises it — a good last step in a Fallback combo).
 export const FREE_TIER: ReadonlySet<ProviderId> = new Set<ProviderId>(["groq", "gemini", "openrouter", "sambanova", "pollinations", "api-airforce", "kimchi", "cloudflare-ai", "ollama", "vertex"]);
 
 export type Target = { provider: ProviderId; model: string };
