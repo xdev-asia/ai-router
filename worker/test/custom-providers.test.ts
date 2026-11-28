@@ -62,6 +62,18 @@ describe("admin: custom providers", () => {
     expect(JSON.parse((await admin("GET", "/custom-providers")).text)).toEqual([]);
   });
 
+  it("takes plain http only for a server on this machine or the local network (a local Ollama, LM Studio)", async () => {
+    for (const url of ["http://host.docker.internal:11434/v1", "http://localhost:1234/v1", "http://127.0.0.1:8080/v1", "http://[::1]:11434/v1", "http://192.168.1.20:11434/v1", "http://10.0.0.5/v1", "http://172.20.0.3:8000/v1", "http://ollama:11434/v1"]) {
+      const r = await admin("POST", "/custom-providers", { id: "local", name: "Local", format: "openai", base_url: url });
+      expect(r.res.status, url).toBe(201);
+      expect(JSON.parse(r.text).base_url, url).toBe(url.replace(/\/$/, ""));
+      expect((await admin("DELETE", "/custom-providers/local")).res.status).toBe(204);
+    }
+    for (const url of ["http://a.test/v1", "http://8.8.8.8/v1", "http://172.32.0.1/v1", "http://192.169.0.1/v1", "http://localhost.evil.test/v1", "ftp://localhost/v1"]) {
+      expect((await admin("POST", "/custom-providers", { id: "local", name: "Local", format: "openai", base_url: url })).res.status, url).toBe(400);
+    }
+  });
+
   it("refuses a bad id, name, format or base URL", async () => {
     for (const body of [
       { id: "Corp", name: "x", format: "openai", base_url: "https://a.test/v1" },

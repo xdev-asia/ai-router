@@ -387,7 +387,7 @@ All under `/admin`, `Authorization: Bearer <admin token>` or the console's xDev 
 | `DELETE /mcp-tokens/:id` | | `204`; `404`. Clients using it lose access at once |
 | `POST /providers/:id/models/sync` | | `{provider, count, added, removed, synced_at}`; `400 not_supported`, `409 no_connection`, `502 sync_failed` with `message` (the last list stays) |
 | `GET /custom-providers` | | `[{id, name, format, base_url, created_at, updated_at}]` |
-| `POST /custom-providers` | `{id, name, format: "openai" \| "anthropic", base_url}` (https, no credentials or query) | `201`; `400`; `409 taken` for a built-in id or prefix |
+| `POST /custom-providers` | `{id, name, format: "openai" \| "anthropic", base_url}` (https, or http to a local host: loopback, a private IPv4 address, `host.docker.internal` or a one-label name; no credentials or query) | `201`; `400`; `409 taken` for a built-in id or prefix |
 | `PATCH /custom-providers/:id` | `{name?, format?, base_url?}` | the provider; `404` |
 | `DELETE /custom-providers/:id` | | `204`; `409 in_use` while it has connections; `404` |
 | `POST /translate` | `{from: "openai" \| "responses" \| "gemini", to: "openai" \| "anthropic", body, model?}` (`model` for gemini) | `{result}`: the request the gateway would send; nothing is sent upstream; `400 invalid_input`, `400 translate_failed` |
