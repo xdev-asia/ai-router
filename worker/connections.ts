@@ -272,6 +272,8 @@ export interface ConnectionAccess {
   proxyPool: string | null;
   /** Same contract as Candidate.key. */
   key: (force?: boolean) => Promise<string | { error: string; status: number } | null>;
+  /** An OAuth connection's long-lived token (GitHub's own token behind a Copilot one); null when there is none or it cannot be opened. */
+  refreshToken: () => Promise<string | null>;
 }
 
 export async function connectionAccess(env: Env, upstream: (req: Request) => Promise<Response>, id: string): Promise<ConnectionAccess | null> {
@@ -287,5 +289,16 @@ export async function connectionAccess(env: Env, upstream: (req: Request) => Pro
     const t = await oauthToken(env, upstream, { id, provider: row.provider, secret: cur.secret, expires_at: cur.expires_at }, Math.floor(Date.now() / 1000), force);
     return t === null ? null : "token" in t ? t.token : t;
   };
-  return { id: row.id, provider: row.provider, authType: row.auth_type, account: row.account, proxyPool: row.proxy_pool, key };
+  const refreshToken = async () => {
+    const cur = await env.DB.prepare("SELECT secret FROM connection WHERE id = ?").bind(id).first<{ secret: string }>();
+    const plain = cur ? await open(env, cur.secret) : null;
+    if (plain === null) return null;
+    try {
+      const v = JSON.parse(plain) as { refresh_token?: unknown };
+      return typeof v.refresh_token === "string" && v.refresh_token !== "" ? v.refresh_token : null;
+    } catch {
+      return null;
+    }
+  };
+  return { id: row.id, provider: row.provider, authType: row.auth_type, account: row.account, proxyPool: row.proxy_pool, key, refreshToken };
 }

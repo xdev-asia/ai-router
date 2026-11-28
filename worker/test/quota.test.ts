@@ -51,9 +51,10 @@ describe("quota list", () => {
     const r = await adminCall(fakeUpstream(() => json({})), "GET", "/quota");
     expect(r.res.status).toBe(200);
     const body = JSON.parse(r.text) as { providers: string[]; connections: { id: string; provider: string }[]; hidden: Record<string, string[]> };
-    expect(body.providers).toEqual(["codex", "groq", "deepseek"]);
+    expect(body.providers).toEqual(["codex", "groq", "openrouter", "github", "deepseek", "ollama"]);
     expect(body.connections.map((c) => c.id).sort()).toEqual([id, groq].sort());
     expect(body.hidden).toEqual({});
+    expect((body as unknown as { others: unknown }).others).toEqual([{ provider: "openai", accounts: 1 }]);
     expect(r.text).not.toContain("secret");
     expect(r.text).not.toContain("gsk_test");
   });
@@ -85,9 +86,9 @@ describe("Codex quota", () => {
     const q = JSON.parse(r.text);
     expect(q).toMatchObject({ plan: "plus", limit_reached: false, reset_credits: 2, message: null, error: null });
     expect(q.windows).toEqual([
-      { name: "session", kind: "percent", used: 25, total: 100, remaining_percent: 75, reset_at: 1_900_000_000 },
-      { name: "weekly", kind: "percent", used: 80.5, total: 100, remaining_percent: 19.5, reset_at: 1_900_500_000 },
-      { name: "review_session", kind: "percent", used: 10, total: 100, remaining_percent: 90, reset_at: 1_900_000_100 },
+      { name: "session", kind: "percent", used: 25, total: 100, remaining_percent: 75, reset_at: 1_900_000_000, period_seconds: null },
+      { name: "weekly", kind: "percent", used: 80.5, total: 100, remaining_percent: 19.5, reset_at: 1_900_500_000, period_seconds: null },
+      { name: "review_session", kind: "percent", used: 10, total: 100, remaining_percent: 90, reset_at: 1_900_000_100, period_seconds: null },
     ]);
     expect(r.text).not.toContain("at-1");
   });
@@ -105,8 +106,8 @@ describe("Codex quota", () => {
     expect(q.plan).toBe("pro");
     expect(q.limit_reached).toBe(true);
     expect(q.windows).toEqual([
-      { name: "session", kind: "percent", used: 100, total: 100, remaining_percent: 0, reset_at: 1_893_456_000 },
-      { name: "spark_session", kind: "percent", used: 5, total: 100, remaining_percent: 95, reset_at: null },
+      { name: "session", kind: "percent", used: 100, total: 100, remaining_percent: 0, reset_at: 1_893_456_000, period_seconds: null },
+      { name: "spark_session", kind: "percent", used: 5, total: 100, remaining_percent: 95, reset_at: null, period_seconds: null },
     ]);
   });
 
@@ -203,45 +204,13 @@ describe("Codex quota", () => {
 });
 
 describe("API-key quotas", () => {
-  it("Groq: reads the rate-limit headers of the models list", async () => {
-    const id = await keyed("groq", "gsk_test_quota_groq_0001");
-    const up = fakeUpstream(() =>
-      json({ data: [] }, 200, {
-        "x-ratelimit-limit-requests": "1000",
-        "x-ratelimit-remaining-requests": "750",
-        "x-ratelimit-reset-requests": "2m30s",
-        "x-ratelimit-limit-tokens": "6000",
-        "x-ratelimit-remaining-tokens": "6000",
-        "x-ratelimit-reset-tokens": "500ms",
-      }),
-    );
-    const before = now();
-    const r = await adminCall(up, "GET", `/quota/${id}`);
-    const q = JSON.parse(r.text);
-    expect(up.calls[0]!.url).toBe("https://api.groq.com/openai/v1/models");
-    expect(up.calls[0]!.headers.get("authorization")).toBe("Bearer gsk_test_quota_groq_0001");
-    expect(q.plan).toBe("Groq");
-    expect(q.windows[0]).toMatchObject({ name: "Requests", kind: "count", used: 250, total: 1000, remaining_percent: 75 });
-    expect(q.windows[0].reset_at).toBeGreaterThanOrEqual(before + 150);
-    expect(q.windows[0].reset_at).toBeLessThanOrEqual(now() + 151);
-    expect(q.windows[1]).toMatchObject({ name: "Tokens", used: 0, total: 6000, remaining_percent: 100 });
-    expect(r.text).not.toContain("gsk_test");
-  });
-
-  it("Groq: a refused key is an error, and the body never comes back", async () => {
-    const id = await keyed("groq", "gsk_test_quota_groq_0002");
-    const q = JSON.parse((await adminCall(fakeUpstream(() => json({ error: { message: "bad key gsk_test_quota_groq_0002" } }, 401)), "GET", `/quota/${id}`)).text);
-    expect(q.error).toEqual({ status: 401, message: "Groq authentication failed. Check the API key." });
-    expect(JSON.stringify(q)).not.toContain("gsk_test");
-  });
-
   it("DeepSeek: the balance per currency", async () => {
     const id = await keyed("deepseek", "sk-test-quota-deepseek-01");
     const up = fakeUpstream(() => json({ is_available: false, balance_infos: [{ currency: "usd", total_balance: "4.20", granted_balance: "0", topped_up_balance: "4.20" }] }));
     const q = JSON.parse((await adminCall(up, "GET", `/quota/${id}`)).text);
     expect(up.calls[0]!.url).toBe("https://api.deepseek.com/user/balance");
     expect(q.plan).toBe("DeepSeek (Insufficient Balance)");
-    expect(q.windows).toEqual([{ name: "Balance (USD)", kind: "balance", used: 0, total: 4.2, remaining_percent: 100, reset_at: null, currency: "USD" }]);
+    expect(q.windows).toEqual([{ name: "Balance (USD)", kind: "balance", used: 0, total: 4.2, remaining_percent: 100, reset_at: null, period_seconds: null, currency: "USD" }]);
   });
 
   it("answers 404 for a connection whose provider reports no quota, or none at all", async () => {

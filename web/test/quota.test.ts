@@ -2,13 +2,21 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Connection } from "../api";
 import { resetLang } from "../i18n";
 import {
+  accountState,
   arrange,
   availableToTurnOn,
+  cycleLabel,
   emptyToTurnOff,
+  meterText,
+  groupByProvider,
+  groupFacts,
   leastLeft,
   nextReset,
+  planLabel,
   quotaTone,
   resetIn,
+  summarize,
+  usedPercent,
   windowLabel,
   windowValue,
   type QuotaReport,
@@ -22,13 +30,17 @@ const win = (name: string, remaining: number, reset_at: number | null = null, ex
   total: 100,
   remaining_percent: remaining,
   reset_at,
+  period_seconds: null,
   ...extra,
 });
 const rep = (windows: QuotaWindow[], extra: Partial<QuotaReport> = {}): QuotaReport => ({
   plan: "plus",
+  tier: "paid",
   windows,
   limit_reached: false,
   reset_credits: null,
+  scope: null,
+  checked_at: 1000,
   message: null,
   error: null,
   ...extra,
@@ -78,18 +90,117 @@ describe("leastLeft and nextReset", () => {
 });
 
 describe("windowLabel and windowValue", () => {
-  it("names the Codex windows and keeps any other name as it came", () => {
-    expect(windowLabel("session")).toBe("Session (5h)");
+  it("names the windows it knows and keeps any other name as it came", () => {
+    expect(windowLabel("session")).toBe("Session");
     expect(windowLabel("weekly")).toBe("Weekly");
     expect(windowLabel("review_weekly")).toBe("Code review · Weekly");
-    expect(windowLabel("spark_session")).toBe("Spark · Session (5h)");
+    expect(windowLabel("spark_session")).toBe("Spark · Session");
+    expect(windowLabel("Requests")).toBe("Requests");
+    expect(windowLabel("free_requests")).toBe("Free-model requests");
+    expect(windowLabel("key_limit")).toBe("Key spending limit");
+    expect(windowLabel("credits")).toBe("Credits");
+    expect(windowLabel("premium_interactions")).toBe("Premium requests");
     expect(windowLabel("Balance (USD)")).toBe("Balance (USD)");
   });
 
-  it("says what is left in the window's own unit", () => {
-    expect(windowValue(win("session", 62.5))).toBe("63% left");
-    expect(windowValue(win("Tokens", 25, null, { kind: "count", used: 4500, total: 6000 }))).toBe("1,500 / 6,000 left");
-    expect(windowValue(win("Balance (USD)", 100, null, { kind: "balance", total: 12.5, currency: "USD" }))).toBe("12.50 USD");
+  it("says what is used in the window's own unit; a balance says what is left", () => {
+    expect(windowValue(win("session", 62.5))).toBe("38% used");
+    expect(windowValue(win("Tokens", 25, null, { kind: "count", used: 4500, total: 6000 }))).toBe("4,500 / 6,000 used");
+    expect(windowValue(win("key_limit", 25, null, { kind: "spend", used: 15, total: 20, currency: "USD" }))).toBe("$15.00 / $20.00 used");
+    expect(windowValue(win("Balance (USD)", 100, null, { kind: "balance", total: 12.5, currency: "USD" }))).toBe("$12.50 left");
+    expect(windowValue(win("Balance (CNY)", 100, null, { kind: "balance", total: 12.5, currency: "CNY" }))).toBe("12.50 CNY left");
+  });
+
+  it("after the bar: the percent used, never a rounded-away first use", () => {
+    expect(meterText(win("session", 62.5))).toBe("38% used");
+    expect(meterText(win("Requests", 99.9, null, { kind: "count", used: 1, total: 1000 }))).toBe("<1% used");
+    expect(meterText(win("Requests", 100, null, { kind: "count", used: 0, total: 1000 }))).toBe("0% used");
+    expect(meterText(win("key_limit", 25, null, { kind: "spend", used: 15, total: 20, currency: "USD" }))).toBe("75% used");
+    expect(meterText(win("credits", 75, null, { kind: "balance", total: 37.5, currency: "USD" }))).toBe("$37.50 left");
+  });
+
+  it("the bar shows the share used", () => {
+    expect(usedPercent(win("session", 96))).toBe(4);
+    expect(usedPercent(win("Requests", 99.9, null, { kind: "count", used: 1, total: 1000 }))).toBeCloseTo(0.1);
+    expect(usedPercent(win("credits", 0, null, { kind: "balance", total: 0 }))).toBe(100);
+  });
+});
+
+describe("cycleLabel", () => {
+  it("says how often a limit starts again", () => {
+    expect(cycleLabel(60)).toBe("Every minute");
+    expect(cycleLabel(600)).toBe("Every 10 minutes");
+    expect(cycleLabel(3600)).toBe("Every hour");
+    expect(cycleLabel(18000)).toBe("Every 5 hours");
+    expect(cycleLabel(86400)).toBe("Daily");
+    expect(cycleLabel(259200)).toBe("Every 3 days");
+    expect(cycleLabel(604800)).toBe("Weekly");
+    for (const d of [28, 29, 30, 31]) expect(cycleLabel(d * 86400)).toBe("Monthly");
+    expect(cycleLabel(null)).toBeNull();
+    expect(cycleLabel(0)).toBeNull();
+  });
+});
+
+describe("planLabel", () => {
+  it("writes the provider's plan name as a label", () => {
+    expect(planLabel("plus")).toBe("Plus");
+    expect(planLabel("free")).toBe("Free");
+    expect(planLabel("individual (free_educational_quota)")).toBe("Individual (free educational quota)");
+    expect(planLabel("self_serve_business")).toBe("Self serve business");
+    expect(planLabel("unknown")).toBeNull();
+    expect(planLabel(null)).toBeNull();
+  });
+});
+
+describe("accountState", () => {
+  it("is off, failing, at its limit, cooling down or active, in that order", () => {
+    const c = conn("a", "groq", 1);
+    expect(accountState(c, rep([win("session", 50)]), 100).key).toBe("quota.state.active");
+    expect(accountState({ ...c, cooldown_until: 500 }, rep([win("session", 50)]), 100)).toEqual({ tone: "warn", key: "quota.state.cooling" });
+    expect(accountState({ ...c, cooldown_until: 50 }, rep([win("session", 50)]), 100).key).toBe("quota.state.active");
+    expect(accountState({ ...c, cooldown_until: 500 }, rep([], { limit_reached: true }), 100).key).toBe("quota.state.limit");
+    expect(accountState(c, rep([], { error: { status: 401, message: "x" } }), 100).key).toBe("quota.state.error");
+    expect(accountState({ ...c, disabled: true }, rep([], { error: { status: 401, message: "x" } }), 100).key).toBe("quota.state.off");
+  });
+});
+
+describe("groupByProvider and summarize", () => {
+  const rows = [conn("g1", "groq", 1), conn("c1", "codex", 1), conn("g2", "groq", 2, true), conn("o1", "openrouter", 1)];
+  const reports = {
+    c1: rep([win("session", 96, 5000), win("weekly", 20, 9000)]),
+    g1: rep([win("Requests", 2, 3000)], { limit_reached: true }),
+    g2: rep([win("Requests", 100)]),
+  };
+
+  it("groups the accounts by provider, in the order they came", () => {
+    expect(groupByProvider(rows).map((g) => [g.provider, g.rows.map((c) => c.id)])).toEqual([["groq", ["g1", "g2"]], ["codex", ["c1"]], ["openrouter", ["o1"]]]);
+    expect(groupByProvider([])).toEqual([]);
+  });
+
+  it("says once per provider what holds for all its accounts", () => {
+    const groq = [conn("g1", "groq", 1), conn("g2", "groq", 2), conn("g3", "groq", 3)];
+    const r = (scope: string | null, plan: string | null = null) => rep([win("Requests", 50)], { plan, scope });
+    expect(groupFacts(groq, { g1: r("m1"), g2: r("m1") })).toEqual({ noPlan: true, scope: "m1" });
+    expect(groupFacts(groq, { g1: r("m1"), g2: r("m2") })).toEqual({ noPlan: true, scope: null });
+    expect(groupFacts(groq, { g1: r(null, "plus"), g2: r(null) })).toEqual({ noPlan: false, scope: null });
+    // Failed and missing reports say nothing either way.
+    expect(groupFacts(groq, { g1: rep([], { error: { status: 401, message: "x" } }) })).toEqual({ noPlan: false, scope: null });
+    expect(groupFacts(groq, {})).toEqual({ noPlan: false, scope: null });
+  });
+
+  it("counts the accounts that can take requests, the ones running low, and finds the next reset", () => {
+    expect(summarize(rows, reports, 1000)).toEqual({
+      total: 4,
+      active: 3,
+      off: 1,
+      // c1 (20% left: low, but usable) and o1 (not reported yet) are on and not at a limit; g1 is at its limit.
+      ready: 2,
+      low: 2,
+      next: { at: 3000, account: "g1", window: "Requests" },
+    });
+    // A reset that has passed is not the next one.
+    expect(summarize(rows, reports, 4000).next).toEqual({ at: 5000, account: "c1", window: "session" });
+    expect(summarize([], {}, 0)).toEqual({ total: 0, active: 0, off: 0, ready: 0, low: 0, next: null });
   });
 });
 

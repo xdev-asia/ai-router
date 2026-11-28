@@ -285,6 +285,35 @@ it the answer is `502 vision_adapter_failed`. Only the OpenAI-shaped paths use i
 Errors use the OpenAI envelope `{error: {message, type, param, code}}`; codes of the gateway's own refusals:
 `invalid_api_key`, `system_disabled`, `monthly_token_cap`, `model_not_found`, `model_not_allowed`, `not_configured`.
 
+## Quota Tracker
+
+The console's **Quota Tracker** page (`#/quota`) shows, for each account, the plan, what is used and when each
+limit starts again. Accounts are grouped by provider. Only what the provider itself reports is shown:
+
+| Provider | Asked | Plan | Limits and their cycle |
+|---|---|---|---|
+| `codex` | `chatgpt.com/backend-api/wham/usage` | `plan_type` (free, plus, ...) and the Business seat | 5-hour and weekly windows in percent, with their reset times; reset credits |
+| `groq` | one chat request of one token (`max_tokens: 1`) | not reported | requests a day and tokens a minute, for the model asked (`scope`) |
+| `openrouter` | `/key` and `/credits` | free tier or paid | today's free-model requests, the key's spending limit, credits left |
+| `github` | `api.github.com/copilot_internal/user` | Copilot plan and SKU | the month's premium requests, with the reset date |
+| `deepseek` | `/user/balance` | not reported | balance per currency |
+| `ollama` | `ollama.com/api/me` | plan | not reported |
+
+Groq sends its limits only in the headers of an inference answer, never on the model list. Reading them costs one
+request of the day, so the gateway keeps the answer (table `quota_snapshot`) and the page shows it with its age. The
+refresh buttons ask again; opening the page and auto-refresh do not. A kept limit whose reset time has passed is
+shown as full again.
+
+The other connected providers are named under the list with their account counts. Checked on 2026-11-28 with real
+keys: Gemini, NVIDIA NIM, Kimchi and API.airforce answered no plan and no limit on any path tried.
+
+| Admin path | Answer |
+|---|---|
+| `GET /quota` | `{providers, connections, hidden, others: [{provider, accounts}]}` |
+| `GET /quota/:id` | `{plan, tier: "free" \| "paid" \| null, seat, windows: [{name, kind, used, total, remaining_percent, reset_at, period_seconds, currency?}], limit_reached, reset_credits, scope, checked_at, message, error}`. `?refresh=1` asks the provider even where that costs a request |
+| `PUT /quota/hidden` | `{provider, names}`: rows the owner hid |
+| `GET /quota/:id/reset-credits`, `POST /quota/:id/reset-credit` | Codex reset credits: list them, spend one |
+
 ## Token savers (off by default)
 
 Set for the whole gateway on the console's Token saver page (`PUT /admin/token-saver`), and per system with
