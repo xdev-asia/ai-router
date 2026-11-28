@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ADMIN_TOKEN, addSystem, call, fakeUpstream, reset } from "./helpers";
-import { exhaustedUntil, limitScope, readLimits, shareLeft } from "../limits";
+import { countedLeft, exhaustedUntil, limitScope, readLimits, shareLeft } from "../limits";
 
 // Routing by what is left (limits.ts): the gateway remembers the rate-limit headers a provider sends with its
 // answers, sets an account that is out aside until its reset, and can order accounts by the share they have left.
@@ -96,6 +96,20 @@ describe("reading a provider's limit headers", () => {
     expect(shareLeft(l, 1000 + 3601)).toBe(1);
     // With a reset time the provider's word stands until then, however old.
     expect(shareLeft({ ...l, requests_reset_at: 90_000 }, 80_000)).toBe(0);
+  });
+
+  it("counts its own request while the provider's number lags, and takes the provider's word after a pause", () => {
+    // What /key says, what was kept (left, when), whether this answer used a request, now.
+    expect(countedLeft(50, null, true, 1000)).toBe(50);
+    expect(countedLeft(50, { left: 50, seen_at: 990 }, true, 1000)).toBe(49);
+    expect(countedLeft(50, { left: 49, seen_at: 990 }, true, 1000)).toBe(48);
+    // The provider caught up, or knows of use elsewhere: the lower number wins.
+    expect(countedLeft(40, { left: 48, seen_at: 990 }, true, 1000)).toBe(40);
+    // A refusal used nothing.
+    expect(countedLeft(50, { left: 48, seen_at: 990 }, false, 1000)).toBe(48);
+    expect(countedLeft(50, { left: 0, seen_at: 990 }, true, 1000)).toBe(0);
+    // Nothing heard for five minutes: the provider's number has had time to settle (or the day turned).
+    expect(countedLeft(50, { left: 3, seen_at: 1000 - 301 }, true, 1000)).toBe(50);
   });
 
   it("OpenRouter counts its free models together; everything else is per model", () => {
@@ -247,6 +261,23 @@ describe("OpenRouter free models", () => {
     expect(r.res.status).toBe(200);
     expect(await limitRow(ids.a!, ":free")).toBeNull();
     expect(r.text).not.toContain("sk-or-");
+  });
+
+  it("spreads a burst over the accounts even while /key still reports nothing used", async () => {
+    const { token, ids } = await routers(["a", "b"]);
+    await admin("PUT", "/providers/openrouter/strategy", { strategy: "quota-left" });
+    // /key lags: it says 50 of 50 left the whole time.
+    const up = fakeUpstream((req) => (req.url === KEY_URL ? keyAnswer(0) : json(COMPLETION)));
+    const order: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const before = up.calls.length;
+      await call(up, "/openai/v1/chat/completions", chat(token, "openrouter/x/one:free"));
+      order.push(who(up.calls[before]!));
+    }
+    // a twice (its first answer only says 50; b is still unknown and ties), then b until it falls level, then a.
+    expect(order).toEqual(["a", "a", "b", "b", "a"]);
+    expect(await limitRow(ids.a!, ":free")).toMatchObject({ requests_remaining: 48 });
+    expect(await limitRow(ids.b!, ":free")).toMatchObject({ requests_remaining: 49 });
   });
 
   it("quota-left sends a free request to the account with the most free requests left today, whatever the free model", async () => {
