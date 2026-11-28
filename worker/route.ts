@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { readLimits, saveLimits } from "./limits";
+import { limitScope, openrouterFreeLimits, readLimits, saveLimits, type Limits } from "./limits";
 import type { System } from "./auth";
 import { BLOCKED_MESSAGE, ENDED_EARLY, RELAY_ERROR_HEADER, RELAY_SECRET_HEADER, isBlockPage, type Step, chatToCodex, codexHeaders, codexSteps, codexToChatStream, readCodex } from "./codex";
 import { accountFailure, candidatesFor, noteFailure, noteSuccess, type Candidate } from "./connections";
@@ -213,13 +213,22 @@ function meterOpenAIStream(body: ReadableStream<Uint8Array>, model: string, keep
   return { client, usage };
 }
 
-/** Remembers the rate limits in an answer's headers for the account that was asked. The key in the environment keeps none. */
-function noteLimits(c: Context<AppEnv>, model: string, headers: Headers): void {
+/**
+ * Remembers what the provider says is left for the account that was asked (limits.ts): the rate limits in the
+ * answer's headers, or, for an OpenRouter free model, the day's free requests from its /key. The key in the
+ * environment keeps none.
+ */
+function noteLimits(c: Context<AppEnv>, upstream: Upstream, target: Target, key: string, headers: Headers): void {
   const connection = c.get("connection");
   if (!connection) return;
   const now = Math.floor(Date.now() / 1000);
-  const limits = readLimits(headers, now);
-  if (limits) c.executionCtx.waitUntil(saveLimits(c.env.DB, connection, model, limits, now).catch(() => undefined));
+  const scope = limitScope(target.provider, target.model);
+  const save = (limits: Limits | null) => (limits ? saveLimits(c.env.DB, connection, scope, limits, now) : Promise.resolve());
+  if (target.provider === "openrouter" && scope === ":free") {
+    c.executionCtx.waitUntil(openrouterFreeLimits(upstream, key).then(save).catch(() => undefined));
+    return;
+  }
+  c.executionCtx.waitUntil(save(readLimits(headers, now)).catch(() => undefined));
 }
 
 async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, system: System, key: string, target: Target, req: Json, savers: Savers, extra: Record<string, string> = {}, wire?: Wire): Promise<Attempt> {
@@ -240,7 +249,7 @@ async function callOpenAICompatible(c: Context<AppEnv>, upstream: Upstream, syst
         }),
   );
   // What the provider says is left on this account for this model (limits.ts), from a good answer or a refusal.
-  noteLimits(c, target.model, up.headers);
+  noteLimits(c, upstream, target, key, up.headers);
   if (wire?.response) up = wire.response(up, stream);
   if (!up.ok || !up.body) {
     record(c, system, up, false, Promise.resolve({ ...EMPTY, model: target.model }), target.provider, saved);
