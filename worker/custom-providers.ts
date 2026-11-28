@@ -71,9 +71,16 @@ export function localHost(hostname: string): boolean {
   return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
+/** A host no provider may point at: the unspecified address and the link-local range (cloud metadata, 169.254/16). */
+export function blockedHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "0.0.0.0" || h === "::" || h === "::0") return true;
+  return /^169\.254\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
 /**
  * An https URL (or http to a local host, `localHost`) with no credentials, query or fragment, without its trailing
- * slashes; null otherwise.
+ * slashes; null otherwise. The unspecified address and the link-local metadata range are refused on either scheme.
  */
 export function baseUrl(v: unknown): string | null {
   if (typeof v !== "string" || v.length > 500) return null;
@@ -84,7 +91,7 @@ export function baseUrl(v: unknown): string | null {
     return null;
   }
   const scheme = u.protocol === "https:" || (u.protocol === "http:" && localHost(u.hostname));
-  if (!scheme || u.username || u.password || u.search || u.hash) return null;
+  if (!scheme || blockedHost(u.hostname) || u.username || u.password || u.search || u.hash) return null;
   return (u.origin + u.pathname).replace(/\/+$/, "");
 }
 

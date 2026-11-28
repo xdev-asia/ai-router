@@ -69,9 +69,18 @@ describe("admin: custom providers", () => {
       expect(JSON.parse(r.text).base_url, url).toBe(url.replace(/\/$/, ""));
       expect((await admin("DELETE", "/custom-providers/local")).res.status).toBe(204);
     }
-    for (const url of ["http://a.test/v1", "http://8.8.8.8/v1", "http://172.32.0.1/v1", "http://192.169.0.1/v1", "http://localhost.evil.test/v1", "ftp://localhost/v1"]) {
+    for (const url of ["http://a.test/v1", "http://8.8.8.8/v1", "http://172.32.0.1/v1", "http://192.169.0.1/v1", "http://localhost.evil.test/v1", "ftp://localhost/v1", "http://169.254.169.254/v1", "http://0.0.0.0/v1"]) {
       expect((await admin("POST", "/custom-providers", { id: "local", name: "Local", format: "openai", base_url: url })).res.status, url).toBe(400);
     }
+  });
+
+  it("blocks the cloud metadata address and 0.0.0.0, even over https", async () => {
+    for (const base_url of ["https://169.254.169.254/v1", "https://169.254.1.2/latest", "http://169.254.169.254/v1", "https://0.0.0.0/v1", "http://0.0.0.0/v1", "https://[::]/v1"]) {
+      const r = await admin("POST", "/custom-providers", { id: "meta", name: "Meta", format: "openai", base_url });
+      expect(r.res.status, base_url).toBe(400);
+    }
+    // A normal private host over https is still fine (a real internal LLM).
+    expect((await admin("POST", "/custom-providers", { id: "meta", name: "Meta", format: "openai", base_url: "https://10.0.0.5/v1" })).res.status).toBe(201);
   });
 
   it("refuses a bad id, name, format or base URL", async () => {

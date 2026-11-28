@@ -106,12 +106,19 @@ function localHost(hostname: string): boolean {
 }
 
 /** An https URL (http for a local server) with no credentials, query or fragment, as the gateway takes it (worker/custom-providers.ts). */
+/** The unspecified address and the link-local metadata range (169.254/16): never a valid provider host. */
+function blockedHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "0.0.0.0" || h === "::" || h === "::0") return true;
+  return /^169\.254\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
 function httpsBase(v: string): boolean {
   if (v.length > 500) return false;
   try {
     const u = new URL(v.trim());
     const scheme = u.protocol === "https:" || (u.protocol === "http:" && localHost(u.hostname));
-    return scheme && !u.username && !u.password && !u.search && !u.hash;
+    return scheme && !blockedHost(u.hostname) && !u.username && !u.password && !u.search && !u.hash;
   } catch {
     return false;
   }
