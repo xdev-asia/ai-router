@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { exhaustedUntil, shareLeft, type Limits } from "./limits";
 import { ANTHROPIC_VERSION, anthropicBase, isProvider, providerDef, providerKey, type ProviderId } from "./providers";
 import { oauthToken } from "./oauth";
 import { open, seal } from "./secret-box";
@@ -112,8 +113,8 @@ export async function storedSecret(env: Env, id: string): Promise<{ apiKey: stri
   return row ? secretOf(env, row.secret) : null;
 }
 
-export type Strategy = "fill-first" | "round-robin";
-export const isStrategy = (v: unknown): v is Strategy => v === "fill-first" || v === "round-robin";
+export type Strategy = "fill-first" | "round-robin" | "quota-left";
+export const isStrategy = (v: unknown): v is Strategy => v === "fill-first" || v === "round-robin" || v === "quota-left";
 
 /** One way to reach a provider: an account from the console, or the key in the environment (`connection` null). */
 export interface Candidate {
@@ -136,17 +137,29 @@ export interface Candidate {
 
 /**
  * The accounts to try for `provider`, in order: available ones, then the key in the environment, then the ones
- * cooling down (soonest first), so a request is still attempted when nothing else is left. Available ones go by
- * priority ("fill-first", the default) or, with "round-robin", the one that answered longest ago first.
+ * set aside (soonest back first), so a request is still attempted when nothing else is left. Available ones go by
+ * priority ("fill-first", the default), by the one that answered longest ago ("round-robin"), or by the largest
+ * share of its limit left ("quota-left").
+ *
+ * An account is set aside while it cools down after a failure, and, when `model` is given, while the provider's
+ * own headers said it is out for that model (limits.ts): it is then not asked until its reset.
  */
-export async function candidatesFor(env: Env, provider: ProviderId, systemId: string, now: number, upstream?: (req: Request) => Promise<Response>): Promise<Candidate[]> {
+export async function candidatesFor(env: Env, provider: ProviderId, systemId: string, now: number, upstream?: (req: Request) => Promise<Response>, model?: string): Promise<Candidate[]> {
   const r = await env.DB.prepare(
-    `SELECT id, secret, auth_type, account, proxy_pool, expires_at, cooldown_until, backoff_level, rr_at,
-            (SELECT strategy FROM provider_setting WHERE provider = ?1) AS strategy
-     FROM connection WHERE provider = ?1 AND disabled = 0 ORDER BY priority, created_at`,
+    `SELECT c.id, c.secret, c.auth_type, c.account, c.proxy_pool, c.expires_at, c.cooldown_until, c.backoff_level, c.rr_at,
+            (SELECT strategy FROM provider_setting WHERE provider = ?1) AS strategy,
+            l.requests_limit, l.requests_remaining, l.requests_reset_at, l.tokens_limit, l.tokens_remaining, l.tokens_reset_at
+     FROM connection c LEFT JOIN connection_limit l ON l.connection = c.id AND l.model = ?2
+     WHERE c.provider = ?1 AND c.disabled = 0 ORDER BY c.priority, c.created_at`,
   )
-    .bind(provider)
-    .all<{ id: string; secret: string; auth_type: string; account: string | null; proxy_pool: string | null; expires_at: number | null; cooldown_until: number; backoff_level: number; rr_at: number; strategy: string | null }>();
+    .bind(provider, model ?? "")
+    .all<
+      { id: string; secret: string; auth_type: string; account: string | null; proxy_pool: string | null; expires_at: number | null; cooldown_until: number; backoff_level: number; rr_at: number; strategy: string | null } & Limits
+    >();
+  // No row in connection_limit: every column is null, which reads as "never heard from".
+  const limitsOf = (x: (typeof r.results)[number]): Limits | null => (x.requests_limit === null && x.tokens_limit === null ? null : x);
+  /** Back at this time (unix seconds); at or before `now`: available. */
+  const asideUntil = (x: (typeof r.results)[number]) => Math.max(x.cooldown_until, exhaustedUntil(limitsOf(x), now));
   const account = (row: (typeof r.results)[number]): Candidate => ({
     connection: row.id,
     backoffLevel: row.backoff_level,
@@ -160,10 +173,12 @@ export async function candidatesFor(env: Env, provider: ProviderId, systemId: st
     },
     settings: async () => (row.auth_type === "oauth" ? {} : ((await secretOf(env, row.secret))?.settings ?? {})),
   });
-  const free = r.results.filter((x) => x.cooldown_until <= now);
-  // Array.sort is stable: connections that answered at the same time keep their priority order.
-  if (r.results[0]?.strategy === "round-robin") free.sort((a, b) => a.rr_at - b.rr_at);
-  const cooling = r.results.filter((x) => x.cooldown_until > now).sort((a, b) => a.cooldown_until - b.cooldown_until);
+  const free = r.results.filter((x) => asideUntil(x) <= now);
+  // Array.sort is stable: connections that tie keep their priority order.
+  const strategy = r.results[0]?.strategy;
+  if (strategy === "round-robin") free.sort((a, b) => a.rr_at - b.rr_at);
+  else if (strategy === "quota-left") free.sort((a, b) => shareLeft(limitsOf(b), now) - shareLeft(limitsOf(a), now));
+  const cooling = r.results.filter((x) => asideUntil(x) > now).sort((a, b) => asideUntil(a) - asideUntil(b));
   // A subscription provider is reached through its sign-ins only: a key in the environment is not one of them.
   // A media-only provider (media-providers/registry.ts) is not in PROVIDERS: its key in the environment is read the same way.
   const envKey = isProvider(provider) && providerDef(provider).auth === "oauth" ? null : providerKey(env, provider, systemId);

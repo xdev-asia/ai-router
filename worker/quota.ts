@@ -2,6 +2,7 @@ import { BLOCKED_MESSAGE, RELAY_ERROR_HEADER, RELAY_SECRET_HEADER, isBlockPage }
 import { PROXY_ERROR_HEADER, codexDestinationFor } from "./proxy-pools";
 import { connectionAccess, type ConnectionAccess } from "./connections";
 import type { Env } from "./env";
+import { latestLimits, parseGoDuration, type Limits } from "./limits";
 import { COPILOT_HEADERS } from "./oauth";
 import { providerDef } from "./providers";
 
@@ -254,19 +255,6 @@ export async function consumeResetCredit(env: Env, upstream: Fetch, conn: Connec
 
 // --- API-key providers ---------------------------------------------------------------------------------------
 
-/** A Go duration ("2m30s", "500ms", "1h") in seconds; null when there is none. */
-export function parseGoDuration(v: string | null): number | null {
-  if (!v) return null;
-  const unit: Record<string, number> = { ms: 0.001, s: 1, m: 60, h: 3600 };
-  let total = 0;
-  let found = false;
-  for (const m of v.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g)) {
-    total += Number(m[1]) * unit[m[2]!]!;
-    found = true;
-  }
-  return found ? total : null;
-}
-
 const DAY_S = 86400;
 
 /** Groq counts requests by the day and tokens by the minute (its rate-limit headers, console.groq.com/docs/rate-limits). */
@@ -351,9 +339,19 @@ export async function forgetQuota(db: D1Database, id: string): Promise<void> {
   await db.prepare("DELETE FROM quota_snapshot WHERE connection = ?").bind(id).run();
 }
 
+/** Groq's limits as the gateway last read them from a real answer (limits.ts): no request spent. */
+function groqFromTraffic(l: Limits & { model: string; seen_at: number }): QuotaReport {
+  const window = (name: string, limit: number | null, left: number | null, reset_at: number | null, period_seconds: number): QuotaWindow[] =>
+    limit === null || left === null ? [] : [{ name, kind: "count", used: Math.max(0, limit - left), total: limit, remaining_percent: limit > 0 ? round2(clamp((left / limit) * 100)) : 0, reset_at, period_seconds }];
+  const windows = [...window("Requests", l.requests_limit, l.requests_remaining, l.requests_reset_at, DAY_S), ...window("Tokens", l.tokens_limit, l.tokens_remaining, l.tokens_reset_at, 60)];
+  return report({ scope: l.model, windows, limit_reached: windows.some((w) => w.remaining_percent <= 0), checked_at: l.seen_at });
+}
+
 async function groqQuota(env: Env, upstream: Fetch, id: string, key: string, refresh: boolean): Promise<QuotaReport> {
   if (!refresh) {
-    const kept = await keptQuota(env.DB, id);
+    const [kept, seen] = [await keptQuota(env.DB, id), await latestLimits(env.DB, id)];
+    // Whichever is newer: the last probe, or what the provider said with the last real answer.
+    if (seen && (!kept || seen.seen_at >= kept.checked_at)) return agedReport(groqFromTraffic(seen), nowS());
     if (kept) return agedReport(kept, nowS());
   }
   const r = await groqProbe(upstream, key);

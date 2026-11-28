@@ -273,8 +273,8 @@ const TOOLS: Tool[] = [
   {
     name: "set_provider_strategy",
     group: "connections",
-    description: "How a provider's connections are used: fill-first (in priority order) or round-robin.",
-    properties: { provider: str, strategy: { type: "string", enum: ["fill-first", "round-robin"] } },
+    description: "How a provider's connections are used: fill-first (in priority order), round-robin, or quota-left (the largest share of its rate limit left first).",
+    properties: { provider: str, strategy: { type: "string", enum: ["fill-first", "round-robin", "quota-left"] } },
     required: ["provider", "strategy"],
     readOnly: false,
     calls: (a) => ({ method: "PUT", path: `/providers/${enc(String(a.provider))}/strategy`, body: { strategy: a.strategy } }),

@@ -174,7 +174,8 @@ export interface Provider {
   env_key: boolean;
   /** The provider's page for creating a key. */
   key_url: string | null;
-  strategy: "fill-first" | "round-robin";
+  /** How the provider's accounts are ordered (worker/connections.ts). */
+  strategy: "fill-first" | "round-robin" | "quota-left";
   /** The provider's own colour (a CSS hex colour) and one to three letters, for its `Emblem`. */
   color: string;
   mark: string;
