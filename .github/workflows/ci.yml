@@ -32,6 +32,7 @@ jobs:
       - run: corepack pnpm run test
       - run: corepack pnpm run test:web
       - run: node --test relay/test/codex-relay.test.mjs docker/test/docker.test.mjs
+      - run: python3 -m unittest discover -s mac
 
       # Clip Studio (studio/) has its own lockfile, as its image builds from that folder alone. ffmpeg runs the
       # whole render test.

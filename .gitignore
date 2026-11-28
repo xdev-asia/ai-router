@@ -10,3 +10,4 @@ dist
 .env
 .studio.env
 studio/data
+__pycache__
