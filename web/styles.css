@@ -500,7 +500,7 @@ body {
   color: var(--text-2);
 }
 
-/* One provider's accounts: a row each (who, limits, state and controls), a line between rows. */
+/* One provider's accounts: a grid of small cards, as many in a line as fit (three at 1440px, one on a phone). */
 .quota-group-title {
   display: inline-flex;
   align-items: center;
@@ -515,17 +515,23 @@ body {
   list-style: none;
 }
 
-.quota-row {
+.quota-rows {
   display: grid;
-  grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--x-space-3) var(--x-space-6);
-  padding: var(--x-space-4);
-  border-top: 1px solid var(--line);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+  gap: var(--x-space-3);
 }
 
-.quota-row:first-child {
-  border-top: 0;
+/* An account: who it is and its controls on the first line, its limits under them. */
+.quota-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: start;
+  align-items: start;
+  gap: var(--x-space-3) var(--x-space-2);
+  padding: var(--x-space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--x-radius-md);
+  min-width: 0;
 }
 
 /* A switched-off account is dimmed; its controls stay as they are. */
@@ -536,6 +542,8 @@ body {
 
 .quota-who {
   display: grid;
+  grid-column: 1;
+  grid-row: 1;
   gap: var(--x-space-1);
   min-width: 0;
 }
@@ -557,15 +565,15 @@ body {
 
 .quota-body {
   display: grid;
+  grid-column: 1 / -1;
+  grid-row: 2;
   gap: var(--x-space-2);
   min-width: 0;
 }
 
-/* The limits side by side in equal columns, as many as fit. */
 .quota-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
-  gap: var(--x-space-3) var(--x-space-6);
+  gap: var(--x-space-2);
 }
 
 .quota-tile {
@@ -619,30 +627,13 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* As wide in every row, so the limits line up from one account to the next. */
 .quota-row-end {
   display: inline-flex;
-  flex-wrap: wrap;
+  grid-column: 2;
+  grid-row: 1;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--x-space-2);
-  min-width: 14rem;
-}
-
-/* Phones and tablets: who and controls on the first line, the limits under them. */
-@media (max-width: 767.98px) {
-  .quota-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .quota-body {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
-  .quota-row-end {
-    min-width: 0;
-  }
+  gap: var(--x-space-1);
 }
 
 /* Available Models card on a provider's page: chips wrap in rows. */

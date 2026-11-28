@@ -295,7 +295,7 @@ function saveAuto(on: boolean): void {
 
 type Reports = Record<string, QuotaReport | undefined>;
 
-/** Quota Tracker: each account's plan, what it has used and when its limits start again, grouped by provider. */
+/** Quota Tracker: each account's plan, what it has used and when its limits start again; a grid of account cards under each provider. */
 export function Quota() {
   const [lang] = useLang();
   const notify = useNotify();
@@ -523,7 +523,6 @@ export function Quota() {
           return (
             <Card
               key={g.provider}
-              flush
               headingLevel={2}
               title={
                 <span className="quota-group-title">
@@ -658,6 +657,7 @@ function Account(props: {
       <div className="quota-who">
         <span className="quota-who-name">{c.name}</span>
         <span className="quota-who-meta">
+          <StatusDot tone={state.tone} label={t(state.key)} />
           {plan && <Tag>{plan}</Tag>}
           {noPlanNote && <span>{t("quota.plan.unknown")}</span>}
           {seat && <span>{seat}</span>}
@@ -700,7 +700,6 @@ function Account(props: {
         {notes.length > 0 && <p className="quota-note">{sentence(notes.join(" · "))}</p>}
       </div>
       <span className="quota-row-end">
-        <StatusDot tone={state.tone} label={t(state.key)} />
         {c.provider === "codex" && <IconButton icon="restore" label={t("quota.credits.open", { name: c.name })} disabled={props.busy} onClick={props.onCredits} />}
         <IconButton icon="refresh" label={t("quota.refreshOne", { name: c.name })} disabled={loading} onClick={props.onRefresh} />
         <Switch aria-label={t("quota.toggle", { name: c.name })} checked={!c.disabled} disabled={props.busy} onChange={props.onToggle} />
