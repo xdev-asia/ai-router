@@ -542,6 +542,11 @@ seconds (`docker compose ps` shows the service as `healthy`).
 A self-hosted GitHub Actions runner on the Mac would deploy without the 5-minute wait, but GitHub advises against
 self-hosted runners on public repositories: a pull request could run code on the Mac.
 
+The gateway sets `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+`Content-Security-Policy: frame-ancestors 'none'` and HSTS on every response (`worker/app.ts`, `SECURITY_HEADERS`);
+the static console gets the same set from `web/public/_headers`. These never limit cross-origin reads, so an SDK on
+another origin still works. For HSTS preload or a stricter policy, add a Cloudflare response-header rule on top.
+
 #### A public domain
 
 `ai-router.xdev.asia` (the route in `wrangler.jsonc`) reaches the Mac through a
